@@ -1,0 +1,30 @@
+{
+  "name": "gnosis",
+  "version": "0.1.0",
+  "description": "VibeCoding Memory & Knowledge Graph MCP Server",
+  "module": "index.ts",
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "bun run --watch src/index.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.1",
+    "@nicia-ai/typegraph": "^0.3.0",
+    "drizzle-orm": "^0.45.2",
+    "pg": "^8.11.5",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "1.7.3",
+    "@types/pg": "^8.11.5",
+    "bun-types": "latest",
+    "drizzle-kit": "^0.31.10",
+    "tsx": "^4.19.1"
+  }
+}

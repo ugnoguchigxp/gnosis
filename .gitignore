@@ -1,0 +1,13 @@
+node_modules
+dist
+.bun
+.env
+.env.local
+*.log
+
+# vscode
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
