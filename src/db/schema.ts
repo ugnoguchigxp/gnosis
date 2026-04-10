@@ -1,5 +1,6 @@
 import {
   index,
+  integer,
   jsonb,
   pgTable,
   real,
@@ -21,6 +22,8 @@ export const vibeMemories = pgTable(
     // Matching configured dimension
     embedding: vector('embedding', { dimensions: config.embeddingDimension }),
     metadata: jsonb('metadata').default({}),
+    referenceCount: integer('reference_count').default(0).notNull(),
+    lastReferencedAt: timestamp('last_referenced_at').defaultNow().notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (table) => ({
@@ -56,6 +59,8 @@ export const entities = pgTable(
     embedding: vector('embedding', { dimensions: config.embeddingDimension }), // nullable
     communityId: uuid('community_id').references(() => communities.id, { onDelete: 'set null' }),
     metadata: jsonb('metadata').default({}),
+    referenceCount: integer('reference_count').default(0).notNull(),
+    lastReferencedAt: timestamp('last_referenced_at').defaultNow().notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (table) => ({

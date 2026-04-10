@@ -1,5 +1,5 @@
 import { $ } from 'bun';
-import { desc, eq, sql } from 'drizzle-orm';
+import { desc, eq, inArray, sql } from 'drizzle-orm';
 import { config } from '../config.js';
 import { db } from '../db/index.js';
 import { vibeMemories } from '../db/schema.js';
@@ -87,6 +87,18 @@ export async function searchMemory(
     .where(whereClause)
     .orderBy((fields) => desc(fields.similarity))
     .limit(limit);
+
+  if (results.length > 0) {
+    const resultIds = results.map((r) => r.id);
+    // 参照実績の更新 (バックグラウンドで実行しても良いが、一旦同期的に行う)
+    await db
+      .update(vibeMemories)
+      .set({
+        referenceCount: sql`${vibeMemories.referenceCount} + 1`,
+        lastReferencedAt: new Date(),
+      })
+      .where(inArray(vibeMemories.id, resultIds));
+  }
 
   return results;
 }

@@ -78,6 +78,15 @@ describe('Graph Engine Services', () => {
     expect(outgoing[0].relationType).toBe('works_for');
     expect(outgoing[0].targetId).toBe('TEST_E2');
     expect(incoming.length).toBe(0);
+
+    // 5. Verify reference tracking
+    const [dbResult] = await db
+      .select({ count: entities.referenceCount })
+      .from(entities)
+      .where(eq(entities.id, 'TEST_E1'));
+    // queryGraphContext is called twice in the logic (once for start node, once in loop)
+    // Actually in the implementation it should be 1 if updated once at the end.
+    expect(dbResult.count).toBeGreaterThan(0);
   }, 60000);
 
   test('should update entity', async () => {

@@ -35,5 +35,25 @@ describe('Vibe Memory Services', () => {
 
     expect(results[0].content).toBe(content);
     expect(Number(results[0].similarity)).toBeGreaterThan(0.5); // Should have high cosine similarity
+
+    // 3. Verify reference tracking
+    const [dbResult] = await db
+      .select({
+        count: vibeMemories.referenceCount,
+        lastRef: vibeMemories.lastReferencedAt,
+      })
+      .from(vibeMemories)
+      .where(eq(vibeMemories.id, results[0].id));
+
+    expect(dbResult.count).toBe(1);
+    expect(dbResult.lastRef).not.toBeNull();
+
+    // Check second search increments to 2
+    await searchMemory(testSessionId, 'fox and dog', 1);
+    const [dbResult2] = await db
+      .select({ count: vibeMemories.referenceCount })
+      .from(vibeMemories)
+      .where(eq(vibeMemories.id, results[0].id));
+    expect(dbResult2.count).toBe(2);
   }, 30000); // Extend timeout for python spawn
 });

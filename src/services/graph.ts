@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { config } from '../config.js';
 import { db } from '../db/index.js';
 import { communities, entities, relations } from '../db/schema.js';
@@ -193,6 +193,17 @@ export async function queryGraphContext(entityId: string, maxDepth = 2, maxNodes
     }
   }
 
+  if (resultEntities.length > 0) {
+    const entityIds = resultEntities.map((e) => e.id);
+    await db
+      .update(entities)
+      .set({
+        referenceCount: sql`${entities.referenceCount} + 1`,
+        lastReferencedAt: new Date(),
+      })
+      .where(inArray(entities.id, entityIds));
+  }
+
   return {
     entities: resultEntities,
     relations: resultRelations,
@@ -264,6 +275,17 @@ export async function searchEntitiesByText(
     .where(sql`${entities.embedding} IS NOT NULL`)
     .orderBy((fields) => desc(fields.similarity))
     .limit(limit);
+
+  if (results.length > 0) {
+    const entityIds = results.map((r) => r.id);
+    await database
+      .update(entities)
+      .set({
+        referenceCount: sql`${entities.referenceCount} + 1`,
+        lastReferencedAt: new Date(),
+      })
+      .where(inArray(entities.id, entityIds));
+  }
 
   return results;
 }
