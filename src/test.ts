@@ -1,5 +1,10 @@
-import { saveMemory, searchMemory } from './services/memory.js';
-import { saveEntities, saveRelations, queryGraphContext } from './services/graph.js';
+import {
+  queryGraphContext,
+  saveEntities,
+  saveRelations,
+  searchEntityByQuery,
+} from './services/graph.js';
+import { deleteMemory, saveMemory, searchMemory } from './services/memory.js';
 
 async function test() {
   console.log('=== Vibe Memory Test ===');
@@ -16,15 +21,31 @@ async function test() {
 
   console.log('\n=== Knowledge Graph Test ===');
   await saveEntities([
-    { id: 'Tokyo', type: 'City', name: '東京' },
-    { id: 'Japan', type: 'Country', name: '日本' },
-  ]);
-  await saveRelations([
-    { sourceId: 'Tokyo', targetId: 'Japan', relationType: 'capital_of', weight: '1.0' },
+    { id: 'Tokyo', type: 'City', name: '東京', description: '日本の首都です' },
+    { id: 'Japan', type: 'Country', name: '日本', description: '東アジアの島国です' },
+    { id: 'Asia', type: 'Region', name: 'アジア', description: 'ユーラシア大陸の東部です' },
   ]);
 
-  const context = await queryGraphContext('Tokyo');
-  console.log('Graph Context for Tokyo:', JSON.stringify(context, null, 2));
+  await saveRelations([
+    { sourceId: 'Tokyo', targetId: 'Japan', relationType: 'capital_of', weight: '1.0' },
+    { sourceId: 'Japan', targetId: 'Asia', relationType: 'located_in', weight: '1.0' },
+  ]);
+
+  console.log('Searching entity using semantic query: "東アジアの国"');
+  const entityId = await searchEntityByQuery('東アジアの国');
+  console.log(`Found Entity ID: ${entityId}`);
+
+  if (entityId) {
+    const context = await queryGraphContext(entityId, 2); // Depth 2
+    console.log(`Graph Context (2 hops) for ${entityId}:`, JSON.stringify(context, null, 2));
+  }
+
+  console.log('\n=== Memory Deletion Test ===');
+  await deleteMemory(memory1.id);
+  const resultsAfterDelete = await searchMemory('session-1', '日本の首都は？');
+  console.log(
+    `Results length after delete: ${resultsAfterDelete.length} (memory1 string missing here is expected)`,
+  );
 
   process.exit(0);
 }

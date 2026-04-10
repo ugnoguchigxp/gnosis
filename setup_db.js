@@ -2,7 +2,8 @@ import pkg from 'pg';
 const { Pool } = pkg;
 
 const pool = new Pool({
-  connectionString: 'postgres://postgres:postgres@localhost:7888/gnosis',
+  connectionString:
+    process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:7888/gnosis',
 });
 
 async function main() {

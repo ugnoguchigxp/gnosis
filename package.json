@@ -7,6 +7,7 @@
   "scripts": {
     "start": "bun run src/index.ts",
     "dev": "bun run --watch src/index.ts",
+    "llmharness:local-llm": "bun run src/integrations/llmharness-local-llm.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
@@ -18,7 +19,8 @@
     "@nicia-ai/typegraph": "^0.3.0",
     "drizzle-orm": "^0.45.2",
     "pg": "^8.11.5",
-    "zod": "^3.23.8"
+    "zod": "^3.23.8",
+    "zod-to-json-schema": "^3.25.2"
   },
   "devDependencies": {
     "@biomejs/biome": "1.7.3",

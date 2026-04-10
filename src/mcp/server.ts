@@ -2,14 +2,16 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
-import { saveMemory, searchMemory } from '../services/memory.js';
+import { db } from '../db/index.js';
 import {
+  deleteRelation,
   queryGraphContext,
   saveEntities,
   saveRelations,
+  searchEntityByQuery,
   updateEntity,
-  deleteRelation,
 } from '../services/graph.js';
+import { deleteMemory, saveMemory, searchMemory } from '../services/memory.js';
 
 export const server = new Server(
   {
@@ -56,10 +58,17 @@ const searchMemorySchema = z.object({
   sessionId: z.string().describe('検索対象のセッションID'),
   query: z.string().describe('検索クエリ'),
   limit: z.number().optional().default(5).describe('取得件数'),
+  filter: z.record(z.any()).optional().describe('メタデータのJSONフィルタ条件'),
 });
 
 const queryGraphSchema = z.object({
-  entityId: z.string().describe('コンテキストを取得したいエンティティID'),
+  query: z
+    .string()
+    .describe('起点とするエンティティを探すための検索クエリ(IDあるいは名前・説明など)'),
+});
+
+const deleteMemorySchema = z.object({
+  memoryId: z.string().describe('削除する Vibe Memory の ID'),
 });
 
 const updateGraphSchema = z.object({
@@ -102,6 +111,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: zodToJsonSchema(queryGraphSchema),
       },
       {
+        name: 'delete_memory',
+        description: '特定の Vibe Memory を削除します',
+        inputSchema: zodToJsonSchema(deleteMemorySchema),
+      },
+      {
         name: 'update_graph',
         description: 'グラフ内のエンティティや関係性を訂正・削除してナレッジを更新します',
         inputSchema: zodToJsonSchema(updateGraphSchema),
@@ -118,12 +132,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'store_memory': {
         const input = storeMemorySchema.parse(args);
 
-        // メモリ保存
-        const memory = await saveMemory(input.sessionId, input.content, input.metadata);
+        const memory = await db.transaction(async (tx) => {
+          // メモリ保存
+          const savedMemory = await saveMemory(input.sessionId, input.content, input.metadata, tx);
 
-        // グラフ保存
-        if (input.entities?.length) await saveEntities(input.entities);
-        if (input.relations?.length) await saveRelations(input.relations);
+          // グラフ保存
+          if (input.entities?.length) await saveEntities(input.entities, tx);
+          if (input.relations?.length) await saveRelations(input.relations, tx);
+          return savedMemory;
+        });
 
         return {
           content: [{ type: 'text', text: `Memory stored successfully with ID: ${memory.id}` }],
@@ -131,17 +148,33 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'search_memory': {
-        const { sessionId, query, limit } = searchMemorySchema.parse(args);
-        const results = await searchMemory(sessionId, query, limit);
+        const { sessionId, query, limit, filter } = searchMemorySchema.parse(args);
+        const results = await searchMemory(sessionId, query, limit, filter);
 
         return {
           content: [{ type: 'text', text: JSON.stringify(results, null, 2) }],
         };
       }
 
+      case 'delete_memory': {
+        const { memoryId } = deleteMemorySchema.parse(args);
+        await deleteMemory(memoryId);
+
+        return {
+          content: [{ type: 'text', text: `Memory ${memoryId} has been deleted successfully` }],
+        };
+      }
+
       case 'query_graph': {
-        const { entityId } = queryGraphSchema.parse(args);
-        const context = await queryGraphContext(entityId);
+        const { query } = queryGraphSchema.parse(args);
+        const entityId = await searchEntityByQuery(query);
+        if (!entityId) {
+          return {
+            content: [{ type: 'text', text: `No entity found matching query: ${query}` }],
+          };
+        }
+
+        const context = await queryGraphContext(entityId); // Default depth is 2, max 20 nodes
 
         return {
           content: [{ type: 'text', text: JSON.stringify(context, null, 2) }],
@@ -173,7 +206,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             ],
           };
         }
-        break;
+        throw new Error(`Unsupported action: ${input.action}`);
       }
 
       default:

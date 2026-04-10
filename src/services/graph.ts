@@ -1,6 +1,9 @@
+import { and, eq, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { entities, relations } from '../db/schema.js';
-import { eq, or, and, sql } from 'drizzle-orm';
+import { generateEmbedding } from './memory.js';
+
+type DbClient = Pick<typeof db, 'insert' | 'select' | 'update' | 'delete' | 'execute'>;
 
 export interface EntityInput {
   id: string;
@@ -20,17 +23,26 @@ export interface RelationInput {
 /**
  * エンティティ群を保存または更新します
  */
-export async function saveEntities(inputs: EntityInput[]) {
+export async function saveEntities(inputs: EntityInput[], database: DbClient = db) {
   if (inputs.length === 0) return;
-  await db
+  const inputsWithVector = await Promise.all(
+    inputs.map(async (input) => {
+      const textToEmbed = `${input.name} ${input.description || ''}`.trim();
+      const vector = await generateEmbedding(textToEmbed);
+      return { ...input, embedding: vector };
+    }),
+  );
+
+  await database
     .insert(entities)
-    .values(inputs)
+    .values(inputsWithVector)
     .onConflictDoUpdate({
       target: entities.id,
       set: {
         type: sql`excluded.type`,
         name: sql`excluded.name`,
         description: sql`excluded.description`,
+        embedding: sql`excluded.embedding`,
         metadata: sql`excluded.metadata`,
       },
     });
@@ -39,40 +51,99 @@ export async function saveEntities(inputs: EntityInput[]) {
 /**
  * リレーションを保存します
  */
-export async function saveRelations(inputs: RelationInput[]) {
+export async function saveRelations(inputs: RelationInput[], database: DbClient = db) {
   if (inputs.length === 0) return;
-  await db.insert(relations).values(inputs);
+  for (const input of inputs) {
+    await database.execute(sql`
+      insert into relations (source_id, target_id, relation_type, weight)
+      select ${input.sourceId}, ${input.targetId}, ${input.relationType}, ${input.weight ?? null}
+      where not exists (
+        select 1
+        from relations
+        where source_id = ${input.sourceId}
+          and target_id = ${input.targetId}
+          and relation_type = ${input.relationType}
+      )
+    `);
+  }
 }
 
 /**
- * 特定のエンティティに関連する1ホップのグラフコンテキストを取得します
+ * 指定のエンティティを中心とした、最大「多段ホップ」までのグラフコンテキストを返します。
+ * (BFSによる再帰探索)
  */
-export async function queryGraphContext(entityId: string) {
-  // 出ていくリレーションとその先のエンティティ
-  const outgoing = await db
-    .select({
-      relation: relations,
-      target: entities,
-    })
-    .from(relations)
-    .where(eq(relations.sourceId, entityId))
-    .innerJoin(entities, eq(relations.targetId, entities.id));
+export async function queryGraphContext(
+  entityId: string,
+  maxDepth = 2,
+  maxNodes = 20,
+  database: DbClient = db,
+) {
+  const visited = new Set<string>();
+  const nodesContext = [];
+  const queue = [{ id: entityId, depth: 0 }];
 
-  // 入ってくるリレーションとその元のエンティティ
-  const incoming = await db
-    .select({
-      relation: relations,
-      source: entities,
-    })
-    .from(relations)
-    .where(eq(relations.targetId, entityId))
-    .innerJoin(entities, eq(relations.sourceId, entities.id));
+  while (queue.length > 0 && nodesContext.length < maxNodes) {
+    const current = queue.shift();
+    if (!current || visited.has(current.id)) continue;
+    visited.add(current.id);
 
-  return {
-    entityId,
-    outgoing: outgoing.map((o) => ({ relation: o.relation.relationType, target: o.target })),
-    incoming: incoming.map((r) => ({ relation: r.relation.relationType, source: r.source })),
-  };
+    // 出ていくリレーション
+    const outgoing = await database
+      .select({ relation: relations, target: entities })
+      .from(relations)
+      .where(eq(relations.sourceId, current.id))
+      .innerJoin(entities, eq(relations.targetId, entities.id))
+      .limit(maxNodes);
+
+    // 入ってくるリレーション
+    const incoming = await database
+      .select({ relation: relations, source: entities })
+      .from(relations)
+      .where(eq(relations.targetId, current.id))
+      .innerJoin(entities, eq(relations.sourceId, entities.id))
+      .limit(maxNodes);
+
+    nodesContext.push({
+      entityId: current.id,
+      outgoing: outgoing.map((o) => ({ relation: o.relation.relationType, target: o.target })),
+      incoming: incoming.map((r) => ({ relation: r.relation.relationType, source: r.source })),
+    });
+
+    if (current.depth < maxDepth) {
+      for (const edge of outgoing) {
+        if (!visited.has(edge.target.id))
+          queue.push({ id: edge.target.id, depth: current.depth + 1 });
+      }
+      for (const edge of incoming) {
+        if (!visited.has(edge.source.id))
+          queue.push({ id: edge.source.id, depth: current.depth + 1 });
+      }
+    }
+  }
+
+  return nodesContext;
+}
+
+/**
+ * 検索クエリ（自然言語）から最も近いエンティティを一つ見つけてそのIDを返します
+ */
+export async function searchEntityByQuery(
+  query: string,
+  database: Pick<typeof db, 'select'> = db,
+): Promise<string | null> {
+  const embedding = await generateEmbedding(query);
+  const embeddingStr = JSON.stringify(embedding);
+
+  const similarity = sql`1 - (${entities.embedding} <=> ${embeddingStr}::vector)`;
+
+  const results = await database
+    .select({ id: entities.id, similarity })
+    .from(entities)
+    // biome-ignore lint/suspicious/noExplicitAny: drizzle helper
+    .orderBy((fields: any) => sql`${fields.similarity} DESC`)
+    .limit(1);
+
+  return results.length > 0 ? results[0].id : null;
 }
 
 /**
