@@ -42,14 +42,25 @@ docker-compose up -d
 
 ### 3. 初期設定とマイグレーション
 
-DBコンテナが起動したら、`vector` 拡張機能を有効化し、テーブルスキーマを最新の状態にプッシュします。
+DBコンテナが起動したら、`vector` 拡張機能を有効化し、マイグレーションを適用します。
 
 ```bash
 node setup_db.js
-bunx drizzle-kit push --force
+bun run db:migrate
+bun run db:seed
 ```
 
+まとめて実行する場合:
+
+```bash
+bun run db:init
+```
+
+`db:seed` は `__system_seed__` セッションに初期化確認用のマーカー1件だけを投入します。通常のユーザーセッションや実ナレッジには影響しません。
+
 *(備考: embeddingを生成するために、兄弟ディレクトリにあたる `../embedding` 側に `multilingual-e5-small` のローカルモデルとCLIコマンド（`~/.local/bin/embed`）がセットアップされている必要があります。Gnosis は内部でリトライ機構を備えており、一時的な生成失敗にも対応します)*
+
+`drizzle-kit push` を使って作った既存DBを `db:migrate` 運用へ移行する場合は、ローカル開発環境では一度DBを作り直してください（例: `docker-compose down -v && docker-compose up -d` の後に上記手順を再実行）。
 
 ## ツールの利用方法 (MCP)
 

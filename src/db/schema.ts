@@ -1,4 +1,14 @@
-import { index, jsonb, pgTable, text, timestamp, unique, uuid, vector } from 'drizzle-orm/pg-core';
+import {
+  index,
+  jsonb,
+  pgTable,
+  real,
+  text,
+  timestamp,
+  unique,
+  uuid,
+  vector,
+} from 'drizzle-orm/pg-core';
 
 // 非構造化メモリ (Vibe Memory)
 export const vibeMemories = pgTable(
@@ -17,19 +27,50 @@ export const vibeMemories = pgTable(
       table.sessionId,
       table.createdAt,
     ),
+    embeddingHnswIdx: index('vibe_memories_embedding_hnsw_idx').using(
+      'hnsw',
+      table.embedding.op('vector_cosine_ops'),
+    ),
   }),
 );
 
-// 構造化知識 (Knowledge Graph)
-// TypeGraph連携のために最低限のメタデータを保存します
-export const entities = pgTable('entities', {
-  id: text('id').primaryKey(),
-  type: text('type').notNull(),
+// ナレッジグラフ内の「知識の塊」を要約して管理する
+export const communities = pgTable('communities', {
+  id: uuid('id').primaryKey().defaultRandom(),
   name: text('name').notNull(),
-  description: text('description'),
-  embedding: vector('embedding', { dimensions: 384 }), // nullable
+  summary: text('summary').notNull(),
   metadata: jsonb('metadata').default({}),
   createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+// 構造化知識 (Knowledge Graph)
+// TypeGraph連携のために最低限のメタデータを保存します
+export const entities = pgTable(
+  'entities',
+  {
+    id: text('id').primaryKey(),
+    type: text('type').notNull(),
+    name: text('name').notNull(),
+    description: text('description'),
+    embedding: vector('embedding', { dimensions: 384 }), // nullable
+    communityId: uuid('community_id').references(() => communities.id, { onDelete: 'set null' }),
+    metadata: jsonb('metadata').default({}),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    embeddingHnswIdx: index('entities_embedding_hnsw_idx').using(
+      'hnsw',
+      table.embedding.op('vector_cosine_ops'),
+    ),
+  }),
+);
+
+// 外部データの同期状態（差分同期用）を管理
+export const syncState = pgTable('sync_state', {
+  id: text('id').primaryKey(), // 'claude_logs', 'antigravity_logs' 等
+  lastSyncedAt: timestamp('last_synced_at').notNull(),
+  cursor: jsonb('cursor').default({}).notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
 export const relations = pgTable(
@@ -43,7 +84,7 @@ export const relations = pgTable(
       .references(() => entities.id, { onDelete: 'cascade' })
       .notNull(),
     relationType: text('relation_type').notNull(),
-    weight: text('weight'), // or numeric
+    weight: real('weight'), // changed from text to real
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (table) => ({

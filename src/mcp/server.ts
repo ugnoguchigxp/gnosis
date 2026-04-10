@@ -3,8 +3,11 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { db } from '../db/index.js';
+import { buildCommunities } from '../services/community.js';
 import {
   deleteRelation,
+  digestTextIntelligence,
+  findEntityById,
   queryGraphContext,
   saveEntities,
   saveRelations,
@@ -12,6 +15,7 @@ import {
   updateEntity,
 } from '../services/graph.js';
 import { deleteMemory, saveMemory, searchMemory } from '../services/memory.js';
+import { syncAllAgentLogs } from '../services/sync.js';
 
 export const server = new Server(
   {
@@ -47,7 +51,7 @@ const storeMemorySchema = z.object({
         sourceId: z.string(),
         targetId: z.string(),
         relationType: z.string(),
-        weight: z.string().optional(),
+        weight: z.union([z.number(), z.string()]).optional(),
       }),
     )
     .optional()
@@ -65,6 +69,11 @@ const queryGraphSchema = z.object({
   query: z
     .string()
     .describe('起点とするエンティティを探すための検索クエリ(IDあるいは名前・説明など)'),
+});
+
+const digestTextSchema = z.object({
+  text: z.string().describe('既存の知識グラフとの関連を調査したいテキスト'),
+  limit: z.number().optional().default(5).describe('提案するエンティティの最大数'),
 });
 
 const deleteMemorySchema = z.object({
@@ -111,9 +120,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: zodToJsonSchema(queryGraphSchema),
       },
       {
+        name: 'digest_text',
+        description:
+          'テキスト内のキーワードに関連する既存のエンティティをグラフから探し出し提案します',
+        inputSchema: zodToJsonSchema(digestTextSchema),
+      },
+      {
         name: 'delete_memory',
         description: '特定の Vibe Memory を削除します',
         inputSchema: zodToJsonSchema(deleteMemorySchema),
+      },
+      {
+        name: 'build_communities',
+        description: 'グラフ全体を分析し、知識の塊（コミュニティ）を生成・要約します（計算負荷が高いツールです）',
+        inputSchema: { type: 'object', properties: {} },
+      },
+      {
+        name: 'sync_agent_logs',
+        description: 'Claude Code や Antigravity の会話履歴から自動的にナレッジを同期します',
+        inputSchema: { type: 'object', properties: {} },
       },
       {
         name: 'update_graph',
@@ -167,7 +192,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'query_graph': {
         const { query } = queryGraphSchema.parse(args);
-        const entityId = await searchEntityByQuery(query);
+        const exactMatchId = await findEntityById(query);
+        const entityId = exactMatchId || (await searchEntityByQuery(query));
         if (!entityId) {
           return {
             content: [{ type: 'text', text: `No entity found matching query: ${query}` }],
@@ -178,6 +204,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         return {
           content: [{ type: 'text', text: JSON.stringify(context, null, 2) }],
+        };
+      }
+
+      case 'digest_text': {
+        const { text, limit } = digestTextSchema.parse(args);
+        const results = await digestTextIntelligence(text, limit);
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: 'LLM has extracted the following entities and found potential matches in the existing graph:',
+            },
+            { type: 'text', text: JSON.stringify(results, null, 2) },
+          ],
         };
       }
 
@@ -207,6 +248,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           };
         }
         throw new Error(`Unsupported action: ${input.action}`);
+      }
+
+      case 'build_communities': {
+        const result = await buildCommunities();
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      case 'sync_agent_logs': {
+        const result = await syncAllAgentLogs();
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
       }
 
       default:

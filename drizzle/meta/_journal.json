@@ -15,6 +15,20 @@
       "when": 1775817102775,
       "tag": "0001_careless_falcon",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1775824492815,
+      "tag": "0002_crazy_juggernaut",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1775830000000,
+      "tag": "0003_sync_state_cursor",
+      "breakpoints": true
     }
   ]
 }

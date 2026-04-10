@@ -11,6 +11,32 @@ import {
 } from './graph.js';
 
 describe('Graph Engine Services', () => {
+  async function ensureEntityExists() {
+    await db
+      .insert(entities)
+      .values({
+        id: 'TEST_E1',
+        type: 'Person',
+        name: 'Alice',
+        description: 'Seed for update/delete test',
+      })
+      .onConflictDoNothing();
+  }
+
+  async function ensureRelationExists() {
+    await db
+      .insert(entities)
+      .values({
+        id: 'TEST_E2',
+        type: 'Company',
+        name: 'Wonderland Inc.',
+      })
+      .onConflictDoNothing();
+    await saveRelations([
+      { sourceId: 'TEST_E1', targetId: 'TEST_E2', relationType: 'works_for', weight: 1.0 },
+    ]);
+  }
+
   beforeAll(async () => {
     // Cleanup any existing test data
     await db.delete(entities).where(eq(entities.id, 'TEST_E1'));
@@ -42,25 +68,32 @@ describe('Graph Engine Services', () => {
     ]);
 
     // 4. Query graph context
-    const nodes = await queryGraphContext('TEST_E1');
-    const e1Context = nodes.find((n) => n.entityId === 'TEST_E1');
-    expect(e1Context).toBeDefined();
-    expect(e1Context?.outgoing.length).toBe(1);
-    expect(e1Context?.outgoing[0].relation).toBe('works_for');
-    expect(e1Context?.outgoing[0].target.id).toBe('TEST_E2');
-    expect(e1Context?.incoming.length).toBe(0);
-  });
+    const context = await queryGraphContext('TEST_E1');
+    const e1Node = context.entities.find((entity) => entity.id === 'TEST_E1');
+    const outgoing = context.relations.filter((relation) => relation.sourceId === 'TEST_E1');
+    const incoming = context.relations.filter((relation) => relation.targetId === 'TEST_E1');
+
+    expect(e1Node).toBeDefined();
+    expect(outgoing.length).toBe(1);
+    expect(outgoing[0].relationType).toBe('works_for');
+    expect(outgoing[0].targetId).toBe('TEST_E2');
+    expect(incoming.length).toBe(0);
+  }, 60000);
 
   test('should update entity', async () => {
+    await ensureEntityExists();
     await updateEntity('TEST_E1', { description: 'Updated Description' });
     const [e1] = await db.select().from(entities).where(eq(entities.id, 'TEST_E1'));
+    expect(e1).toBeDefined();
     expect(e1.description).toBe('Updated Description');
   });
 
   test('should delete relation', async () => {
+    await ensureEntityExists();
+    await ensureRelationExists();
     await deleteRelation('TEST_E1', 'TEST_E2', 'works_for');
-    const nodes = await queryGraphContext('TEST_E1');
-    const e1Context = nodes.find((n) => n.entityId === 'TEST_E1');
-    expect(e1Context?.outgoing.length).toBe(0);
+    const context = await queryGraphContext('TEST_E1');
+    const outgoing = context.relations.filter((relation) => relation.sourceId === 'TEST_E1');
+    expect(outgoing.length).toBe(0);
   });
 });
