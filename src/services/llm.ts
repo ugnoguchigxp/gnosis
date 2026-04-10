@@ -1,8 +1,17 @@
 import { spawnSync } from 'node:child_process';
+import { config } from '../config.js';
 
-const LLM_SCRIPT =
-  process.env.GNOSIS_ENTITY_LLM_SCRIPT || '/Users/y.noguchi/Code/localLlm/scripts/gemma4';
-const LLM_TIMEOUT_MS = Number(process.env.GNOSIS_ENTITY_LLM_TIMEOUT_MS || '45000');
+const LLM_SCRIPT = config.llmScript;
+const LLM_TIMEOUT_MS = config.llmTimeoutMs;
+
+export interface MergedEntityResult {
+  shouldMerge: boolean;
+  merged?: {
+    name: string;
+    type: string;
+    description: string;
+  };
+}
 
 export interface ExtractedEntity {
   name: string;
@@ -259,4 +268,72 @@ ${transcript}
     console.error('Failed to parse distilled JSON:', jsonStr);
     throw error;
   }
+}
+
+/**
+ * 2つのエンティティが同一の実体を指しているか判定し、同一であればマージした情報を返します。
+ */
+export async function judgeAndMergeEntities(
+  entityA: { name: string; type: string; description: string },
+  entityB: { name: string; type: string; description: string },
+): Promise<MergedEntityResult> {
+  const prompt = `
+以下の2つのエンティティ（実体）が、同じ対象を指しているか判定してください。
+名前の揺らぎ（別名、略称、英語表記とカタカナ表記等）があっても、文脈上同じであれば「同一」とみなしてください。
+
+同一である場合は shouldMerge: true とし、2つの情報を統合した最適な name, type, description を出力してください。
+別物である場合は shouldMerge: false としてください。
+
+出力は必ず以下のJSON形式のみで返してください。余計な解説は不要です。
+
+{
+  "shouldMerge": true/false,
+  "merged": { "name": "統合後の名前", "type": "種別", "description": "統合された説明" }
+}
+
+対象1:
+- 名前: ${entityA.name}
+- 種別: ${entityA.type}
+- 説明: ${entityA.description}
+
+対象2:
+- 名前: ${entityB.name}
+- 種別: ${entityB.type}
+- 説明: ${entityB.description}
+`.trim();
+
+  try {
+    const result = spawnSync(
+      LLM_SCRIPT,
+      ['--output', 'text', '--max-tokens', '800', '--prompt', prompt],
+      {
+        encoding: 'utf-8',
+        env: { ...process.env },
+        timeout: LLM_TIMEOUT_MS,
+      },
+    );
+
+    const output = result.stdout?.trim();
+    if (!output) return { shouldMerge: false };
+
+    const jsonMatch = output.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return { shouldMerge: false };
+
+    const parsed = JSON.parse(jsonMatch[0].replace(/,\s*([\}\]])/g, '$1'));
+
+    if (parsed.shouldMerge && parsed.merged) {
+      return {
+        shouldMerge: true,
+        merged: {
+          name: String(parsed.merged.name).trim(),
+          type: String(parsed.merged.type).trim(),
+          description: String(parsed.merged.description).trim(),
+        },
+      };
+    }
+  } catch (error) {
+    console.error('Failed to judge and merge entities:', error);
+  }
+
+  return { shouldMerge: false };
 }

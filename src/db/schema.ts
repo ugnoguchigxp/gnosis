@@ -9,6 +9,7 @@ import {
   uuid,
   vector,
 } from 'drizzle-orm/pg-core';
+import { config } from '../config.js';
 
 // 非構造化メモリ (Vibe Memory)
 export const vibeMemories = pgTable(
@@ -17,8 +18,8 @@ export const vibeMemories = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     sessionId: text('session_id').notNull(),
     content: text('content').notNull(),
-    // 384 dimensions matching intfloat/multilingual-e5-small
-    embedding: vector('embedding', { dimensions: 384 }),
+    // Matching configured dimension
+    embedding: vector('embedding', { dimensions: config.embeddingDimension }),
     metadata: jsonb('metadata').default({}),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
@@ -52,7 +53,7 @@ export const entities = pgTable(
     type: text('type').notNull(),
     name: text('name').notNull(),
     description: text('description'),
-    embedding: vector('embedding', { dimensions: 384 }), // nullable
+    embedding: vector('embedding', { dimensions: config.embeddingDimension }), // nullable
     communityId: uuid('community_id').references(() => communities.id, { onDelete: 'set null' }),
     metadata: jsonb('metadata').default({}),
     createdAt: timestamp('created_at').defaultNow().notNull(),

@@ -6,9 +6,9 @@ async function main() {
 
   try {
     const summary = await syncAllAgentLogs();
-    
+
     if (summary.imported > 0) {
-      console.log(`\nSync Completed Successfully!`);
+      console.log('\nSync Completed Successfully!');
       console.log(`Sources: ${summary.sources.join(', ')}`);
       console.log(`Total New Items: ${summary.imported}`);
     } else {

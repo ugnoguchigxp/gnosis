@@ -1,18 +1,20 @@
 import { $ } from 'bun';
 import { desc, eq, sql } from 'drizzle-orm';
+import { config } from '../config.js';
 import { db } from '../db/index.js';
 import { vibeMemories } from '../db/schema.js';
 
 type DbClient = Pick<typeof db, 'insert' | 'select'>;
 
 /**
- * テキストから 384次元のベクトルを生成します
- * ユーザー環境の `../embedding` で提供されている `~/.local/bin/embed` コマンドを利用します
+ * テキストからベクトルを生成します
+ * ユーザー環境の埋め込みコマンドを利用します
  */
 export async function generateEmbedding(text: string, retries = 3): Promise<number[]> {
+  const embedCmd = config.embedCommand;
   for (let i = 0; i < retries; i++) {
     try {
-      const result = await $`~/.local/bin/embed ${text}`.text();
+      const result = await $`${embedCmd} ${text}`.text();
       const vector = JSON.parse(result.trim());
       if (!Array.isArray(vector)) throw new Error('Invalid format');
       return vector;

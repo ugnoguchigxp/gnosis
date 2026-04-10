@@ -1,7 +1,8 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
+import { config } from '../config.js';
 import { db } from '../db/index.js';
 import { communities, entities, relations } from '../db/schema.js';
-import { extractEntitiesFromText } from './llm.js';
+import { extractEntitiesFromText, judgeAndMergeEntities } from './llm.js';
 import { generateEmbedding } from './memory.js';
 
 type DbClient = Pick<typeof db, 'insert' | 'select' | 'update' | 'delete' | 'execute'>;
@@ -24,7 +25,8 @@ export interface RelationInput {
 
 /**
  * エンティティ群を保存または更新します。
- * 保存前に意味的な類似度をチェックし、既存のエンティティと重複（類似度 > 0.94）している場合は警告をログ出力します。
+ * 保存前に意味的な類似度をチェックし、既存のエンティティと重複（類似度 > config.dedupeThreshold）している場合は
+ * LLM を用いて自動的にマージ（名寄せ）を試みます。
  */
 export async function saveEntities(
   inputs: EntityInput[],
@@ -33,40 +35,75 @@ export async function saveEntities(
 ) {
   if (inputs.length === 0) return;
 
-  const inputsWithVector = await Promise.all(
-    inputs.map(async (input) => {
-      const textToEmbed = `${input.name} ${input.description || ''}`.trim();
-      const vector = await embeddingGenerator(textToEmbed);
-      return { ...input, embedding: vector };
-    }),
-  );
+  const processedInputs: (EntityInput & { embedding: number[] })[] = [];
 
-  // 類似エンティティのチェック (重複排除のヒント)
-  for (const input of inputsWithVector) {
-    const embeddingStr = JSON.stringify(input.embedding);
+  for (const input of inputs) {
+    const textToEmbed = `${input.name} ${input.description || ''}`.trim();
+    const vector = await embeddingGenerator(textToEmbed);
+    const embeddingStr = JSON.stringify(vector);
     const similarity = sql<number>`1 - (${entities.embedding} <=> ${embeddingStr}::vector)`;
 
+    // 類似エンティティの検索
     const [similar] = await database
-      .select({ id: entities.id, name: entities.name, similarity })
+      .select({
+        id: entities.id,
+        name: entities.name,
+        type: entities.type,
+        description: entities.description,
+        similarity,
+      })
       .from(entities)
-      .where(sql`${entities.id} != ${input.id} AND ${entities.embedding} IS NOT NULL`) // 自分自身は除外
+      .where(sql`${entities.id} != ${input.id} AND ${entities.embedding} IS NOT NULL`)
       .orderBy(desc(similarity))
       .limit(1);
 
-    if (similar && similar.similarity > 0.94) {
-      console.warn(
-        `[Deduplication Hint] New entity "${input.name}" (${
-          input.id
-        }) is highly similar to existing entity "${similar.name}" (${
-          similar.id
-        }) (Similarity: ${similar.similarity.toFixed(3)}). Consider merging them.`,
+    let finalInput = { ...input, embedding: vector };
+
+    if (similar && similar.similarity > config.dedupeThreshold) {
+      console.info(
+        `[Deduplication] High similarity detected: "${input.name}" vs "${
+          similar.name
+        }" (${similar.similarity.toFixed(3)})`,
       );
+
+      // LLM による同一性判定とマージ
+      const decision = await judgeAndMergeEntities(
+        { name: input.name, type: input.type, description: input.description || '' },
+        { name: similar.name, type: similar.type, description: similar.description || '' },
+      );
+
+      if (decision.shouldMerge && decision.merged) {
+        console.info(
+          `[Deduplication] Merging "${input.name}" into existing entity "${similar.name}"`,
+        );
+
+        // 既存の ID を使用して上書き（マージ後の情報に更新）
+        const mergedText = `${decision.merged.name} ${decision.merged.description}`;
+        const mergedEmbedding = await embeddingGenerator(mergedText);
+
+        finalInput = {
+          ...input,
+          id: similar.id, // 既存の ID を継承
+          name: decision.merged.name,
+          type: decision.merged.type,
+          description: decision.merged.description,
+          embedding: mergedEmbedding,
+          metadata: {
+            ...(input.metadata || {}),
+            mergedFrom: [input.id, similar.id],
+            autoMergedAt: new Date().toISOString(),
+          },
+        };
+      }
     }
+    processedInputs.push(finalInput);
   }
+
+  if (processedInputs.length === 0) return;
 
   await database
     .insert(entities)
-    .values(inputsWithVector)
+    .values(processedInputs)
     .onConflictDoUpdate({
       target: entities.id,
       set: {

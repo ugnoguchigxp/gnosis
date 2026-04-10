@@ -132,7 +132,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'build_communities',
-        description: 'グラフ全体を分析し、知識の塊（コミュニティ）を生成・要約します（計算負荷が高いツールです）',
+        description:
+          'グラフ全体を分析し、知識の塊（コミュニティ）を生成・要約します（計算負荷が高いツールです）',
         inputSchema: { type: 'object', properties: {} },
       },
       {

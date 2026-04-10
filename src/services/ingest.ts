@@ -2,6 +2,7 @@ import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { config } from '../config.js';
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -112,7 +113,7 @@ export async function ingestClaudeLogs(
   since?: Date,
   cursor: IngestCursor = {},
 ): Promise<IngestResult> {
-  const claudeProjectsDir = path.join(os.homedir(), '.claude', 'projects');
+  const claudeProjectsDir = config.claudeLogDir;
   const messages: ChatMessage[] = [];
   const defaultLookbackHours = 24;
   const nextCursor = { ...normalizeIngestCursor(cursor) };
@@ -192,7 +193,7 @@ export async function ingestAntigravityLogs(
   since?: Date,
   cursor: IngestCursor = {},
 ): Promise<IngestResult> {
-  const antigravityDir = path.join(os.homedir(), '.gemini', 'antigravity', 'brain');
+  const antigravityDir = config.antigravityLogDir;
   const messages: ChatMessage[] = [];
   const defaultLookbackHours = 24;
   const nextCursor = { ...normalizeIngestCursor(cursor) };
