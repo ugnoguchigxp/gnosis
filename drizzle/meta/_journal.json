@@ -36,6 +36,13 @@
       "when": 1775832600000,
       "tag": "0004_vibe_memory_dedupe_key",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1775835600000,
+      "tag": "0005_schema_alignment",
+      "breakpoints": true
     }
   ]
 }

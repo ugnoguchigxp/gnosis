@@ -181,6 +181,9 @@ export async function syncAllAgentLogs() {
       );
       continue;
     }
+    if (ingestResult.warnings.length > 0) {
+      console.warn(`Ingestion warnings for ${source.label}: ${ingestResult.warnings.join(' | ')}`);
+    }
 
     const messages = ingestResult.messages.filter((message) => message.content.trim().length > 0);
     const checkpointDate = getCheckpointDate(ingestResult.maxObservedMtimeMs, since);

@@ -19,6 +19,7 @@ export type IngestCursor = Record<string, IngestFileCursor>;
 export interface IngestResult {
   ok: boolean;
   errors: string[];
+  warnings: string[];
   messages: ChatMessage[];
   cursor: IngestCursor;
   maxObservedMtimeMs: number;
@@ -201,7 +202,8 @@ export async function ingestClaudeLogs(
 ): Promise<IngestResult> {
   const claudeProjectsDir = config.claudeLogDir;
   const messages: ChatMessage[] = [];
-  const errors: string[] = [];
+  const fatalErrors: string[] = [];
+  const warnings: string[] = [];
   const defaultLookbackHours = 24;
   const nextCursor = { ...normalizeIngestCursor(cursor) };
   let maxObservedMtimeMs = since ? since.getTime() : 0;
@@ -217,7 +219,7 @@ export async function ingestClaudeLogs(
       try {
         stat = await fs.stat(projectPath);
       } catch (error) {
-        errors.push(`Claude project stat failed (${projectPath}): ${toErrorMessage(error)}`);
+        warnings.push(`Claude project stat failed (${projectPath}): ${toErrorMessage(error)}`);
         continue;
       }
       if (!stat.isDirectory()) continue;
@@ -226,7 +228,7 @@ export async function ingestClaudeLogs(
       try {
         files = await fs.readdir(projectPath);
       } catch (error) {
-        errors.push(`Claude project read failed (${projectPath}): ${toErrorMessage(error)}`);
+        warnings.push(`Claude project read failed (${projectPath}): ${toErrorMessage(error)}`);
         continue;
       }
       for (const file of files) {
@@ -259,16 +261,23 @@ export async function ingestClaudeLogs(
           messages.push(...deltaResult.messages);
           nextCursor[filePath] = { offset: deltaResult.nextOffset, mtimeMs: fStat.mtimeMs };
         } catch (error) {
-          errors.push(`Claude file ingest failed (${filePath}): ${toErrorMessage(error)}`);
+          warnings.push(`Claude file ingest failed (${filePath}): ${toErrorMessage(error)}`);
         }
       }
     }
   } catch (err) {
     console.error('Claude logs ingestion failed:', err);
-    errors.push(`Claude logs root ingest failed: ${toErrorMessage(err)}`);
+    fatalErrors.push(`Claude logs root ingest failed: ${toErrorMessage(err)}`);
   }
 
-  return { ok: errors.length === 0, errors, messages, cursor: nextCursor, maxObservedMtimeMs };
+  return {
+    ok: fatalErrors.length === 0,
+    errors: fatalErrors,
+    warnings,
+    messages,
+    cursor: nextCursor,
+    maxObservedMtimeMs,
+  };
 }
 
 /**
@@ -280,7 +289,8 @@ export async function ingestAntigravityLogs(
 ): Promise<IngestResult> {
   const antigravityDir = config.antigravityLogDir;
   const messages: ChatMessage[] = [];
-  const errors: string[] = [];
+  const fatalErrors: string[] = [];
+  const warnings: string[] = [];
   const defaultLookbackHours = 24;
   const nextCursor = { ...normalizeIngestCursor(cursor) };
   let maxObservedMtimeMs = since ? since.getTime() : 0;
@@ -327,13 +337,20 @@ export async function ingestAntigravityLogs(
         if (isIgnorableOptionalFileError(error)) {
           continue;
         }
-        errors.push(`Antigravity file ingest failed (${logPath}): ${toErrorMessage(error)}`);
+        warnings.push(`Antigravity file ingest failed (${logPath}): ${toErrorMessage(error)}`);
       }
     }
   } catch (err) {
     console.error('Antigravity logs ingestion failed:', err);
-    errors.push(`Antigravity logs root ingest failed: ${toErrorMessage(err)}`);
+    fatalErrors.push(`Antigravity logs root ingest failed: ${toErrorMessage(err)}`);
   }
 
-  return { ok: errors.length === 0, errors, messages, cursor: nextCursor, maxObservedMtimeMs };
+  return {
+    ok: fatalErrors.length === 0,
+    errors: fatalErrors,
+    warnings,
+    messages,
+    cursor: nextCursor,
+    maxObservedMtimeMs,
+  };
 }
