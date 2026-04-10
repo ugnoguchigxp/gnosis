@@ -141,7 +141,7 @@ ${context}
 export interface DistilledKnowledge {
   memories: string[];
   entities: { id: string; type: string; name: string; description: string }[];
-  relations: { sourceId: string; targetId: string; relationType: string; weight: number }[];
+  relations: { sourceId: string; targetId: string; relationType: string; weight?: number }[];
 }
 
 function normalizeDistilledKnowledge(raw: unknown): DistilledKnowledge {
@@ -176,23 +176,40 @@ function normalizeDistilledKnowledge(raw: unknown): DistilledKnowledge {
             sourceId: string;
             targetId: string;
             relationType: string;
-            weight: number | string;
+            weight?: number | string | null;
           } =>
             relation !== null &&
             typeof relation === 'object' &&
             typeof (relation as { sourceId?: unknown }).sourceId === 'string' &&
             typeof (relation as { targetId?: unknown }).targetId === 'string' &&
-            typeof (relation as { relationType?: unknown }).relationType === 'string' &&
-            (typeof (relation as { weight?: unknown }).weight === 'number' ||
-              typeof (relation as { weight?: unknown }).weight === 'string'),
+            typeof (relation as { relationType?: unknown }).relationType === 'string',
         )
-        .map((relation) => ({
-          sourceId: relation.sourceId,
-          targetId: relation.targetId,
-          relationType: relation.relationType,
-          weight: typeof relation.weight === 'number' ? relation.weight : Number(relation.weight),
-        }))
-        .filter((relation) => Number.isFinite(relation.weight))
+        .map((relation) => {
+          const rawWeight = relation.weight;
+          if (rawWeight === undefined || rawWeight === null || rawWeight === '') {
+            return {
+              sourceId: relation.sourceId,
+              targetId: relation.targetId,
+              relationType: relation.relationType,
+            };
+          }
+
+          const numericWeight = typeof rawWeight === 'number' ? rawWeight : Number(rawWeight);
+          if (!Number.isFinite(numericWeight)) {
+            return {
+              sourceId: relation.sourceId,
+              targetId: relation.targetId,
+              relationType: relation.relationType,
+            };
+          }
+
+          return {
+            sourceId: relation.sourceId,
+            targetId: relation.targetId,
+            relationType: relation.relationType,
+            weight: numericWeight,
+          };
+        })
     : [];
 
   return { memories, entities, relations };

@@ -1,9 +1,31 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import Graph from 'graphology';
 import { config } from '../config.js';
 import { db } from '../db/index.js';
 import { communities, entities, relations } from '../db/schema.js';
 import { extractEntitiesFromText, judgeAndMergeEntities } from './llm.js';
 import { generateEmbedding } from './memory.js';
+
+/**
+ * データベースの情報から graphology のグラフインスタンスを構築します。
+ */
+export async function buildGraph() {
+  const allEntities = await db.select().from(entities);
+  const allRelations = await db.select().from(relations);
+
+  const graph = new Graph();
+  for (const entity of allEntities) {
+    if (!graph.hasNode(entity.id)) {
+      graph.addNode(entity.id, { ...entity });
+    }
+  }
+  for (const rel of allRelations) {
+    if (graph.hasNode(rel.sourceId) && graph.hasNode(rel.targetId)) {
+      graph.addEdge(rel.sourceId, rel.targetId, { ...rel });
+    }
+  }
+  return graph;
+}
 
 type DbClient = Pick<typeof db, 'insert' | 'select' | 'update' | 'delete' | 'execute'>;
 type EmbeddingGenerator = (text: string) => Promise<number[]>;
@@ -337,4 +359,78 @@ export async function deleteRelation(sourceId: string, targetId: string, relatio
         eq(relations.relationType, relationType),
       ),
     );
+}
+
+/**
+ * 2つのエンティティ間のつながり（最短経路）を探索します。
+ * 入力が文字列の場合は、ベクトル検索で最適なエンティティを特定してから探索を開始します。
+ */
+export async function findPathBetweenEntities(queryA: string, queryB: string) {
+  const idA = await findEntityById(queryA).then(
+    async (id) => id || (await searchEntityByQuery(queryA)),
+  );
+  const idB = await findEntityById(queryB).then(
+    async (id) => id || (await searchEntityByQuery(queryB)),
+  );
+
+  if (!idA || !idB) {
+    throw new Error('One or both entities could not be resolved.');
+  }
+
+  if (idA === idB) {
+    const [e] = await db.select().from(entities).where(eq(entities.id, idA));
+    return { entities: [e], relations: [] };
+  }
+
+  const graph = await buildGraph();
+  const maxHops = config.maxPathHops;
+
+  // BFS による最短経路探索
+  const queue: { id: string; path: string[]; relations: (typeof relations.$inferSelect)[] }[] = [
+    { id: idA, path: [idA], relations: [] },
+  ];
+  const visited = new Set<string>();
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) break;
+
+    if (current.path.length > maxHops) continue;
+
+    if (current.id === idB) {
+      // 経路上のエンティティ詳細を取得
+      const entitiesInPath = await db
+        .select()
+        .from(entities)
+        .where(inArray(entities.id, current.path));
+
+      // 順序を保つためにソート
+      const sortedEntities = current.path
+        .map((id) => entitiesInPath.find((e) => e.id === id))
+        .filter((e): e is typeof entities.$inferSelect => !!e);
+
+      return {
+        entities: sortedEntities,
+        relations: current.relations,
+      };
+    }
+
+    visited.add(current.id);
+
+    // 隣接ノードを取得
+    const neighbors = graph.neighbors(current.id);
+    for (const neighborId of neighbors) {
+      if (!visited.has(neighborId)) {
+        const edge = graph.edge(current.id, neighborId);
+        const edgeData = graph.getEdgeAttributes(edge);
+        queue.push({
+          id: neighborId,
+          path: [...current.path, neighborId],
+          relations: [...current.relations, edgeData as typeof relations.$inferSelect],
+        });
+      }
+    }
+  }
+
+  return { message: 'No path found within the allowed number of hops.', maxHops };
 }

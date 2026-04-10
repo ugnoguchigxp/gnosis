@@ -1,4 +1,5 @@
 import {
+  boolean,
   index,
   integer,
   jsonb,
@@ -21,9 +22,11 @@ export const vibeMemories = pgTable(
     content: text('content').notNull(),
     // Matching configured dimension
     embedding: vector('embedding', { dimensions: config.embeddingDimension }),
+    dedupeKey: text('dedupe_key'),
     metadata: jsonb('metadata').default({}),
     referenceCount: integer('reference_count').default(0).notNull(),
     lastReferencedAt: timestamp('last_referenced_at').defaultNow().notNull(),
+    isSynthesized: boolean('is_synthesized').default(false).notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (table) => ({
@@ -34,6 +37,10 @@ export const vibeMemories = pgTable(
     embeddingHnswIdx: index('vibe_memories_embedding_hnsw_idx').using(
       'hnsw',
       table.embedding.op('vector_cosine_ops'),
+    ),
+    sessionDedupeUnique: unique('vibe_memories_session_dedupe_key_unique').on(
+      table.sessionId,
+      table.dedupeKey,
     ),
   }),
 );

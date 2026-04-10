@@ -8,6 +8,7 @@ import {
   deleteRelation,
   digestTextIntelligence,
   findEntityById,
+  findPathBetweenEntities,
   queryGraphContext,
   saveEntities,
   saveRelations,
@@ -16,6 +17,7 @@ import {
 } from '../services/graph.js';
 import { deleteMemory, saveMemory, searchMemory } from '../services/memory.js';
 import { syncAllAgentLogs } from '../services/sync.js';
+import { synthesizeKnowledge } from '../services/synthesis.js';
 
 export const server = new Server(
   {
@@ -146,6 +148,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         description: 'グラフ内のエンティティや関係性を訂正・削除してナレッジを更新します',
         inputSchema: zodToJsonSchema(updateGraphSchema),
       },
+      {
+        name: 'find_path',
+        description: '2つのエンティティ間のつながり（最短経路）を探索します',
+        inputSchema: zodToJsonSchema(
+          z.object({
+            queryA: z.string().describe('起点A'),
+            queryB: z.string().describe('終点B'),
+          }),
+        ),
+      },
+      {
+        name: 'reflect_on_memories',
+        description: '未処理のメモリを分析し、知識グラフへ自動統合（自己省察）します',
+        inputSchema: { type: 'object', properties: {} },
+      },
     ],
   };
 });
@@ -260,6 +277,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'sync_agent_logs': {
         const result = await syncAllAgentLogs();
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      case 'find_path': {
+        const { queryA, queryB } = z.object({ queryA: z.string(), queryB: z.string() }).parse(args);
+        const result = await findPathBetweenEntities(queryA, queryB);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      case 'reflect_on_memories': {
+        const result = await synthesizeKnowledge();
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };

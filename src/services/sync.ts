@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { syncState, vibeMemories } from '../db/schema.js';
 import { saveEntities, saveRelations } from './graph.js';
@@ -11,7 +11,7 @@ import {
   normalizeIngestCursor,
 } from './ingest.js';
 import { type DistilledKnowledge, distillKnowledgeFromTranscript } from './llm.js';
-import { saveMemory } from './memory.js';
+import { generateEmbedding } from './memory.js';
 
 const SYNC_SESSION_ID = 'sync-agent-logs';
 const DEFAULT_MAX_MESSAGES_PER_CHUNK = 120;
@@ -171,6 +171,17 @@ export async function syncAllAgentLogs() {
 
     // 2. ログの読み込み (前回のファイルオフセット以降)
     const ingestResult = await source.ingest(since, cursor);
+    if (!ingestResult.ok) {
+      console.warn(
+        `Ingestion failed for ${
+          source.label
+        }. Skip this source without updating checkpoint. Errors: ${ingestResult.errors.join(
+          ' | ',
+        )}`,
+      );
+      continue;
+    }
+
     const messages = ingestResult.messages.filter((message) => message.content.trim().length > 0);
     const checkpointDate = getCheckpointDate(ingestResult.maxObservedMtimeMs, since);
 
@@ -204,26 +215,24 @@ export async function syncAllAgentLogs() {
     await db.transaction(async (tx) => {
       for (const content of dedupedMemories) {
         const dedupeKey = createHash('sha256').update(`${source.id}\n${content}`).digest('hex');
-        const metadataFilter = { sourceId: source.id, dedupeKey };
+        const embedding = await generateEmbedding(content);
+        const inserted = await tx
+          .insert(vibeMemories)
+          .values({
+            sessionId: SYNC_SESSION_ID,
+            content,
+            embedding,
+            dedupeKey,
+            metadata: { source: source.label, sourceId: source.id, dedupeKey },
+          })
+          .onConflictDoNothing({
+            target: [vibeMemories.sessionId, vibeMemories.dedupeKey],
+          })
+          .returning({ id: vibeMemories.id });
 
-        const [existing] = await tx
-          .select({ id: vibeMemories.id })
-          .from(vibeMemories)
-          .where(
-            sql`${vibeMemories.sessionId} = ${SYNC_SESSION_ID} AND ${
-              vibeMemories.metadata
-            } @> ${JSON.stringify(metadataFilter)}::jsonb`,
-          )
-          .limit(1);
-
-        if (existing) continue;
-        await saveMemory(
-          SYNC_SESSION_ID,
-          content,
-          { source: source.label, sourceId: source.id, dedupeKey },
-          tx,
-        );
-        insertedMemories.count += 1;
+        if (inserted.length > 0) {
+          insertedMemories.count += 1;
+        }
       }
 
       if (dedupedEntities.length > 0) {

@@ -17,6 +17,8 @@ export interface IngestFileCursor {
 export type IngestCursor = Record<string, IngestFileCursor>;
 
 export interface IngestResult {
+  ok: boolean;
+  errors: string[];
   messages: ChatMessage[];
   cursor: IngestCursor;
   maxObservedMtimeMs: number;
@@ -40,6 +42,90 @@ function extractClaudeTextContent(raw: unknown): string {
     )
     .map((part) => part.text)
     .join('\n');
+}
+
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function hasFsErrorCode(error: unknown, code: string): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: unknown }).code === code
+  );
+}
+
+function isIgnorableOptionalFileError(error: unknown): boolean {
+  return hasFsErrorCode(error, 'ENOENT') || hasFsErrorCode(error, 'ENOTDIR');
+}
+
+function parseClaudeJsonLine(line: string): ChatMessage | null {
+  try {
+    const data = JSON.parse(line) as {
+      type?: unknown;
+      message?: { content?: unknown };
+    };
+    if (data.type !== 'user' && data.type !== 'assistant') return null;
+
+    const textContent = extractClaudeTextContent(data.message?.content);
+    if (!textContent.trim()) return null;
+
+    return {
+      role: data.type,
+      content: filterSensitiveData(textContent),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function processClaudeJsonlDelta(
+  content: string,
+  startOffset: number,
+): { messages: ChatMessage[]; nextOffset: number } {
+  if (!content) return { messages: [], nextOffset: startOffset };
+
+  const messages: ChatMessage[] = [];
+  const endsWithNewline = content.endsWith('\n');
+
+  let completeSegment = content;
+  let trailingSegment = '';
+  if (!endsWithNewline) {
+    const lastNewlineIndex = content.lastIndexOf('\n');
+    if (lastNewlineIndex >= 0) {
+      completeSegment = content.slice(0, lastNewlineIndex + 1);
+      trailingSegment = content.slice(lastNewlineIndex + 1);
+    } else {
+      completeSegment = '';
+      trailingSegment = content;
+    }
+  }
+
+  if (completeSegment) {
+    const lines = completeSegment.split('\n').filter((line) => line.trim());
+    for (const line of lines) {
+      const parsed = parseClaudeJsonLine(line);
+      if (parsed) messages.push(parsed);
+    }
+  }
+
+  let consumedBytes = Buffer.byteLength(completeSegment, 'utf8');
+  if (!endsWithNewline) {
+    const trailingTrimmed = trailingSegment.trim();
+    if (!trailingTrimmed) {
+      consumedBytes += Buffer.byteLength(trailingSegment, 'utf8');
+    } else {
+      const parsedTrailing = parseClaudeJsonLine(trailingSegment);
+      if (parsedTrailing) {
+        messages.push(parsedTrailing);
+        consumedBytes += Buffer.byteLength(trailingSegment, 'utf8');
+      }
+    }
+  }
+
+  return { messages, nextOffset: startOffset + consumedBytes };
 }
 
 export function normalizeIngestCursor(raw: unknown): IngestCursor {
@@ -115,6 +201,7 @@ export async function ingestClaudeLogs(
 ): Promise<IngestResult> {
   const claudeProjectsDir = config.claudeLogDir;
   const messages: ChatMessage[] = [];
+  const errors: string[] = [];
   const defaultLookbackHours = 24;
   const nextCursor = { ...normalizeIngestCursor(cursor) };
   let maxObservedMtimeMs = since ? since.getTime() : 0;
@@ -126,64 +213,62 @@ export async function ingestClaudeLogs(
 
     for (const project of projects) {
       const projectPath = path.join(claudeProjectsDir, project);
-      const stat = await fs.stat(projectPath);
+      let stat: Awaited<ReturnType<typeof fs.stat>>;
+      try {
+        stat = await fs.stat(projectPath);
+      } catch (error) {
+        errors.push(`Claude project stat failed (${projectPath}): ${toErrorMessage(error)}`);
+        continue;
+      }
       if (!stat.isDirectory()) continue;
 
-      const files = await fs.readdir(projectPath);
+      let files: string[] = [];
+      try {
+        files = await fs.readdir(projectPath);
+      } catch (error) {
+        errors.push(`Claude project read failed (${projectPath}): ${toErrorMessage(error)}`);
+        continue;
+      }
       for (const file of files) {
         if (!file.endsWith('.jsonl')) continue;
 
         const filePath = path.join(projectPath, file);
-        const fStat = await fs.stat(filePath);
-        maxObservedMtimeMs = Math.max(maxObservedMtimeMs, fStat.mtimeMs);
-        const prev = nextCursor[filePath];
+        try {
+          const fStat = await fs.stat(filePath);
+          maxObservedMtimeMs = Math.max(maxObservedMtimeMs, fStat.mtimeMs);
+          const prev = nextCursor[filePath];
 
-        // 初回のみ lookback 以前のファイルはスキップし、カーソルだけ現在サイズへ進める
-        if (!prev && fStat.mtimeMs < threshold) {
-          nextCursor[filePath] = { offset: fStat.size, mtimeMs: fStat.mtimeMs };
-          continue;
-        }
-
-        let startOffset = prev?.offset ?? 0;
-        if (startOffset > fStat.size) {
-          // ログローテーション等でファイルが縮んだ場合は先頭から読み直す
-          startOffset = 0;
-        }
-        if (startOffset === fStat.size) {
-          nextCursor[filePath] = { offset: fStat.size, mtimeMs: fStat.mtimeMs };
-          continue;
-        }
-
-        const content = await readTextDelta(filePath, startOffset);
-        const lines = content.split('\n').filter((line) => line.trim());
-
-        for (const line of lines) {
-          try {
-            const data = JSON.parse(line) as {
-              type?: unknown;
-              message?: { content?: unknown };
-            };
-            if (data.type === 'user' || data.type === 'assistant') {
-              const role = data.type;
-              const textContent = extractClaudeTextContent(data.message?.content);
-
-              if (textContent) {
-                messages.push({ role, content: filterSensitiveData(textContent) });
-              }
-            }
-          } catch (e) {
-            // ignore malformed lines
+          // 初回のみ lookback 以前のファイルはスキップし、カーソルだけ現在サイズへ進める
+          if (!prev && fStat.mtimeMs < threshold) {
+            nextCursor[filePath] = { offset: fStat.size, mtimeMs: fStat.mtimeMs };
+            continue;
           }
-        }
 
-        nextCursor[filePath] = { offset: fStat.size, mtimeMs: fStat.mtimeMs };
+          let startOffset = prev?.offset ?? 0;
+          if (startOffset > fStat.size) {
+            // ログローテーション等でファイルが縮んだ場合は先頭から読み直す
+            startOffset = 0;
+          }
+          if (startOffset === fStat.size) {
+            nextCursor[filePath] = { offset: fStat.size, mtimeMs: fStat.mtimeMs };
+            continue;
+          }
+
+          const content = await readTextDelta(filePath, startOffset);
+          const deltaResult = processClaudeJsonlDelta(content, startOffset);
+          messages.push(...deltaResult.messages);
+          nextCursor[filePath] = { offset: deltaResult.nextOffset, mtimeMs: fStat.mtimeMs };
+        } catch (error) {
+          errors.push(`Claude file ingest failed (${filePath}): ${toErrorMessage(error)}`);
+        }
       }
     }
   } catch (err) {
     console.error('Claude logs ingestion failed:', err);
+    errors.push(`Claude logs root ingest failed: ${toErrorMessage(err)}`);
   }
 
-  return { messages, cursor: nextCursor, maxObservedMtimeMs };
+  return { ok: errors.length === 0, errors, messages, cursor: nextCursor, maxObservedMtimeMs };
 }
 
 /**
@@ -195,6 +280,7 @@ export async function ingestAntigravityLogs(
 ): Promise<IngestResult> {
   const antigravityDir = config.antigravityLogDir;
   const messages: ChatMessage[] = [];
+  const errors: string[] = [];
   const defaultLookbackHours = 24;
   const nextCursor = { ...normalizeIngestCursor(cursor) };
   let maxObservedMtimeMs = since ? since.getTime() : 0;
@@ -237,13 +323,17 @@ export async function ingestAntigravityLogs(
         // フォーマットに合わせてパース（ここでは簡易的に不純物を取り除くのみ）
         messages.push({ role: 'assistant', content: filterSensitiveData(content) });
         nextCursor[logPath] = { offset: stat.size, mtimeMs: stat.mtimeMs };
-      } catch (e) {
-        // file not found or other error
+      } catch (error) {
+        if (isIgnorableOptionalFileError(error)) {
+          continue;
+        }
+        errors.push(`Antigravity file ingest failed (${logPath}): ${toErrorMessage(error)}`);
       }
     }
   } catch (err) {
     console.error('Antigravity logs ingestion failed:', err);
+    errors.push(`Antigravity logs root ingest failed: ${toErrorMessage(err)}`);
   }
 
-  return { messages, cursor: nextCursor, maxObservedMtimeMs };
+  return { ok: errors.length === 0, errors, messages, cursor: nextCursor, maxObservedMtimeMs };
 }

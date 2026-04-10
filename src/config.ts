@@ -26,6 +26,12 @@ export const config = {
   antigravityLogDir:
     process.env.GNOSIS_ANTIGRAVITY_LOG_DIR || path.join(os.homedir(), '.gemini/antigravity/brain'),
 
+  // 自己省察のバッチサイズ
+  synthesisBatchSize: 10,
+
+  // 連想検索の最大ホップ数
+  maxPathHops: 5,
+
   // データベース接続情報 (Drizzle用)
   databaseUrl: process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:7888/gnosis',
 };

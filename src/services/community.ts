@@ -1,8 +1,8 @@
-import { eq, inArray, sql } from 'drizzle-orm';
-import Graph from 'graphology';
+import { inArray } from 'drizzle-orm';
 import louvain from 'graphology-communities-louvain';
 import { db } from '../db/index.js';
-import { communities, entities, relations } from '../db/schema.js';
+import { communities, entities, type relations } from '../db/schema.js';
+import { buildGraph } from './graph.js';
 import { summarizeCommunity } from './llm.js';
 
 /**
@@ -11,24 +11,17 @@ import { summarizeCommunity } from './llm.js';
 export async function buildCommunities() {
   console.log('Starting community detection...');
 
-  // 1. 全エンティティとリレーションの取得
-  const allEntities = await db.select().from(entities);
-  const allRelations = await db.select().from(relations);
+  // 1. グラフの構築 (共通関数を使用)
+  const graph = await buildGraph();
+  const allEntities = graph
+    .nodes()
+    .map((id) => graph.getNodeAttributes(id) as typeof entities.$inferSelect);
+  const allRelations = graph
+    .edges()
+    .map((id) => graph.getEdgeAttributes(id) as typeof relations.$inferSelect);
 
   if (allEntities.length === 0) {
     return { message: 'No entities found to group.' };
-  }
-
-  // 2. graphology グラフの構築
-  const graph = new Graph();
-  for (const entity of allEntities) {
-    graph.addNode(entity.id, { name: entity.name });
-  }
-  for (const rel of allRelations) {
-    // Note: Node might not exist if data is inconsistent, though schema prevents it
-    if (graph.hasNode(rel.sourceId) && graph.hasNode(rel.targetId)) {
-      graph.addEdge(rel.sourceId, rel.targetId);
-    }
   }
 
   // 3. Louvain アルゴリズムによるコミュニティ検知

@@ -29,6 +29,13 @@
       "when": 1775830000000,
       "tag": "0003_sync_state_cursor",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1775832600000,
+      "tag": "0004_vibe_memory_dedupe_key",
+      "breakpoints": true
     }
   ]
 }
