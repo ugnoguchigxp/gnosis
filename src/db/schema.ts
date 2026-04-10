@@ -108,3 +108,30 @@ export const relations = pgTable(
     ),
   }),
 );
+
+// 失敗学習ループ (Failure Learning Loop)
+export const experienceLogs = pgTable(
+  'experience_logs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    sessionId: text('session_id').notNull(),
+    scenarioId: text('scenario_id').notNull(),
+    attempt: integer('attempt').notNull(),
+    type: text('type').notNull(), // 'failure' | 'success'
+    failureType: text('failure_type'), // e.g., 'RISK_BLOCKING'
+    content: text('content').notNull(),
+    embedding: vector('embedding', { dimensions: config.embeddingDimension }),
+    metadata: jsonb('metadata').default({}), // riskFindings, applyRejects, patchDigest, etc.
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    sessionScenarioIdx: index('experience_logs_session_scenario_idx').on(
+      table.sessionId,
+      table.scenarioId,
+    ),
+    embeddingHnswIdx: index('experience_logs_embedding_hnsw_idx').using(
+      'hnsw',
+      table.embedding.op('vector_cosine_ops'),
+    ),
+  }),
+);

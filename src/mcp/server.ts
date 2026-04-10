@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { db } from '../db/index.js';
 import { buildCommunities } from '../services/community.js';
+import { recallExperienceLessons, saveExperience } from '../services/experience.js';
 import {
   deleteRelation,
   digestTextIntelligence,
@@ -103,6 +104,25 @@ const updateGraphSchema = z.object({
     .describe('リレーション削除時のみ使用'),
 });
 
+const recordExperienceSchema = z.object({
+  sessionId: z.string().describe('セッションID'),
+  scenarioId: z.string().describe('シナリオID (e.g., smoke-001)'),
+  attempt: z.number().int().positive().describe('試行回数'),
+  type: z.enum(['failure', 'success']).describe('イベントのタイプ (failure or success)'),
+  content: z.string().describe('イベントの内容 (失敗メッセージや成功パッチの説明)'),
+  failureType: z.string().optional().describe('失敗のタイプ (e.g., RISK_BLOCKING)'),
+  metadata: z
+    .record(z.unknown())
+    .optional()
+    .describe('追加のメタデータ (riskFindings, applyRejects, patchDigest など)'),
+});
+
+const recallLessonsSchema = z.object({
+  sessionId: z.string().describe('検索対象のセッションID'),
+  query: z.string().describe('現在の失敗状況やエラーメッセージ'),
+  limit: z.number().int().positive().optional().default(5).describe('取得件数'),
+});
+
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
@@ -162,6 +182,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         name: 'reflect_on_memories',
         description: '未処理のメモリを分析し、知識グラフへ自動統合（自己省察）します',
         inputSchema: { type: 'object', properties: {} },
+      },
+      {
+        name: 'record_experience',
+        description: '失敗または成功イベントを構造化された教訓として記録します',
+        inputSchema: zodToJsonSchema(recordExperienceSchema),
+      },
+      {
+        name: 'recall_lessons',
+        description: '類似する失敗事例から解決策や教訓を検索します',
+        inputSchema: zodToJsonSchema(recallLessonsSchema),
       },
     ],
   };
@@ -294,6 +324,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const result = await synthesizeKnowledge();
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      case 'record_experience': {
+        const input = recordExperienceSchema.parse(args);
+        const experience = await saveExperience(input);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Experience recorded successfully with ID: ${experience.id}`,
+            },
+          ],
+        };
+      }
+
+      case 'recall_lessons': {
+        const { sessionId, query, limit } = recallLessonsSchema.parse(args);
+        const results = await recallExperienceLessons(sessionId, query, limit);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(results, null, 2) }],
         };
       }
 

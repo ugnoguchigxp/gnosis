@@ -278,7 +278,7 @@ export async function findEntityById(
 export async function searchEntitiesByText(
   query: string,
   limit = 5,
-  database: Pick<typeof db, 'select'> = db,
+  database: Pick<typeof db, 'select' | 'update'> = db,
 ) {
   const embedding = await generateEmbedding(query);
   const embeddingStr = JSON.stringify(embedding);

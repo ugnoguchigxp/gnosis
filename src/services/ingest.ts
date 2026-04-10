@@ -154,7 +154,9 @@ async function readTextDelta(filePath: string, startOffset: number): Promise<str
   return await new Promise((resolve, reject) => {
     const chunks: string[] = [];
     const stream = createReadStream(filePath, { start: startOffset, encoding: 'utf-8' });
-    stream.on('data', (chunk) => chunks.push(chunk));
+    stream.on('data', (chunk) =>
+      chunks.push(typeof chunk === 'string' ? chunk : chunk.toString('utf-8')),
+    );
     stream.on('end', () => resolve(chunks.join('')));
     stream.on('error', reject);
   });
