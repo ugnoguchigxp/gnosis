@@ -1,3 +1,4 @@
+import { searchKnowledgeClaims } from '../services/knowledge.js';
 import { searchMemory } from '../services/memory.js';
 
 async function main() {
@@ -19,20 +20,24 @@ async function main() {
   }
 
   try {
-    const memories = await searchMemory(sessionId, queryRaw, limit);
-    if (memories.length === 0) {
-      process.stdout.write('');
-      return;
+    const [memories, claims] = await Promise.all([
+      searchMemory(sessionId, queryRaw, limit),
+      searchKnowledgeClaims(queryRaw, limit),
+    ]);
+
+    const parts: string[] = [];
+
+    for (const [i, m] of memories.entries()) {
+      const score = Number(m.similarity).toFixed(4);
+      parts.push(`[Memory #${i + 1} score=${score}]\n${m.content}`);
     }
 
-    const context = memories
-      .map((m, i) => {
-        const score = Number(m.similarity).toFixed(4);
-        return `[Memory #${i + 1} score=${score}]\n${m.content}`;
-      })
-      .join('\n\n');
+    for (const [i, c] of claims.entries()) {
+      const conf = Number(c.confidence).toFixed(4);
+      parts.push(`[Knowledge #${i + 1} topic=${c.topic} confidence=${conf}]\n${c.text}`);
+    }
 
-    process.stdout.write(context);
+    process.stdout.write(parts.join('\n\n'));
   } catch (error) {
     console.error('Recall error:', error);
     process.exit(1);

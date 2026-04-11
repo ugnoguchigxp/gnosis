@@ -1,4 +1,5 @@
 import {
+  bigint,
   boolean,
   index,
   integer,
@@ -133,5 +134,123 @@ export const experienceLogs = pgTable(
       'hnsw',
       table.embedding.op('vector_cosine_ops'),
     ),
+  }),
+);
+
+// KnowFlow Queue (JSONB payload)
+export const topicTasks = pgTable(
+  'topic_tasks',
+  {
+    id: uuid('id').primaryKey(),
+    dedupeKey: text('dedupe_key').notNull(),
+    status: text('status').notNull(), // pending | running | done | failed | deferred
+    priority: integer('priority').notNull(),
+    nextRunAt: bigint('next_run_at', { mode: 'number' }),
+    lockedAt: bigint('locked_at', { mode: 'number' }),
+    lockOwner: text('lock_owner'),
+    payload: jsonb('payload').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    statusNextRunPriorityIdx: index('topic_tasks_status_next_run_priority_idx').on(
+      table.status,
+      table.nextRunAt,
+      table.priority,
+      table.createdAt,
+    ),
+    dedupeKeyIdx: index('topic_tasks_dedupe_key_idx').on(table.dedupeKey),
+  }),
+);
+
+// KnowFlow Knowledge tables
+export const knowledgeTopics = pgTable(
+  'knowledge_topics',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    canonicalTopic: text('canonical_topic').notNull(),
+    aliases: jsonb('aliases').default([]).notNull(),
+    confidence: real('confidence').default(0).notNull(),
+    coverage: real('coverage').default(0).notNull(),
+    version: integer('version').default(1).notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    canonicalTopicUnique: unique('knowledge_topics_canonical_topic_unique').on(
+      table.canonicalTopic,
+    ),
+    updatedAtIdx: index('knowledge_topics_updated_idx').on(table.updatedAt),
+  }),
+);
+
+export const knowledgeClaims = pgTable(
+  'knowledge_claims',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    topicId: uuid('topic_id')
+      .references(() => knowledgeTopics.id, { onDelete: 'cascade' })
+      .notNull(),
+    text: text('text').notNull(),
+    confidence: real('confidence').default(0).notNull(),
+    sourceIds: jsonb('source_ids').default([]).notNull(),
+    embedding: jsonb('embedding'),
+    fingerprint: text('fingerprint').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    topicFingerprintUnique: unique('knowledge_claims_topic_fingerprint_unique').on(
+      table.topicId,
+      table.fingerprint,
+    ),
+    topicIdx: index('knowledge_claims_topic_idx').on(table.topicId),
+  }),
+);
+
+export const knowledgeRelations = pgTable(
+  'knowledge_relations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    topicId: uuid('topic_id')
+      .references(() => knowledgeTopics.id, { onDelete: 'cascade' })
+      .notNull(),
+    relationType: text('relation_type').notNull(),
+    targetTopic: text('target_topic').notNull(),
+    confidence: real('confidence').default(0).notNull(),
+    fingerprint: text('fingerprint').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    topicFingerprintUnique: unique('knowledge_relations_topic_fingerprint_unique').on(
+      table.topicId,
+      table.fingerprint,
+    ),
+    topicIdx: index('knowledge_relations_topic_idx').on(table.topicId),
+  }),
+);
+
+export const knowledgeSources = pgTable(
+  'knowledge_sources',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    topicId: uuid('topic_id')
+      .references(() => knowledgeTopics.id, { onDelete: 'cascade' })
+      .notNull(),
+    sourceId: text('source_id').notNull(),
+    url: text('url').notNull(),
+    title: text('title'),
+    domain: text('domain'),
+    fetchedAt: bigint('fetched_at', { mode: 'number' }).notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    topicSourceUnique: unique('knowledge_sources_topic_source_unique').on(
+      table.topicId,
+      table.sourceId,
+    ),
+    topicIdx: index('knowledge_sources_topic_idx').on(table.topicId),
   }),
 );

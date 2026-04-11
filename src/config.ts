@@ -9,6 +9,9 @@ export const config = {
   llmScript:
     process.env.GNOSIS_LLM_SCRIPT || path.join(os.homedir(), 'Code/localLlm/scripts/gemma4'),
 
+  // localLlm プロジェクトのルートパス (MCP Retriever用)
+  localLlmPath: process.env.GNOSIS_LOCAL_LLM_PATH || path.join(os.homedir(), 'Code/localLlm'),
+
   // エンティティ抽出/マージ時のタイムアウト (ms)
   llmTimeoutMs: Number(process.env.GNOSIS_LLM_TIMEOUT_MS || '90000'),
 
