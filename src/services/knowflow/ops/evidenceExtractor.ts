@@ -1,4 +1,4 @@
-import { runLlmTask } from '../adapters/llm';
+import { runLlmTask } from '../../../adapters/llm.js';
 import type { FlowEvidence } from '../flows/types';
 
 export type EvidenceExtractionInput = {
@@ -28,8 +28,7 @@ export const extractEvidenceFromText = async (
   const sourceId = `fetch:${Buffer.from(input.url).toString('base64').slice(0, 16)}`;
 
   return {
-    // biome-ignore lint/suspicious/noExplicitAny: c is from LLM output mapping
-    claims: result.output.claims.map((c: any) => ({
+    claims: result.output.claims.map((c) => ({
       text: c.text,
       confidence: c.confidence,
       sourceIds: [sourceId],
@@ -51,8 +50,7 @@ export const extractEvidenceFromText = async (
         fetchedAt: now,
       },
     ],
-    // biome-ignore lint/suspicious/noExplicitAny: r is from LLM output mapping
-    relations: (result.output.relations ?? []).map((r: any) => ({
+    relations: (result.output.relations ?? []).map((r) => ({
       type: r.type,
       targetTopic: r.targetTopic,
       confidence: r.confidence,

@@ -2,16 +2,9 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
+import { createLocalLlmRetriever } from '../adapters/retriever/mcpRetriever.js';
 import { config } from '../config.js';
 import { db } from '../db/index.js';
-import {
-  PgJsonbQueueRepository,
-  PgKnowledgeRepository,
-  createKnowFlowTaskHandler,
-  createLocalLlmRetriever,
-  createMcpEvidenceProvider,
-  runWorkerOnce,
-} from '../knowflow/index.js';
 import { buildCommunities } from '../services/community.js';
 import { recallExperienceLessons, saveExperience } from '../services/experience.js';
 import {
@@ -25,6 +18,13 @@ import {
   searchEntityByQuery,
   updateEntity,
 } from '../services/graph.js';
+import { PgKnowledgeRepository } from '../services/knowflow/knowledge/repository.js';
+import { PgJsonbQueueRepository } from '../services/knowflow/queue/pgJsonbRepository.js';
+import {
+  createKnowFlowTaskHandler,
+  createMcpEvidenceProvider,
+} from '../services/knowflow/worker/knowFlowHandler.js';
+import { runWorkerOnce } from '../services/knowflow/worker/loop.js';
 import { getKnowledgeByTopic, searchKnowledgeClaims } from '../services/knowledge.js';
 import { deleteMemory, saveMemory, searchMemory } from '../services/memory.js';
 import { syncAllAgentLogs } from '../services/sync.js';
@@ -75,7 +75,7 @@ const searchMemorySchema = z.object({
   sessionId: z.string().describe('検索対象のセッションID'),
   query: z.string().describe('検索クエリ'),
   limit: z.number().optional().default(5).describe('取得件数'),
-  filter: z.record(z.any()).optional().describe('メタデータのJSONフィルタ条件'),
+  filter: z.record(z.unknown()).optional().describe('メタデータのJSONフィルタ条件'),
 });
 
 const queryGraphSchema = z.object({
@@ -443,8 +443,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const repository = new PgJsonbQueueRepository();
         const result = await repository.enqueue({
           topic: input.topic,
-          // biome-ignore lint/suspicious/noExplicitAny: input.mode is validated by zod but requires cast for repository
-          mode: input.mode as any,
+          mode: input.mode,
           source: 'user',
           priority: input.priority,
         });
@@ -489,10 +488,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
-    // biome-ignore lint/suspicious/noExplicitAny: error is caught as any in catch block
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
     return {
-      content: [{ type: 'text', text: `Error executing tool: ${error?.message || String(error)}` }],
+      content: [{ type: 'text', text: `Error executing tool: ${message}` }],
       isError: true,
     };
   }

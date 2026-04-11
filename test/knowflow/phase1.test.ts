@@ -2,9 +2,12 @@ import { describe, expect, it } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { FileQueueRepository } from '../../src/knowflow/queue/repository';
-import { computeBackoffMs, decideFailureAction } from '../../src/knowflow/scheduler/policy';
-import { runWorkerOnce } from '../../src/knowflow/worker/loop';
+import { FileQueueRepository } from '../../src/services/knowflow/queue/repository';
+import {
+  computeBackoffMs,
+  decideFailureAction,
+} from '../../src/services/knowflow/scheduler/policy';
+import { runWorkerOnce } from '../../src/services/knowflow/worker/loop';
 
 const createRepo = async () => {
   const dir = await mkdtemp(join(tmpdir(), 'knowflow-phase1-'));

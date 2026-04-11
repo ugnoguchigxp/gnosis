@@ -8,14 +8,33 @@ export type McpRetrieverOptions = {
   env?: Record<string, string>;
 };
 
-interface McpContent {
-  type: string;
-  text: string;
-}
+type McpTextContent = { type: 'text'; text: string };
+type McpContent = McpTextContent | { type: string; [key: string]: unknown };
 
-interface McpToolResult {
-  content: McpContent[];
-}
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null;
+
+const isMcpContent = (value: unknown): value is McpContent => {
+  if (!isRecord(value) || typeof value.type !== 'string') {
+    return false;
+  }
+  if (value.type !== 'text') {
+    return true;
+  }
+  return typeof value.text === 'string';
+};
+
+const extractTextContent = (result: unknown): string => {
+  if (!isRecord(result) || !Array.isArray(result.content)) {
+    throw new Error(`Unexpected MCP tool result format: ${JSON.stringify(result)}`);
+  }
+
+  const contents = result.content.filter(isMcpContent);
+  return contents
+    .map((item) => (item.type === 'text' ? item.text : ''))
+    .join('\n')
+    .trim();
+};
 
 export class McpRetriever {
   private client: Client | null = null;
@@ -26,13 +45,17 @@ export class McpRetriever {
   async connect(): Promise<void> {
     if (this.client) return;
 
+    const env: Record<string, string> = Object.fromEntries(
+      Object.entries({
+        ...process.env,
+        ...this.options.env,
+      }).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+    );
+
     this.transport = new StdioClientTransport({
       command: this.options.pythonPath,
       args: [this.options.serverScriptPath],
-      env: {
-        ...process.env,
-        ...this.options.env,
-      } as Record<string, string>,
+      env,
     });
 
     this.client = new Client(
@@ -53,38 +76,28 @@ export class McpRetriever {
 
   async search(query: string): Promise<string> {
     if (!this.client) await this.connect();
-    // biome-ignore lint/suspicious/noExplicitAny: callTool returns generic result that needs casting for access
-    const result = (await this.client?.callTool({
+    if (!this.client) {
+      throw new Error('MCP client is not connected');
+    }
+    const result = await this.client.callTool({
       name: 'web_search',
       arguments: { query },
-    })) as unknown as McpToolResult;
+    });
 
-    if (!result.content || !Array.isArray(result.content)) {
-      throw new Error(`Unexpected search result format: ${JSON.stringify(result)}`);
-    }
-
-    return result.content
-      .map((c) => (c.type === 'text' ? c.text : ''))
-      .join('\n')
-      .trim();
+    return extractTextContent(result);
   }
 
   async fetch(url: string): Promise<string> {
     if (!this.client) await this.connect();
-    // biome-ignore lint/suspicious/noExplicitAny: callTool returns generic result that needs casting for access
-    const result = (await this.client?.callTool({
+    if (!this.client) {
+      throw new Error('MCP client is not connected');
+    }
+    const result = await this.client.callTool({
       name: 'fetch_content',
       arguments: { url },
-    })) as unknown as McpToolResult;
+    });
 
-    if (!result.content || !Array.isArray(result.content)) {
-      throw new Error(`Unexpected fetch result format: ${JSON.stringify(result)}`);
-    }
-
-    return result.content
-      .map((c) => (c.type === 'text' ? c.text : ''))
-      .join('\n')
-      .trim();
+    return extractTextContent(result);
   }
 }
 

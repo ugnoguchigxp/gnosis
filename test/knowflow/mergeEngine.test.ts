@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
-import type { Knowledge, KnowledgeUpsertInput } from '../../src/knowflow/knowledge/types';
-import { mergeVerifiedKnowledge, normalizeMergeInput } from '../../src/knowflow/merge';
+import type { Knowledge, KnowledgeUpsertInput } from '../../src/services/knowflow/knowledge/types';
+import { mergeVerifiedKnowledge, normalizeMergeInput } from '../../src/services/knowflow/merge';
 
 describe('merge engine', () => {
   it('normalizes and dedupes merge input deterministically', () => {

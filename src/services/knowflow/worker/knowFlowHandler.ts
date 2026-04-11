@@ -1,6 +1,6 @@
-import { runLlmTask } from '../adapters/llm';
-import type { McpRetriever } from '../adapters/retriever/mcpRetriever';
-import { type BudgetConfig, loadBudgetConfigFromEnv } from '../config/budget';
+import { runLlmTask } from '../../../adapters/llm.js';
+import type { McpRetriever } from '../../../adapters/retriever/mcpRetriever.js';
+import { type BudgetConfig, config } from '../../../config.js';
 import type { TopicTask } from '../domain/task';
 import { runCronFlow } from '../flows/cronFlow';
 import type { FlowEvidence } from '../flows/types';
@@ -157,7 +157,10 @@ export const createKnowFlowTaskHandler = (
 ): TaskHandler => {
   const logger = options.logger ?? defaultStructuredLogger;
   const metrics = options.metrics ?? new MetricsCollector();
-  const budget = loadBudgetConfigFromEnv(options.budget);
+  const budget = {
+    ...config.knowflow.budget,
+    ...options.budget,
+  } satisfies BudgetConfig;
   const evidenceProvider = options.evidenceProvider ?? defaultEvidenceProvider;
   const cronRunWindowMs = Math.max(1, Math.trunc(options.cronRunWindowMs ?? 60 * 60 * 1000));
   let cronRunWindowStartedAt = 0;

@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'bun:test';
-import { createQueueRepository, resolveQueueBackend } from '../../src/knowflow/queue/factory';
-import { PgJsonbQueueRepository } from '../../src/knowflow/queue/pgJsonbRepository';
-import { FileQueueRepository } from '../../src/knowflow/queue/repository';
+import {
+  createQueueRepository,
+  resolveQueueBackend,
+} from '../../src/services/knowflow/queue/factory';
+import { PgJsonbQueueRepository } from '../../src/services/knowflow/queue/pgJsonbRepository';
+import { FileQueueRepository } from '../../src/services/knowflow/queue/repository';
 
 describe('queue factory', () => {
   it('uses file backend when explicitly requested', () => {

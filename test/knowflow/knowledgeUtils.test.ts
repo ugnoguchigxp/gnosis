@@ -2,15 +2,15 @@ import { describe, expect, it } from 'bun:test';
 import {
   canonicalizeTopic,
   uniqueNormalizedStrings,
-} from '../../src/knowflow/knowledge/canonicalize';
+} from '../../src/services/knowflow/knowledge/canonicalize';
 import {
   cosineSimilarity,
   fingerprintText,
   jaccardSimilarity,
   shouldMergeClaim,
   shouldMergeClaimText,
-} from '../../src/knowflow/knowledge/similarity';
-import { KnowledgeUpsertInputSchema } from '../../src/knowflow/knowledge/types';
+} from '../../src/services/knowflow/knowledge/similarity';
+import { KnowledgeUpsertInputSchema } from '../../src/services/knowflow/knowledge/types';
 
 describe('knowledge utils', () => {
   it('canonicalizes topics', () => {

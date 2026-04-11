@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import {
-  extractJsonCandidate,
-  parseLlmTaskOutputText,
-  runLlmTask,
-} from '../../src/knowflow/adapters/llm';
+import { extractJsonCandidate, parseLlmTaskOutputText, runLlmTask } from '../../src/adapters/llm';
 
 const noopLogger = () => {
   // no-op in test

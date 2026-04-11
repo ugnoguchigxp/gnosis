@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
-import { createTask } from '../../src/knowflow/domain/task';
-import { parseTaskPayload, toTaskRowFields } from '../../src/knowflow/queue/taskRow';
+import { createTask } from '../../src/services/knowflow/domain/task';
+import { parseTaskPayload, toTaskRowFields } from '../../src/services/knowflow/queue/taskRow';
 
 describe('queue task row mapping', () => {
   it('maps task to db row fields', () => {

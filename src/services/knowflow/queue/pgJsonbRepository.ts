@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, lte, ne, or } from 'drizzle-orm';
-import { db } from '../../db/index.js';
-import { topicTasks } from '../../db/schema.js';
+import { db } from '../../../db/index.js';
+import { topicTasks } from '../../../db/schema.js';
 import { CreateTaskInputSchema, type TopicTask, TopicTaskSchema, createTask } from '../domain/task';
 import { type FailureAction, isRunnable } from '../scheduler/policy';
 import type { QueueRepository } from './repository';
@@ -8,6 +8,8 @@ import { parseTaskPayload, toTaskRowFields } from './taskRow';
 
 const ACTIVE_STATUSES = ['pending', 'running', 'deferred'] as const;
 const RUNNABLE_STATUSES = ['pending', 'deferred'] as const;
+const activeStatuses = [...ACTIVE_STATUSES];
+const runnableStatuses = [...RUNNABLE_STATUSES];
 
 export class PgJsonbQueueRepository implements QueueRepository {
   async enqueue(input: unknown): Promise<{ task: TopicTask; deduped: boolean }> {
@@ -20,11 +22,7 @@ export class PgJsonbQueueRepository implements QueueRepository {
         .select({ id: topicTasks.id, payload: topicTasks.payload })
         .from(topicTasks)
         .where(
-          and(
-            eq(topicTasks.dedupeKey, task.dedupeKey),
-            // biome-ignore lint/suspicious/noExplicitAny: drizzle inArray requires cast for status array
-            inArray(topicTasks.status, ACTIVE_STATUSES as any),
-          ),
+          and(eq(topicTasks.dedupeKey, task.dedupeKey), inArray(topicTasks.status, activeStatuses)),
         )
         .orderBy(asc(topicTasks.createdAt))
         .limit(1)
@@ -62,11 +60,7 @@ export class PgJsonbQueueRepository implements QueueRepository {
         .select({ id: topicTasks.id, payload: topicTasks.payload })
         .from(topicTasks)
         .where(
-          and(
-            eq(topicTasks.dedupeKey, task.dedupeKey),
-            // biome-ignore lint/suspicious/noExplicitAny: drizzle inArray requires cast for status array
-            inArray(topicTasks.status, ACTIVE_STATUSES as any),
-          ),
+          and(eq(topicTasks.dedupeKey, task.dedupeKey), inArray(topicTasks.status, activeStatuses)),
         )
         .orderBy(asc(topicTasks.createdAt))
         .limit(1)
@@ -103,8 +97,7 @@ export class PgJsonbQueueRepository implements QueueRepository {
         .from(topicTasks)
         .where(
           and(
-            // biome-ignore lint/suspicious/noExplicitAny: drizzle inArray requires cast for status array
-            inArray(topicTasks.status, RUNNABLE_STATUSES as any),
+            inArray(topicTasks.status, runnableStatuses),
             or(ne(topicTasks.status, 'deferred'), lte(topicTasks.nextRunAt, now)),
           ),
         )

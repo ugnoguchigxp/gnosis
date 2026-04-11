@@ -89,8 +89,8 @@ bun run src/index.ts
 
 ナレッジエンジンや同期機能を直接操作するためのコマンドです。
 
-*   **`bun run src/knowflow/cli.ts enqueue --topic "..."`**: 調査タスクの投入。
-*   **`bun run src/knowflow/cli.ts run-once --handler knowflow`**: ワーカーの単発実行。
+*   **`bun run src/services/knowflow/cli.ts enqueue --topic "..."`**: 調査タスクの投入。
+*   **`bun run src/services/knowflow/cli.ts run-once --handler knowflow`**: ワーカーの単発実行。
 *   **`bun run src/scripts/sync.ts`**: 各種エージェントログの同期。
 
 ## テストの実行

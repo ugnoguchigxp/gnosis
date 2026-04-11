@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { detectGaps } from '../../src/knowflow/gap/detector';
+import { detectGaps } from '../../src/services/knowflow/gap/detector';
 
 describe('gap detector', () => {
   it('combines rule-based gaps and llm gaps', () => {

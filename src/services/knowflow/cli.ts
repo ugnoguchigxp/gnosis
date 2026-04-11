@@ -1,19 +1,23 @@
 import { resolve } from 'node:path';
-import { runLlmTask } from './adapters/llm';
-import { createLocalLlmRetriever } from './adapters/retriever/mcpRetriever';
+import { runLlmTask } from '../../adapters/llm.js';
+import { createLocalLlmRetriever } from '../../adapters/retriever/mcpRetriever.js';
 import type { TaskMode, TaskSource } from './domain/task';
 import { PgKnowledgeRepository } from './knowledge/repository';
 import { PgJsonbQueueRepository } from './queue/pgJsonbRepository';
 import { LlmTaskNameSchema } from './schemas/llm';
 import { parseArgMap, readBooleanFlag, readNumberFlag, readStringFlag } from './utils/args';
-import { createKnowFlowTaskHandler, createMcpEvidenceProvider } from './worker/knowFlowHandler';
+import {
+  type EvidenceProvider,
+  createKnowFlowTaskHandler,
+  createMcpEvidenceProvider,
+} from './worker/knowFlowHandler';
 import { type TaskHandler, defaultTaskHandler, runWorkerLoop, runWorkerOnce } from './worker/loop';
 
 const usage = `Usage:
-  bun src/knowflow/cli.ts enqueue --topic <text> [--mode directed|expand|explore] [--source user|cron] [--priority <n>]
-  bun src/knowflow/cli.ts run-once [--worker-id <id>] [--max-attempts <n>] [--handler default|knowflow] [--fail] [--local-llm-path <path>]
-  bun src/knowflow/cli.ts run-worker [--worker-id <id>] [--interval-ms <n>] [--max-iterations <n>] [--max-attempts <n>] [--handler default|knowflow] [--fail] [--local-llm-path <path>]
-  bun src/knowflow/cli.ts llm-task --task hypothesis|query_generation|gap_detection|gap_planner|summarize --context-json <json>
+  bun src/services/knowflow/cli.ts enqueue --topic <text> [--mode directed|expand|explore] [--source user|cron] [--priority <n>]
+  bun src/services/knowflow/cli.ts run-once [--worker-id <id>] [--max-attempts <n>] [--handler default|knowflow] [--fail] [--local-llm-path <path>]
+  bun src/services/knowflow/cli.ts run-worker [--worker-id <id>] [--interval-ms <n>] [--max-iterations <n>] [--max-attempts <n>] [--handler default|knowflow] [--fail] [--local-llm-path <path>]
+  bun src/services/knowflow/cli.ts llm-task --task hypothesis|query_generation|gap_detection|gap_planner|summarize --context-json <json>
 `;
 
 const parseContextJson = (raw: string | undefined): Record<string, unknown> => {
@@ -34,8 +38,7 @@ const createHandler = (options: {
 }): TaskHandler => {
   if (options.handlerName === 'knowflow') {
     const repository = new PgKnowledgeRepository();
-    // biome-ignore lint/suspicious/noImplicitAnyLet: evidenceProvider is assigned based on conditions
-    let evidenceProvider;
+    let evidenceProvider: EvidenceProvider | undefined;
     if (options.localLlmPath) {
       const retriever = createLocalLlmRetriever(resolve(options.localLlmPath));
       evidenceProvider = createMcpEvidenceProvider(retriever);

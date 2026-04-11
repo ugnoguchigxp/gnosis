@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { buildVerificationSummary, verifyEvidence } from '../../src/knowflow/verifier';
+import { buildVerificationSummary, verifyEvidence } from '../../src/services/knowflow/verifier';
 
 describe('verifier', () => {
   it('returns accepted/rejected/conflicts from deterministic rules', () => {

@@ -1,14 +1,14 @@
 import { exec, spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
-import { type LlmClientConfig, loadLlmClientConfigFromEnv } from '../config/llm';
+import { type LlmClientConfig, LlmClientConfigSchema, config } from '../config.js';
 import {
   type LlmTaskName,
   LlmTaskNameSchema,
   type LlmTaskOutputMap,
   getTaskOutputHint,
   parseLlmTaskOutput,
-} from '../schemas/llm';
+} from '../services/knowflow/schemas/llm.js';
 
 const execAsync = promisify(exec);
 
@@ -223,9 +223,25 @@ const runCommandWithStdin = (
   });
 
 const defaultLoadPromptTemplate = async (task: LlmTaskName): Promise<string> => {
-  const templateUrl = new URL(`../prompts/${task}.md`, import.meta.url);
+  const templateUrl = new URL(`../services/knowflow/prompts/${task}.md`, import.meta.url);
   return readFile(templateUrl, 'utf-8');
 };
+
+const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const assertContextRecord = (value: unknown): Record<string, unknown> => {
+  if (!isPlainRecord(value)) {
+    throw new Error('LLM task context must be a plain JSON object.');
+  }
+  return value;
+};
+
+const resolveLlmClientConfig = (override: Partial<LlmClientConfig> = {}): LlmClientConfig =>
+  LlmClientConfigSchema.parse({
+    ...config.knowflow.llm,
+    ...override,
+  });
 
 export const extractJsonCandidate = (text: string): string | undefined => {
   const trimmed = text.trim();
@@ -401,7 +417,8 @@ export const runLlmTask = async <T extends LlmTaskName>(
 ): Promise<RunLlmTaskResult<T>> => {
   LlmTaskNameSchema.parse(input.task);
   const task = input.task;
-  const config = loadLlmClientConfigFromEnv(options?.config ?? {});
+  const context = assertContextRecord(input.context);
+  const llmConfig = resolveLlmClientConfig(options?.config ?? {});
   const deps: AdapterDependencies = {
     invokeApi: options?.deps?.invokeApi ?? defaultInvokeApi,
     invokeCli: options?.deps?.invokeCli ?? defaultInvokeCli,
@@ -418,10 +435,10 @@ export const runLlmTask = async <T extends LlmTaskName>(
 
   const warnings: string[] = [];
   const template = await deps.loadPromptTemplate(task);
-  const prompt = renderPrompt(template, task, input.context);
+  const prompt = renderPrompt(template, task, context);
 
   try {
-    const apiResult = await attemptBackend(input, 'api', prompt, config, deps);
+    const apiResult = await attemptBackend(input, 'api', prompt, llmConfig, deps);
     deps.logger({
       event: 'llm.task.success',
       task,
@@ -441,9 +458,9 @@ export const runLlmTask = async <T extends LlmTaskName>(
     warnings.push(error instanceof Error ? error.message : String(error));
   }
 
-  if (config.enableCliFallback) {
+  if (llmConfig.enableCliFallback) {
     try {
-      const cliResult = await attemptBackend(input, 'cli', prompt, config, deps);
+      const cliResult = await attemptBackend(input, 'cli', prompt, llmConfig, deps);
       deps.logger({
         event: 'llm.task.success',
         task,
@@ -464,11 +481,11 @@ export const runLlmTask = async <T extends LlmTaskName>(
     }
   }
 
-  const degraded = degradeTaskOutput(task, input.context);
+  const degraded = degradeTaskOutput(task, context);
   deps.logger({
     event: 'llm.task.degraded',
     task,
-    backend: config.enableCliFallback ? 'cli' : 'api',
+    backend: llmConfig.enableCliFallback ? 'cli' : 'api',
     requestId: input.requestId,
     message: warnings.join(' | '),
   });
@@ -476,7 +493,7 @@ export const runLlmTask = async <T extends LlmTaskName>(
   return {
     task,
     output: degraded,
-    backend: config.enableCliFallback ? 'cli' : 'api',
+    backend: llmConfig.enableCliFallback ? 'cli' : 'api',
     degraded: true,
     warnings,
   };

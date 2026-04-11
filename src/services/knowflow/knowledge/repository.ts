@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, ilike, or, sql } from 'drizzle-orm';
-import { db } from '../../db/index.js';
+import { db } from '../../../db/index.js';
 import {
   knowledgeClaims,
   knowledgeRelations,
   knowledgeSources,
   knowledgeTopics,
-} from '../../db/schema.js';
+} from '../../../db/schema.js';
 import { canonicalizeTopic, uniqueNormalizedStrings } from './canonicalize';
 import { fingerprintText, shouldMergeClaim } from './similarity';
 import {
@@ -31,6 +31,12 @@ export type MergeKnowledgeResult = {
   knowledge: Knowledge;
   changed: boolean;
 };
+
+type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+type KnowledgeTopicRow = typeof knowledgeTopics.$inferSelect;
+type KnowledgeClaimRow = typeof knowledgeClaims.$inferSelect;
+type KnowledgeRelationRow = typeof knowledgeRelations.$inferSelect;
+type KnowledgeSourceRow = typeof knowledgeSources.$inferSelect;
 
 const parseStringArray = (value: unknown): string[] => {
   if (!Array.isArray(value)) {
@@ -91,8 +97,7 @@ export class PgKnowledgeRepository {
         return null;
       }
 
-      // biome-ignore lint/suspicious/noExplicitAny: topicRow is from drizzle but requires cast for buildKnowledge
-      return this.buildKnowledge(tx, topicRow as any);
+      return this.buildKnowledge(tx, topicRow);
     });
   }
 
@@ -114,8 +119,7 @@ export class PgKnowledgeRepository {
 
       const out: Knowledge[] = [];
       for (const row of result) {
-        // biome-ignore lint/suspicious/noExplicitAny: row is from drizzle but requires cast for buildKnowledge
-        out.push(await this.buildKnowledge(tx, row as any));
+        out.push(await this.buildKnowledge(tx, row));
       }
       return out;
     });
@@ -153,8 +157,7 @@ export class PgKnowledgeRepository {
         throw new Error('Failed to initialize topic row');
       }
 
-      // biome-ignore lint/suspicious/noExplicitAny: topicRow is from drizzle but requires cast for buildKnowledge
-      const existing = await this.buildKnowledge(tx, topicRow as any);
+      const existing = await this.buildKnowledge(tx, topicRow);
       const merged = this.mergeKnowledge(existing, parsed);
 
       const changed =
@@ -175,8 +178,7 @@ export class PgKnowledgeRepository {
       if (!latestTopic) {
         throw new Error('Failed to load merged knowledge');
       }
-      // biome-ignore lint/suspicious/noExplicitAny: latestTopic is from drizzle but requires cast for buildKnowledge
-      const latestKnowledge = await this.buildKnowledge(tx, latestTopic as any);
+      const latestKnowledge = await this.buildKnowledge(tx, latestTopic);
 
       return {
         knowledge: latestKnowledge,
@@ -185,8 +187,7 @@ export class PgKnowledgeRepository {
     });
   }
 
-  // biome-ignore lint/suspicious/noExplicitAny: tx and topic are from drizzle transaction
-  private async buildKnowledge(tx: any, topic: any): Promise<Knowledge> {
+  private async buildKnowledge(tx: DbTransaction, topic: KnowledgeTopicRow): Promise<Knowledge> {
     const [claimsRows, relationsRows, sourcesRows] = await Promise.all([
       tx
         .select()
@@ -205,8 +206,7 @@ export class PgKnowledgeRepository {
         .orderBy(asc(knowledgeSources.createdAt)),
     ]);
 
-    // biome-ignore lint/suspicious/noExplicitAny: row is from drizzle row object
-    const claims = claimsRows.map((row: any) =>
+    const claims = claimsRows.map((row: KnowledgeClaimRow) =>
       ClaimSchema.parse({
         id: row.id,
         text: row.text,
@@ -216,8 +216,7 @@ export class PgKnowledgeRepository {
       }),
     );
 
-    // biome-ignore lint/suspicious/noExplicitAny: row is from drizzle row object
-    const relations = relationsRows.map((row: any) =>
+    const relations = relationsRows.map((row: KnowledgeRelationRow) =>
       RelationSchema.parse({
         type: row.relationType,
         targetTopic: row.targetTopic,
@@ -225,8 +224,7 @@ export class PgKnowledgeRepository {
       }),
     );
 
-    // biome-ignore lint/suspicious/noExplicitAny: row is from drizzle row object
-    const sources = sourcesRows.map((row: any) =>
+    const sources = sourcesRows.map((row: KnowledgeSourceRow) =>
       SourceRefSchema.parse({
         id: row.sourceId,
         url: row.url,
@@ -289,8 +287,7 @@ export class PgKnowledgeRepository {
         exactIndex >= 0
           ? exactIndex
           : mergedClaims.findIndex((item) =>
-              // biome-ignore lint/suspicious/noExplicitAny: claim requires cast for shouldMergeClaim check
-              shouldMergeClaim(item, claim as any, {
+              shouldMergeClaim(item, claim, {
                 textThreshold: this.claimSimilarityThreshold,
                 embeddingThreshold: this.claimEmbeddingSimilarityThreshold,
               }),
@@ -364,8 +361,7 @@ export class PgKnowledgeRepository {
     });
   }
 
-  // biome-ignore lint/suspicious/noExplicitAny: tx is from drizzle transaction
-  private async persistKnowledge(tx: any, knowledge: Knowledge): Promise<void> {
+  private async persistKnowledge(tx: DbTransaction, knowledge: Knowledge): Promise<void> {
     await tx
       .update(knowledgeTopics)
       .set({

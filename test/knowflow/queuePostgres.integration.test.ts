@@ -2,8 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { Pool } from 'pg';
-import { closeAllPgPools } from '../../src/knowflow/db/pg';
-import { PgJsonbQueueRepository } from '../../src/knowflow/queue/pgJsonbRepository';
+import { PgJsonbQueueRepository } from '../../src/services/knowflow/queue/pgJsonbRepository';
 
 const connectionString = process.env.QUEUE_POSTGRES_URL;
 const shouldRunIntegration = process.env.KNOWFLOW_RUN_INTEGRATION === '1' && !!connectionString;
@@ -32,7 +31,6 @@ describeIntegration('postgres queue integration', () => {
 
   afterAll(async () => {
     await pool.end();
-    await closeAllPgPools();
   });
 
   it('locks different tasks for concurrent workers using SKIP LOCKED', async () => {

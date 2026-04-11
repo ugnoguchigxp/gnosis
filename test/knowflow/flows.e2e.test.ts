@@ -2,12 +2,12 @@ import { describe, expect, it } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runCronFlow } from '../../src/knowflow/flows/cronFlow';
-import { runUserFlow } from '../../src/knowflow/flows/userFlow';
-import type { Knowledge, KnowledgeUpsertInput } from '../../src/knowflow/knowledge/types';
-import { FileQueueRepository } from '../../src/knowflow/queue/repository';
-import { createKnowFlowTaskHandler } from '../../src/knowflow/worker/knowFlowHandler';
-import { runWorkerOnce } from '../../src/knowflow/worker/loop';
+import { runCronFlow } from '../../src/services/knowflow/flows/cronFlow';
+import { runUserFlow } from '../../src/services/knowflow/flows/userFlow';
+import type { Knowledge, KnowledgeUpsertInput } from '../../src/services/knowflow/knowledge/types';
+import { FileQueueRepository } from '../../src/services/knowflow/queue/repository';
+import { createKnowFlowTaskHandler } from '../../src/services/knowflow/worker/knowFlowHandler';
+import { runWorkerOnce } from '../../src/services/knowflow/worker/loop';
 
 class InMemoryKnowledgeRepository {
   private readonly map = new Map<string, Knowledge>();
