@@ -1,16 +1,21 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { Pool } from 'pg';
-import { searchKnowledgeClaims } from '../../src/services/knowledge';
 
 const connectionString = process.env.KNOWLEDGE_POSTGRES_URL ?? process.env.DATABASE_URL;
 const shouldRunIntegration = process.env.KNOWFLOW_RUN_INTEGRATION === '1' && !!connectionString;
 
 const describeIntegration = shouldRunIntegration ? describe : describe.skip;
 
+let searchKnowledgeClaims: typeof import('../../src/services/knowledge.js').searchKnowledgeClaims;
+
 describeIntegration('knowledge search integration', () => {
   let pool: Pool;
 
   beforeAll(async () => {
+    if (connectionString && !process.env.DATABASE_URL) {
+      process.env.DATABASE_URL = connectionString;
+    }
+    ({ searchKnowledgeClaims } = await import('../../src/services/knowledge.js'));
     pool = new Pool({ connectionString });
   });
 
