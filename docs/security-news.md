@@ -73,6 +73,18 @@ const SOURCES = [
 
 > **注意**: 各サイトのDOM構造は変更される場合があるため、セレクタは定数として管理し、フォールバック（テキスト全文抽出）を持たせる。
 > スクレイピングは相手サーバーへの配慮として1サイトあたり1リクエストのみ（トップページのHTMLのみ取得）とし、個別記事への自動クロールは行わない。
+>
+> **URL保持方針**: スクレイピング時に取得した **元記事の絶対URL** をそのまま保持する。
+> 相対パス（`/articles/xxxx`）の場合はサイトのoriginを付与して絶対URLに正規化する。
+> URLはリダイレクトを追わず、スクレイピングで得た `href` 値をそのまま使う。
+>
+> ```typescript
+> // 相対URL → 絶対URLの正規化
+> function resolveUrl(href: string, base: string): string {
+>   try { return new URL(href, base).toString(); }
+>   catch { return href; }
+> }
+> ```
 
 ---
 
@@ -160,23 +172,32 @@ const stackEntities = await db
 #### JSONL形式（`logs/security_news.jsonl`）
 
 各行が1件のキュレーション済みニュースを表す。
+`url` フィールドはスクレイピングで取得した **元記事の絶対URL** をそのまま格納する（加工・短縮URL化しない）。
 
 ```jsonc
 {
-  "id": "CVE-2024-12345",               // CVE番号 or URLベースのdedupeキー
-  "title": "...",                        // 記事タイトル
-  "url": "https://...",                 // 元記事URL
-  "source": "osv.dev",                  // 収集元ソース
-  "publishedAt": "2024-01-15T00:00:00Z", // 公開日時 (ISO8601)
+  "id": "sha256:a1b2c3d4",               // URL の SHA-256 (上位16桁) をdedupeキーに使用
+                                         // CVE番号が抽出できた場合は "CVE-YYYY-NNNNN" を優先
+  "title": "Critical RCE in Bun v1.x...", // 記事タイトル（スクレイピングそのまま）
+  "url": "https://thehackernews.com/2024/01/critical-rce-bun.html",
+                                         // ★ 元記事のフルURL（絶対URL・加工なし）
+  "source": "thehackernews",             // 収集元サイトID
+  "sourceName": "The Hacker News",       // 表示用サイト名
+  "publishedAt": "2024-01-15T00:00:00Z", // 公開日時 (ISO8601, ページから取得できれば)
   "severity": "HIGH",                   // CRITICAL / HIGH / MEDIUM / LOW
-  "cvss": 8.5,                          // CVSS スコア (nullable)
   "matchedStacks": ["Bun", "Node.js"],   // KGとマッチした技術スタック名
-  "summary": "...",                     // LLMが生成した1〜2行の要約
+  "summary": "Bun v1.x系にリモートコード実行の脆弱性。v1.2.0以上へ更新が必要。",
+                                         // LLMが生成した1〜2行の日本語要約
   "affectedVersions": "< 1.2.0",        // 影響バージョン (nullable)
   "isRead": false,                      // 既読フラグ
-  "curatedAt": "2024-01-16T00:00:00Z"   // キュレーション日時
+  "curatedAt": "2024-01-16T03:00:00Z"   // キュレーション日時
 }
 ```
+
+> **URL整合ルール**:
+> - `url` は常に絶対URLであること（`https://` から始まる形式）
+> - ITmedia 等の相対パス記事は `resolveUrl()` で正規化してから保存する
+> - dedupeキーは `url` から生成するため、URLが同一であれば重複として扱われる
 
 > **Note**: JSONLは追記専用のため、既読更新は「id一致でフラグ更新した全件を再書き出し」するか、
 > 別ファイル（`logs/security_news_state.json`）に既読IDセットを保持する簡易方式を採用する。
@@ -214,13 +235,28 @@ export const securityNews = pgTable(
 
 ### 2.5 重複排除（Deduplication）
 
-- **CVE番号ベース**: 同一CVEが複数ソース（NVD + Snyk等）に載る場合、`id = CVE番号` をdedupeキーとして扱い、後発情報でupsertする。
-- **CVE番号なし記事**: URLをSHA256ハッシュしたものをdedupeキーとする。
-- **冪等実行**: 既存の `syncState` テーブル（`src/db/schema.ts`）を活用し、ソースごとに最終取得カーソル（`lastFetchedAt`）を記録する。これにより再実行時に同じ記事を二重処理しない。
+- **URLベースのdedupeキー**: スクレイピングで取得した元記事URLを正規化（クエリパラメータ・末尾スラッシュを除去）したものをSHA-256ハッシュしてdedupeキーとする。同一記事が複数サイトに転載されている場合でもURLが異なれば別エントリとして扱う。
+- **CVE番号の付与**: 記事タイトルや概要からCVE番号を正規表現で抽出できた場合は、`id` フィールドを `CVE-YYYY-NNNNN` で上書きする（URLハッシュより優先）。
+- **冪等実行**: 既存の `syncState` テーブル（`src/db/schema.ts`）を活用し、ソースごとに最終取得日時（`lastFetchedAt`）を記録する。これにより再実行時に同一サイトから同じURLを二重処理しない。
 
 ```typescript
 // syncState テーブルのID規則
-// 'secnews:osv.dev', 'secnews:nvd', 'secnews:github-advisory' 等
+// 'secnews:thehackernews', 'secnews:bleepingcomputer',
+// 'secnews:csoonline', 'secnews:itmedia-enterprise-security'
+
+// URLの正規化（dedupeキー生成用）
+function normalizeUrl(url: string): string {
+  const u = new URL(url);
+  u.search = '';        // クエリパラメータ除去
+  u.hash = '';          // フラグメント除去
+  return u.toString().replace(/\/$/, ''); // 末尾スラッシュ除去
+}
+
+function urlToDedupeKey(url: string): string {
+  const normalized = normalizeUrl(url);
+  // SHA-256 の上位16文字をIDとして使用
+  return 'sha256:' + Bun.hash(normalized).toString(16).slice(0, 16);
+}
 ```
 
 ---
@@ -257,12 +293,56 @@ if (!result) {
 
 - Tauri起動時 + 30分に1回 `logs/security_news.jsonl` の更新を `notify-rs` で検知し、変化があればフロントエンドに `secnews_updated` イベントをpushする。
 
+#### 外部リンク遷移（元記事URLをブラウザで開く）
+
+Tauriアプリ内ではWebViewで直接遷移せず、**OS標準のデフォルトブラウザ**で元記事URLを開く。
+
+```rust
+// src-tauri/src/monitor/commands.rs に追加
+// Tauri v2 では tauri-plugin-shell または open クレートを使用
+
+#[tauri::command]
+pub fn open_news_url(url: String) -> Result<(), String> {
+    // URLスキームを検証（httpsのみ許可）
+    if !url.starts_with("https://") {
+        return Err("Invalid URL scheme".to_string());
+    }
+    open::that(&url).map_err(|e| e.to_string())
+}
+```
+
+```typescript
+// Svelte側から呼び出す
+import { invoke } from '@tauri-apps/api/core';
+
+async function openArticle(url: string) {
+  await invoke('open_news_url', { url });
+}
+```
+
+> **セキュリティ**: `open_news_url` コマンドは `https://` スキームのみを受け付け、それ以外は拒否する。
+> `tauri.conf.json` の `capabilities` にも `shell:open` の allowlist を設定する。
+
 #### SvelteKit フロントエンド (UI)
 
 - **Security News ボタン**: ヘッダーに追加。未読件数 > 0 かつ CRITICAL/HIGH が含まれる場合は赤バッジを表示。MEDIUM以下のみの場合は黄バッジ。
-- **詳細パネル (Sheet)**: ボタン押下でスライドインし、キュレーションされたニュースをリスト表示。
-- **表示項目**: タイトル / 影響スタック（Badgeタグ） / 重要度（色付きBadge） / 公開日 / 外部リンク
-- **既読フラグ**: パネル表示時に一括既読（または個別に既読ボタン）。既読IDセットを `logs/security_news_state.json` に書き戻す（Tauri `fs` API経由）。
+- **詳細パネル (Sheet)**: ボタン押下でスライドインし、キュレーション済みニュースをリスト表示。各行は以下の情報を表示する：
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ [HIGH]  Critical RCE in Bun v1.x — via The Hacker News    📅 01/15│
+│         Bun v1.x系にリモートコード実行の脆弱性。v1.2.0...          │
+│         [Bun] [Node.js]                    [元記事を開く →]       │
+├─────────────────────────────────────────────────────────────────┤
+│ [MED]   npm supply chain attack detected — via BleepingComputer  │
+│         悪意のあるnpmパッケージが...                               │
+│         [npm]                              [元記事を開く →]       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+- **表示項目**: 重要度バッジ（色付き）/ タイトル / 取得元サイト名 / 日付 / LLM要約 / 技術タグ / **「元記事を開く →」ボタン**
+- **「元記事を開く →」ボタン**: クリックで `invoke('open_news_url', { url })` を呼び出し、OSのデフォルトブラウザで元記事URLを開く。
+- **既読フラグ**: パネルを開いた時点で全件「既読」にするか、個別の「✓ 既読にする」ボタンを提供する。既読IDセットを `logs/security_news_state.json` に書き戻す（Tauri `fs` API経由）。
 
 ---
 
@@ -270,9 +350,10 @@ if (!result) {
 
 ### Phase 1: 収集と判定ロジックの実装 (Bun)
 
-- [ ] `src/scripts/secnews-fetch.ts` — OSV.dev / GitHub Advisory API から記事を取得し、ルールベース一次フィルタを実施
-- [ ] `src/scripts/secnews-analyze.ts` — LLM解析プロンプト定義、KG照合、スコアリング
+- [ ] `src/scripts/secnews-fetch.ts` — 4サイトをHTMLスクレイピング、記事タイトル・**元記事URL**・概要を抽出、`resolveUrl()` で絶対URL化
+- [ ] `src/scripts/secnews-analyze.ts` — LLM評価プロンプト定義、KG照合、スコアリング
 - [ ] `src/scripts/secnews-curator.ts` — 上記2つを組み合わせ `logs/security_news.jsonl` へ保存するエントリポイント
+- [ ] URLのSHA-256 dedupeキー生成・正規化ロジック (`normalizeUrl`, `urlToDedupeKey`)
 - [ ] `syncState` テーブルへのカーソル記録（冪等実行の保証）
 
 ### Phase 2: バッチ定期実行化
@@ -287,8 +368,11 @@ if (!result) {
 - [ ] `src-tauri/src/monitor/cli.rs` — `monitor-secnews` CLIの呼び出し追加
 - [ ] `src-tauri/src/monitor/state.rs` — SecurityNews ストアの追加（リングバッファ、最大100件）
 - [ ] `src-tauri/src/monitor/ws.rs` — `secnews_updated` イベントの配信
-- [ ] `apps/monitor/src/lib/monitor/types.ts` — `SecurityNewsItem` 型の追加
-- [ ] `apps/monitor/src/routes/+page.svelte` — Security News ボタン・バッジ・Sheetの追加
+- [ ] `src-tauri/src/monitor/commands.rs` — `open_news_url` コマンド追加（`https://` のみ許可）
+- [ ] `src-tauri/Cargo.toml` — `open` クレートの依存追加
+- [ ] `src-tauri/capabilities/default.json` — `shell:open` の許可スコープ設定
+- [ ] `apps/monitor/src/lib/monitor/types.ts` — `SecurityNewsItem` 型の追加（`url: string` を必須フィールドに含む）
+- [ ] `apps/monitor/src/routes/+page.svelte` — Security News ボタン・バッジ・Sheet追加、「元記事を開く →」ボタンの実装
 
 ---
 
@@ -308,9 +392,12 @@ if (!result) {
 
 ## 5. 受け入れ基準
 
-- OSV.dev / GitHub Advisory から最新の脆弱性情報を取得し、プロジェクトのKGスタックとの照合が動作すること
+- 4サイト（The Hacker News, BleepingComputer, CSO Online, ITmedia）のスクレイピングが動作し、記事一覧が取得できること
+- スクレイピングで取得した **元記事のURLが加工されずそのまま保存されている** こと（`url` フィールドの整合確認）
 - 関連ニュースが1件以上ある場合、監視アプリのSecurityNewsボタンにバッジが表示されること
-- ボタン押下でキュレーション済みニュース一覧がSheetに表示され、外部リンクへ遷移できること
-- 既読フラグが正しく保존・反映され、全件既読後はバッジが消えること
+- ボタン押下でキュレーション済みニュース一覧がSheetに表示されること
+- 「元記事を開く →」ボタンを押すと **OSのデフォルトブラウザで元記事URLが開く** こと
+- `https://` 以外のURLは `open_news_url` コマンドで拒否されること（セキュリティ）
+- 既読フラグが正しく保持・反映され、全件既読後はバッジが消えること
 - LLMバッチ実行中にKnowFlowワーカー等の他ジョブをブロックしないこと（skip-if-busy）
 - 1か月連続稼働でJSONLの件数が上限（30日分）を超えないこと
