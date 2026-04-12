@@ -1,4 +1,4 @@
-import { desc, eq, ilike, or } from 'drizzle-orm';
+import { desc, eq, ilike, or, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import {
   knowledgeClaims,
@@ -11,6 +11,7 @@ export type KnowledgeClaimResult = {
   topic: string;
   text: string;
   confidence: number;
+  score: number;
 };
 
 export type DetailedKnowledge = {
@@ -30,30 +31,57 @@ export async function searchKnowledgeClaims(
   query: string,
   limit = 5,
 ): Promise<KnowledgeClaimResult[]> {
-  const words = query
-    .trim()
+  const normalizedQuery = query.trim();
+  if (normalizedQuery.length === 0) return [];
+  const safeLimit = Math.max(1, Math.trunc(limit));
+
+  const tsvectorExpr = sql`to_tsvector('simple', ${knowledgeClaims.text})`;
+  const tsqueryExpr = sql`websearch_to_tsquery('simple', ${normalizedQuery})`;
+  const rankExpr = sql<number>`ts_rank_cd(${tsvectorExpr}, ${tsqueryExpr})`;
+
+  try {
+    const ftsResults = await db
+      .select({
+        topic: knowledgeTopics.canonicalTopic,
+        text: knowledgeClaims.text,
+        confidence: knowledgeClaims.confidence,
+        score: rankExpr,
+      })
+      .from(knowledgeClaims)
+      .innerJoin(knowledgeTopics, eq(knowledgeClaims.topicId, knowledgeTopics.id))
+      .where(sql`${tsvectorExpr} @@ ${tsqueryExpr}`)
+      .orderBy(desc(rankExpr), desc(knowledgeClaims.confidence))
+      .limit(safeLimit);
+
+    if (ftsResults.length > 0) {
+      return ftsResults;
+    }
+  } catch {
+    // Fall through to LIKE fallback
+  }
+
+  const words = normalizedQuery
     .split(/\s+/)
-    .filter((w) => w.length > 2)
+    .filter((w) => w.length > 1)
     .slice(0, 8);
 
   if (words.length === 0) return [];
 
   try {
     const conditions = words.map((w) => ilike(knowledgeClaims.text, `%${w}%`));
-
-    const results = await db
+    const fallbackResults = await db
       .select({
         topic: knowledgeTopics.canonicalTopic,
         text: knowledgeClaims.text,
         confidence: knowledgeClaims.confidence,
+        score: sql<number>`0`,
       })
       .from(knowledgeClaims)
       .innerJoin(knowledgeTopics, eq(knowledgeClaims.topicId, knowledgeTopics.id))
       .where(or(...conditions))
       .orderBy(desc(knowledgeClaims.confidence))
-      .limit(limit);
-
-    return results;
+      .limit(safeLimit);
+    return fallbackResults;
   } catch {
     return [];
   }

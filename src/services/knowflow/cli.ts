@@ -3,6 +3,7 @@ import { runLlmTask } from '../../adapters/llm.js';
 import type { LlmLogEvent } from '../../adapters/llm.js';
 import { createLocalLlmRetriever } from '../../adapters/retriever/mcpRetriever.js';
 import { type BudgetConfig, type LlmClientConfig, config } from '../../config.js';
+import { searchKnowledgeClaims } from '../knowledge.js';
 import { type TaskMode, type TaskSource, createTask } from './domain/task';
 import { runEvalSuite } from './eval/runner';
 import { PgKnowledgeRepository } from './knowledge/repository';
@@ -26,7 +27,7 @@ const usage = `Usage:
   bun src/services/knowflow/cli.ts run-once [--worker-id <id>] [--max-attempts <n>] [--fail] [--local-llm-path <path>]
   bun src/services/knowflow/cli.ts run-worker [--worker-id <id>] [--interval-ms <n>] [--max-iterations <n>] [--max-attempts <n>] [--fail] [--local-llm-path <path>]
   bun src/services/knowflow/cli.ts llm-task --task hypothesis|query_generation|gap_detection|gap_planner|summarize|extract_evidence --context-json <json>
-  bun src/services/knowflow/cli.ts search-knowledge --query <text>
+  bun src/services/knowflow/cli.ts search-knowledge --query <text> [--limit <n>]
   bun src/services/knowflow/cli.ts get-knowledge --topic <text>
   bun src/services/knowflow/cli.ts merge-knowledge --input <json> [--dry-run]
   bun src/services/knowflow/cli.ts eval-run [--suite local]
@@ -311,13 +312,14 @@ const run = async () => {
       if (!query) {
         throw new Error('--query is required for search-knowledge');
       }
-
-      const repository = new PgKnowledgeRepository();
-      const results = await repository.searchTopics(query);
+      const limit = readNumberFlag(args, 'limit') ?? 5;
+      const results = await searchKnowledgeClaims(query, limit);
       writeResult({
         command,
         runId: runLogger.runId,
         profilePath,
+        query,
+        limit,
         results,
       });
       return;

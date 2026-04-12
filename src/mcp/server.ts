@@ -238,8 +238,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'search_knowledge',
-        description: `knowFlow が蓄積した構造化知識（knowledge_claims）をテキスト検索します。
-トピック単位で検証・マージされたクレームを返します。`,
+        description: `knowFlow が蓄積した構造化知識（knowledge_claims）を全文検索します。
+登録済みクレームのみを対象に、FTS スコア順で返します。`,
         inputSchema: zodToJsonSchema(searchKnowledgeSchema),
       },
       {

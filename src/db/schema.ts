@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   bigint,
   boolean,
@@ -205,6 +206,10 @@ export const knowledgeClaims = pgTable(
       table.fingerprint,
     ),
     topicIdx: index('knowledge_claims_topic_idx').on(table.topicId),
+    textFtsIdx: index('knowledge_claims_text_fts_idx').using(
+      'gin',
+      sql`to_tsvector('simple', ${table.text})`,
+    ),
   }),
 );
 
