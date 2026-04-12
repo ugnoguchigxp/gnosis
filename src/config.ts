@@ -44,7 +44,7 @@ export const BudgetConfigSchema = z
   })
   .strict();
 
-export type BudgetConfig = z.infer<BudgetConfigSchema>;
+export type BudgetConfig = z.infer<typeof BudgetConfigSchema>;
 
 export const WorkerConfigSchema = z
   .object({
@@ -56,7 +56,7 @@ export const WorkerConfigSchema = z
   })
   .strict();
 
-export type WorkerConfig = z.infer<WorkerConfigSchema>;
+export type WorkerConfig = z.infer<typeof WorkerConfigSchema>;
 
 /**
  * プロジェクト全体の設定管理
@@ -109,7 +109,8 @@ export const config = {
       retryDelayMs: Math.max(0, envNumber(process.env.LOCAL_LLM_RETRY_DELAY_MS, 300)),
       enableCliFallback: envBoolean(process.env.LOCAL_LLM_ENABLE_CLI_FALLBACK, true),
       cliCommand:
-        process.env.LOCAL_LLM_CLI_COMMAND ?? `${process.env.GNOSIS_LLM_SCRIPT || 'gemma4'} --prompt {{prompt}}`,
+        process.env.LOCAL_LLM_CLI_COMMAND ??
+        `${process.env.GNOSIS_LLM_SCRIPT || 'gemma4'} --prompt {{prompt}}`,
       cliPromptMode: process.env.LOCAL_LLM_CLI_PROMPT_MODE === 'stdin' ? 'stdin' : 'arg',
       cliPromptPlaceholder: process.env.LOCAL_LLM_CLI_PROMPT_PLACEHOLDER ?? '{{prompt}}',
     }),
@@ -130,12 +131,35 @@ export const config = {
     },
   },
 
+  graph: {
+    similarityThreshold: envNumber(process.env.GNOSIS_GRAPH_SIMILARITY_THRESHOLD, 0.8),
+    maxPathHops: envNumber(process.env.GNOSIS_GRAPH_MAX_PATH_HOPS, 5),
+  },
+
+  memory: {
+    retries: envNumber(process.env.GNOSIS_MEMORY_RETRIES, 3),
+    retryWaitMultiplier: envNumber(process.env.GNOSIS_MEMORY_RETRY_WAIT_MULTIPLIER, 1000),
+  },
+
+  llm: {
+    maxBuffer: envNumber(process.env.GNOSIS_LLM_MAX_BUFFER_BYTES, 10 * 1024 * 1024),
+    defaultTimeoutMs: envNumber(process.env.GNOSIS_LLM_DEFAULT_TIMEOUT_MS, 45_000),
+  },
+
+  llmharness: {
+    defaultApiBaseUrl: process.env.LOCAL_LLM_API_BASE_URL || 'http://localhost:8000',
+    defaultApiPath: process.env.LOCAL_LLM_API_PATH || '/v1/chat/completions',
+    defaultApiKeyEnv: process.env.LOCAL_LLM_API_KEY_ENV || 'LOCAL_LLM_API_KEY',
+    defaultModel: process.env.LOCAL_LLM_MODEL || 'gemma4-default',
+  },
+
   guidance: {
     sessionId: process.env.GUIDANCE_SESSION_ID || 'guidance-registry',
     inboxDir:
       process.env.GUIDANCE_INBOX_DIR || path.resolve(process.cwd(), 'imports/guidance/inbox'),
     processedDir:
-      process.env.GUIDANCE_PROCESSED_DIR || path.resolve(process.cwd(), 'imports/guidance/processed'),
+      process.env.GUIDANCE_PROCESSED_DIR ||
+      path.resolve(process.cwd(), 'imports/guidance/processed'),
     failedDir:
       process.env.GUIDANCE_FAILED_DIR || path.resolve(process.cwd(), 'imports/guidance/failed'),
     maxFilesPerZip: Math.max(1, envNumber(process.env.GUIDANCE_MAX_FILES_PER_ZIP, 500)),
@@ -148,5 +172,9 @@ export const config = {
     minSimilarity: envNumber(process.env.GUIDANCE_MIN_SIMILARITY, 0.72),
     enabled: envBoolean(process.env.GUIDANCE_ENABLED, true),
     project: process.env.GUIDANCE_PROJECT,
+    priorityHigh: 100,
+    priorityMid: 80,
+    priorityLow: 50,
+    maxZips: envNumber(process.env.GUIDANCE_MAX_ZIPS, 1000),
   },
 };

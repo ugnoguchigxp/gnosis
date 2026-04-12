@@ -79,7 +79,7 @@ export const runWorkerOnce = async (
   const abortController = new AbortController();
   const timeoutMs = options.taskTimeoutMs ?? config.knowflow.worker.taskTimeoutMs;
 
-  let timeoutId: any;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<TaskExecutionResult>((resolve) => {
     timeoutId = setTimeout(() => {
       abortController.abort();
@@ -168,7 +168,8 @@ export const runWorkerLoop = async (
 ): Promise<void> => {
   const intervalMs = options.intervalMs ?? config.knowflow.worker.pollIntervalMs;
   const maxIterations = options.maxIterations ?? Number.POSITIVE_INFINITY;
-  const maxConsecutiveErrors = options.maxConsecutiveErrors ?? config.knowflow.worker.maxConsecutiveErrors;
+  const maxConsecutiveErrors =
+    options.maxConsecutiveErrors ?? config.knowflow.worker.maxConsecutiveErrors;
   const logger = options.logger ?? defaultStructuredLogger;
 
   let iteration = 0;

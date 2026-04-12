@@ -8,33 +8,24 @@ import { z } from 'zod';
 import { config } from '../config.js';
 import { db } from '../db/index.js';
 import { syncState, vibeMemories } from '../db/schema.js';
+import {
+  GuidanceChunkSchema,
+  GuidanceManifestSchema,
+  GuidanceScopeSchema,
+  GuidanceTypeSchema,
+} from '../domain/schemas.js';
+import type {
+  GuidanceChunk,
+  GuidanceManifest,
+  GuidanceScope,
+  GuidanceType,
+} from '../domain/schemas.js';
+import { sha256 } from '../utils/crypto.js';
 import { generateEmbedding } from './memory.js';
 
 export const DEFAULT_GUIDANCE_SESSION_ID = 'guidance-registry';
 
-type GuidanceType = 'rule' | 'skill';
-type GuidanceScope = 'always' | 'on_demand';
-
-type GuidanceManifest = {
-  packId?: string;
-  sourceRepo?: string;
-  license?: string;
-  defaultScope?: GuidanceScope;
-  defaultGuidanceType?: GuidanceType;
-  defaultPriority?: number;
-  project?: string;
-  tags?: string[];
-};
-
-type GuidanceChunk = {
-  docPath: string;
-  title: string;
-  content: string;
-  guidanceType: GuidanceType;
-  scope: GuidanceScope;
-  priority: number;
-  tags: string[];
-};
+const ManifestSchema = GuidanceManifestSchema;
 
 type GuidanceImportState = {
   zipHash?: string;
@@ -88,7 +79,7 @@ type GuidanceMemoryRow = {
   metadata: Record<string, unknown>;
 };
 
-type PersistImportInput = {
+export type PersistImportInput = {
   stateId: string;
   stateExists: boolean;
   guidanceSessionId: string;
@@ -113,19 +104,6 @@ type GuidanceImportDependencies = {
   repository: GuidanceImportRepository;
   now: () => Date;
 };
-
-const ManifestSchema = z
-  .object({
-    packId: z.string().min(1).optional(),
-    sourceRepo: z.string().min(1).optional(),
-    license: z.string().min(1).optional(),
-    defaultScope: z.enum(['always', 'on_demand']).optional(),
-    defaultGuidanceType: z.enum(['rule', 'skill']).optional(),
-    defaultPriority: z.number().finite().optional(),
-    project: z.string().min(1).optional(),
-    tags: z.array(z.string().min(1)).optional(),
-  })
-  .passthrough();
 
 const runCommand = async (
   command: string,
@@ -198,7 +176,7 @@ const readZipEntryText = async (zipPath: string, entry: string): Promise<string>
   return stdout.toString().replaceAll('\r\n', '\n');
 };
 
-const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
+// sha256 function is now imported from ../utils/crypto.js
 
 const computeFileHash = async (filePath: string): Promise<string> =>
   new Promise((resolve, reject) => {
@@ -228,9 +206,9 @@ const inferScope = (entryPath: string, guidanceType: GuidanceType): GuidanceScop
 };
 
 const inferPriority = (guidanceType: GuidanceType, scope: GuidanceScope): number => {
-  if (scope === 'always' && guidanceType === 'rule') return 100;
-  if (guidanceType === 'rule') return 80;
-  return 50;
+  if (scope === 'always' && guidanceType === 'rule') return config.guidance.priorityHigh;
+  if (guidanceType === 'rule') return config.guidance.priorityMid;
+  return config.guidance.priorityLow;
 };
 
 const hardSplitText = (text: string, maxChars: number): string[] => {
@@ -395,7 +373,6 @@ const createChunksFromZip = async (
       return isSafeZipEntryPath(entry);
     })
     .slice(0, maxFilesPerZip);
-
 
   const chunks: GuidanceChunk[] = [];
 
@@ -584,7 +561,7 @@ export async function importGuidanceArchives(
   );
   const dryRun = options.dryRun ?? false;
   const project = options.project?.trim() || undefined;
-  const maxZips = options.maxZips ?? 1000;
+  const maxZips = options.maxZips ?? config.guidance.maxZips;
 
   await ensureDirectory(inboxDir);
 
@@ -746,12 +723,12 @@ export async function getAlwaysOnGuidance(
     })
     .from(vibeMemories)
     .where(
-      sql`${vibeMemories.sessionId} = ${sessionId} AND ${
-        vibeMemories.metadata
-      } @> ${JSON.stringify({
-        kind: 'guidance',
-        scope: 'always',
-      })}::jsonb`,
+      sql`${vibeMemories.sessionId} = ${sessionId} AND ${vibeMemories.metadata} @> ${JSON.stringify(
+        {
+          kind: 'guidance',
+          scope: 'always',
+        },
+      )}::jsonb`,
     )
     .orderBy((fields) => desc(fields.priority))
     .limit(limit);
@@ -780,12 +757,12 @@ export async function getOnDemandGuidance(
     })
     .from(vibeMemories)
     .where(
-      sql`${vibeMemories.sessionId} = ${sessionId} AND ${
-        vibeMemories.metadata
-      } @> ${JSON.stringify({
-        kind: 'guidance',
-        scope: 'on_demand',
-      })}::jsonb AND ${similarity} >= ${minSimilarity}`,
+      sql`${vibeMemories.sessionId} = ${sessionId} AND ${vibeMemories.metadata} @> ${JSON.stringify(
+        {
+          kind: 'guidance',
+          scope: 'on_demand',
+        },
+      )}::jsonb AND ${similarity} >= ${minSimilarity}`,
     )
     .orderBy((fields) => desc(fields.similarity))
     .limit(limit);
@@ -884,4 +861,3 @@ export async function saveGuidance(
 
   return { id: dedupeKey, archiveKey };
 }
-

@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { syncState, vibeMemories } from '../db/schema.js';
+import { DistilledKnowledgeSchema } from '../domain/schemas.js';
+import type { DistilledKnowledge } from '../domain/schemas.js';
 import { saveEntities, saveRelations } from './graph.js';
 import {
   type ChatMessage,
@@ -10,7 +12,7 @@ import {
   ingestClaudeLogs,
   normalizeIngestCursor,
 } from './ingest.js';
-import { type DistilledKnowledge, distillKnowledgeFromTranscript } from './llm.js';
+import { distillKnowledgeFromTranscript } from './llm.js';
 import { generateEmbedding } from './memory.js';
 
 const SYNC_SESSION_ID = 'sync-agent-logs';
@@ -68,13 +70,13 @@ function dedupeEntities(entities: DistilledKnowledge['entities']) {
     new Map(
       entities
         .filter(
-          (entity) =>
+          (entity: DistilledKnowledge['entities'][number]) =>
             entity &&
             typeof entity.id === 'string' &&
             typeof entity.type === 'string' &&
             typeof entity.name === 'string',
         )
-        .map((entity) => [entity.id, entity]),
+        .map((entity: DistilledKnowledge['entities'][number]) => [entity.id, entity]),
     ).values(),
   );
 }
@@ -84,13 +86,13 @@ function dedupeRelations(relations: DistilledKnowledge['relations']) {
     new Map(
       relations
         .filter(
-          (relation) =>
+          (relation: DistilledKnowledge['relations'][number]) =>
             relation &&
             typeof relation.sourceId === 'string' &&
             typeof relation.targetId === 'string' &&
             typeof relation.relationType === 'string',
         )
-        .map((relation) => [
+        .map((relation: DistilledKnowledge['relations'][number]) => [
           `${relation.sourceId}::${relation.targetId}::${relation.relationType}`,
           relation,
         ]),

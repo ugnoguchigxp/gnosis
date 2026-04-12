@@ -177,7 +177,10 @@ export const createKnowFlowTaskHandler = (
     ...options.budget,
   } satisfies BudgetConfig;
   const evidenceProvider = options.evidenceProvider ?? defaultEvidenceProvider;
-  const cronRunWindowMs = Math.max(1, Math.trunc(options.cronRunWindowMs ?? config.knowflow.worker.cronRunWindowMs));
+  const cronRunWindowMs = Math.max(
+    1,
+    Math.trunc(options.cronRunWindowMs ?? config.knowflow.worker.cronRunWindowMs),
+  );
   let cronRunWindowStartedAt = 0;
   let cronRunConsumed = 0;
 

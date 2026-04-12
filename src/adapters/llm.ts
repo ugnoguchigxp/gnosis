@@ -58,7 +58,7 @@ const defaultLogger = (event: LlmLogEvent): void => {
   console.log(JSON.stringify(payload));
 };
 
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+import { sleep } from '../utils/time.js';
 
 const shellQuote = (value: string): string => `'${value.replace(/'/g, `'"'"'`)}'`;
 
@@ -144,23 +144,26 @@ const defaultInvokeApi = async (prompt: string, config: LlmClientConfig): Promis
   }
 };
 
-const defaultInvokeCli = async (prompt: string, config: LlmClientConfig): Promise<string> => {
-  let command = config.cliCommand;
+const defaultInvokeCli = async (
+  prompt: string,
+  llmClientConfig: LlmClientConfig,
+): Promise<string> => {
+  let command = llmClientConfig.cliCommand;
   let stdin: string | undefined;
 
-  if (command.includes(config.cliPromptPlaceholder)) {
-    command = command.split(config.cliPromptPlaceholder).join(shellQuote(prompt));
-  } else if (config.cliPromptMode === 'arg') {
+  if (command.includes(llmClientConfig.cliPromptPlaceholder)) {
+    command = command.split(llmClientConfig.cliPromptPlaceholder).join(shellQuote(prompt));
+  } else if (llmClientConfig.cliPromptMode === 'arg') {
     command = `${command} ${shellQuote(prompt)}`;
   } else {
     stdin = prompt;
   }
 
   const { stdout, stderr } = stdin
-    ? await runCommandWithStdin(command, stdin, config.timeoutMs)
+    ? await runCommandWithStdin(command, stdin, llmClientConfig.timeoutMs)
     : await execAsync(command, {
-        timeout: config.timeoutMs,
-        maxBuffer: 10 * 1024 * 1024,
+        timeout: llmClientConfig.timeoutMs,
+        maxBuffer: config.llm.maxBuffer,
       });
 
   const output = stdout.trim();

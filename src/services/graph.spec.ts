@@ -1,5 +1,7 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { eq } from 'drizzle-orm';
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
+import { eq, inArray, or, sql } from 'drizzle-orm';
+import { config } from '../config.js';
 import { db } from '../db/index.js';
 import { entities, relations } from '../db/schema.js';
 import {
@@ -9,6 +11,22 @@ import {
   saveRelations,
   updateEntity,
 } from './graph.js';
+
+/**
+ * テスト用の決定論的な擬似埋め込み生成関数。
+ * 名前からハッシュを作成し、固定長のベクトルを返します。
+ * これにより外部プロセスを起動せずに、かつ類似度計算を機能させることができます。
+ */
+async function mockEmbeddingGenerator(text: string): Promise<number[]> {
+  const hash = createHash('sha256').update(text).digest();
+  const vector: number[] = [];
+  const dim = config.embeddingDimension;
+  for (let i = 0; i < dim; i++) {
+    // 0.0 ~ 1.0 の範囲に正規化
+    vector.push(hash[i % hash.length] / 255);
+  }
+  return vector;
+}
 
 describe('Graph Engine Services', () => {
   async function ensureEntityExists() {
@@ -38,10 +56,16 @@ describe('Graph Engine Services', () => {
   }
 
   beforeAll(async () => {
-    // Cleanup any existing test data
-    await db.delete(entities).where(eq(entities.id, 'TEST_E1'));
-    await db.delete(entities).where(eq(entities.id, 'TEST_E2'));
-    await db.delete(entities).where(eq(entities.id, 'TEST_E3'));
+    // Initialize DB state if needed (Drizzle should take care of schema if already migrated)
+  });
+
+  beforeEach(async () => {
+    // Clean up test data before each test for total isolation
+    const testIds = ['TEST_E1', 'TEST_E2', 'TEST_E3'];
+    await db
+      .delete(relations)
+      .where(or(inArray(relations.sourceId, testIds), inArray(relations.targetId, testIds)));
+    await db.delete(entities).where(inArray(entities.id, testIds));
   });
 
   afterAll(async () => {
@@ -51,11 +75,15 @@ describe('Graph Engine Services', () => {
   });
 
   test('should save entities and relations', async () => {
-    // 1. Save entities
-    await saveEntities([
-      { id: 'TEST_E1', type: 'Person', name: 'Alice', description: 'Test User 1' },
-      { id: 'TEST_E2', type: 'Company', name: 'Wonderland Inc.' },
-    ]);
+    // 1. Save entities (Pass mock embedding generator)
+    await saveEntities(
+      [
+        { id: 'TEST_E1', type: 'Person', name: 'Alice', description: 'Test User 1' },
+        { id: 'TEST_E2', type: 'Company', name: 'Wonderland Inc.' },
+      ],
+      db,
+      mockEmbeddingGenerator,
+    );
 
     // 2. Query individual entity to verify
     const [e1] = await db.select().from(entities).where(eq(entities.id, 'TEST_E1'));

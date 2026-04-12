@@ -18,9 +18,9 @@ import {
   searchEntityByQuery,
   updateEntity,
 } from '../services/graph.js';
+import { saveGuidance } from '../services/guidance.js';
 import { PgKnowledgeRepository } from '../services/knowflow/knowledge/repository.js';
 import { PgJsonbQueueRepository } from '../services/knowflow/queue/pgJsonbRepository.js';
-import { saveGuidance } from '../services/guidance.js';
 import {
   createKnowFlowTaskHandler,
   createMcpEvidenceProvider,
@@ -150,13 +150,19 @@ const enqueueKnowledgeTaskSchema = z.object({
     .optional()
     .default('directed')
     .describe('調査モード'),
-  priority: z.number().optional().default(10).describe('優先度 (高いほど先に実行)'),
+  priority: z
+    .number()
+    .optional()
+    .default(config.guidance.priorityLow)
+    .describe('優先度 (高いほど先に実行)'),
 });
 
 const runKnowledgeWorkerSchema = z.object({
   maxAttempts: z.number().optional().default(1).describe('最大試行回数'),
 });
-
+const searchUnifiedSchema = z.object({
+  query: z.string().describe('検索クエリ'),
+  mode: z.enum(['fts', 'kg', 'semantic']).describe('検索モード'),
   limit: z.number().int().positive().optional().default(5).describe('取得件数'),
   sessionId: z
     .string()
@@ -167,9 +173,20 @@ const runKnowledgeWorkerSchema = z.object({
 const registerGuidanceSchema = z.object({
   title: z.string().describe('ガイダンスのタイトル'),
   content: z.string().describe('内容（マークダウン形式推奨）'),
-  guidanceType: z.enum(['rule', 'skill']).describe('種別 (rule: 規約・禁止事項, skill: 手順・ノウハウ)'),
-  scope: z.enum(['always', 'on_demand']).describe('適用範囲 (always: 常に参照, on_demand: 必要時のみ検索)'),
-  priority: z.number().int().min(0).max(100).optional().default(50).describe('優先度 (0-100)'),
+  guidanceType: z
+    .enum(['rule', 'skill'])
+    .describe('種別 (rule: 規約・禁止事項, skill: 手順・ノウハウ)'),
+  scope: z
+    .enum(['always', 'on_demand'])
+    .describe('適用範囲 (always: 常に参照, on_demand: 必要時のみ検索)'),
+  priority: z
+    .number()
+    .int()
+    .min(0)
+    .max(100)
+    .optional()
+    .default(config.guidance.priorityLow)
+    .describe('優先度 (0-100)'),
   tags: z.array(z.string()).optional().describe('関連タグ'),
   archiveKey: z.string().optional().describe('管理用キー (省略時はタイトルから自動生成)'),
   sessionId: z.string().optional().describe('セッションID (デフォルト: config.guidance.sessionId)'),

@@ -2,6 +2,8 @@ import { inArray } from 'drizzle-orm';
 import louvain from 'graphology-communities-louvain';
 import { db } from '../db/index.js';
 import { communities, entities, type relations } from '../db/schema.js';
+import { CommunityRebuildResultSchema } from '../domain/schemas.js';
+import type { CommunityRebuildResult } from '../domain/schemas.js';
 import { buildGraph } from './graph.js';
 import { summarizeCommunity } from './llm.js';
 
@@ -79,8 +81,10 @@ ${groupRelations.map((r) => `- ${r.sourceId} --[${r.relationType}]--> ${r.target
     console.log(`Community "${name}" built with ${entityIds.length} entities.`);
   }
 
-  return {
+  const result = {
     message: 'Communities rebuilt successfully.',
     count: Object.keys(groups).length,
   };
+
+  return CommunityRebuildResultSchema.parse(result);
 }

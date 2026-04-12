@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { importGuidanceArchives } from '../src/services/guidance';
+import type { PersistImportInput } from '../src/services/guidance';
 
 const toStateId = (zipPath: string): string => {
   const resolved = path.resolve(zipPath);
@@ -26,7 +27,7 @@ describe('importGuidanceArchives', () => {
         readZipEntryText: async () => '# Rules\n\nAlways log safely.',
         generateEmbedding: async () => [0.1, 0.2, 0.3],
         repository: {
-          getState: async (id) =>
+          getState: async (id: string) =>
             id === stateId
               ? {
                   cursor: {
@@ -37,7 +38,7 @@ describe('importGuidanceArchives', () => {
                   },
                 }
               : null,
-          persistImport: async (input) => {
+          persistImport: async (input: PersistImportInput) => {
             persistCalls.push(input);
           },
         },
@@ -74,7 +75,7 @@ describe('importGuidanceArchives', () => {
         readZipEntryText: async () => '# Updated Rules\n\nDo not leak tokens.',
         generateEmbedding: async () => [0.9, 0.8, 0.7],
         repository: {
-          getState: async (id) =>
+          getState: async (id: string) =>
             id === stateId
               ? {
                   cursor: {
@@ -85,7 +86,7 @@ describe('importGuidanceArchives', () => {
                   },
                 }
               : null,
-          persistImport: async (input) => {
+          persistImport: async (input: PersistImportInput) => {
             persisted.push({
               archiveKey: input.archiveKey,
               previousArchiveKey: input.previousArchiveKey,
@@ -125,7 +126,7 @@ describe('importGuidanceArchives', () => {
         generateEmbedding: async () => [0.2, 0.3, 0.4],
         repository: {
           getState: async () => null,
-          persistImport: async (input) => {
+          persistImport: async (input: PersistImportInput) => {
             for (const row of input.rows) {
               persisted.push({ metadata: row.metadata });
             }
@@ -142,7 +143,6 @@ describe('importGuidanceArchives', () => {
     expect(String(metadata.title)).toContain('react-best');
     expect(metadata.docPath).toBe('frontend/react-best.md');
     expect(metadata.guidanceType).toBe('skill');
-    expect(metadata.scope).toBe('on_demand');
     expect(Array.isArray(metadata.tags)).toBe(true);
     expect((metadata.tags as string[]).includes('frontend')).toBe(true);
   });

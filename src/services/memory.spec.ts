@@ -1,8 +1,38 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
+import { config } from '../config.js';
 import { db } from '../db/index.js';
 import { vibeMemories } from '../db/schema.js';
 import { saveMemory, searchMemory } from './memory.js';
+
+/**
+ * テスト用の決定論的な擬似埋め込み生成関数。
+ * 単語の重なりを考慮したベクトルを生成し、セマンティック検索のテストが通るようにします。
+ */
+function mockEmbeddingGenerator(text: string): number[] {
+  const dim = config.embeddingDimension;
+  const vector = new Array(dim).fill(0);
+  const words = text.toLowerCase().split(/\W+/);
+  for (const word of words) {
+    if (!word) continue;
+    const hash = createHash('md5').update(word).digest();
+    for (let i = 0; i < dim; i++) {
+      vector[i] += hash[i % 16] / 255 - 0.5;
+    }
+  }
+  // Normalize
+  const length = Math.sqrt(vector.reduce((sum, v) => sum + v * v, 0)) || 1;
+  return vector.map((v) => v / length);
+}
+
+// Module mock
+mock.module('./memory.js', () => {
+  return {
+    ...require('./memory.js'),
+    generateEmbedding: mock(async (text: string) => mockEmbeddingGenerator(text)),
+  };
+});
 
 describe('Vibe Memory Services', () => {
   const testSessionId = 'TEST_MEM_SESSION';

@@ -1,4 +1,4 @@
-import { describe, expect, it, mock, afterEach } from 'bun:test';
+import { afterEach, describe, expect, it, mock } from 'bun:test';
 import { checkLlmHealth } from './healthCheck.js';
 
 describe('healthCheck', () => {
@@ -32,10 +32,10 @@ describe('healthCheck', () => {
 
   it('should return ok: true if API is reachable', async () => {
     const globalFetch = global.fetch;
-    global.fetch = mock().mockResolvedValue({ ok: true });
+    (global.fetch as unknown as () => Promise<unknown>) = mock().mockResolvedValue({ ok: true });
 
     const result = await checkLlmHealth(llmConfig, undefined, { exec: mockExec(false) });
-    
+
     expect(result.ok).toBe(true);
     expect(result.details.api?.ok).toBe(true);
     expect(result.details.cli?.ok).toBe(true);
@@ -44,20 +44,24 @@ describe('healthCheck', () => {
   });
 
   it('should return ok: false if both API and CLI fail', async () => {
-    global.fetch = mock().mockRejectedValue(new Error('Network error'));
-    
+    (global.fetch as unknown as () => Promise<unknown>) = mock().mockRejectedValue(
+      new Error('Network error'),
+    );
+
     const result = await checkLlmHealth(llmConfig, undefined, { exec: mockExec(true) });
-    
+
     expect(result.ok).toBe(false);
     expect(result.details.api?.ok).toBe(false);
     expect(result.details.cli?.ok).toBe(false);
   });
 
   it('should return ok: true if API fails but CLI is ok (fallback)', async () => {
-    global.fetch = mock().mockRejectedValue(new Error('Network error'));
-    
+    (global.fetch as unknown as () => Promise<unknown>) = mock().mockRejectedValue(
+      new Error('Network error'),
+    );
+
     const result = await checkLlmHealth(llmConfig, undefined, { exec: mockExec(false) });
-    
+
     expect(result.ok).toBe(true);
     expect(result.details.api?.ok).toBe(false);
     expect(result.details.cli?.ok).toBe(true);

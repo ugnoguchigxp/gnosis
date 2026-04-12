@@ -1,23 +1,16 @@
 import { spawnSync } from 'node:child_process';
+import { z } from 'zod';
 import { config } from '../config.js';
 
 const LLM_SCRIPT = config.llmScript;
 const LLM_TIMEOUT_MS = config.llmTimeoutMs;
 
-export interface MergedEntityResult {
-  shouldMerge: boolean;
-  merged?: {
-    name: string;
-    type: string;
-    description: string;
-  };
-}
-
-export interface ExtractedEntity {
-  name: string;
-  type: string;
-  description: string;
-}
+import {
+  DistilledKnowledgeSchema,
+  ExtractedEntitySchema,
+  MergedEntityResultSchema,
+} from '../domain/schemas.js';
+import type { DistilledKnowledge, ExtractedEntity, MergedEntityResult } from '../domain/schemas.js';
 
 /**
  * ローカル LLM を使用してテキストからエンティティ情報を抽出します。
@@ -39,7 +32,10 @@ export async function extractEntitiesFromText(text: string): Promise<ExtractedEn
     const result = spawnSync(LLM_SCRIPT, ['--output', 'text', '--prompt', prompt], {
       encoding: 'utf-8',
       env: { ...process.env },
-      timeout: Number.isFinite(LLM_TIMEOUT_MS) && LLM_TIMEOUT_MS > 0 ? LLM_TIMEOUT_MS : 45000,
+      timeout:
+        Number.isFinite(LLM_TIMEOUT_MS) && LLM_TIMEOUT_MS > 0
+          ? LLM_TIMEOUT_MS
+          : config.llm.defaultTimeoutMs,
     });
 
     if (result.error) {
@@ -66,27 +62,7 @@ export async function extractEntitiesFromText(text: string): Promise<ExtractedEn
     }
 
     const parsed = JSON.parse(jsonMatch[0]);
-    if (!Array.isArray(parsed)) return [];
-
-    const entities = parsed
-      .filter(
-        (item): item is ExtractedEntity =>
-          item &&
-          typeof item === 'object' &&
-          typeof (item as ExtractedEntity).name === 'string' &&
-          typeof (item as ExtractedEntity).type === 'string' &&
-          typeof (item as ExtractedEntity).description === 'string',
-      )
-      .map((item) => ({
-        name: item.name.trim(),
-        type: item.type.trim(),
-        description: item.description.trim(),
-      }))
-      .filter(
-        (item) => item.name.length > 0 && item.type.length > 0 && item.description.length > 0,
-      );
-
-    return entities;
+    return ExtractedEntitySchema.array().parse(parsed);
   } catch (error) {
     console.error('Failed to extract entities from text using LLM:', error);
     return [];
@@ -118,7 +94,10 @@ ${context}
       {
         encoding: 'utf-8',
         env: { ...process.env },
-        timeout: Number.isFinite(LLM_TIMEOUT_MS) && LLM_TIMEOUT_MS > 0 ? LLM_TIMEOUT_MS : 45000,
+        timeout:
+          Number.isFinite(LLM_TIMEOUT_MS) && LLM_TIMEOUT_MS > 0
+            ? LLM_TIMEOUT_MS
+            : config.llm.defaultTimeoutMs,
       },
     );
 
@@ -138,81 +117,13 @@ ${context}
   }
 }
 
-export interface DistilledKnowledge {
-  memories: string[];
-  entities: { id: string; type: string; name: string; description: string }[];
-  relations: { sourceId: string; targetId: string; relationType: string; weight?: number }[];
-}
+const CommunitySummarySchema = z.object({
+  name: z.string().min(1),
+  summary: z.string().min(1),
+});
 
 function normalizeDistilledKnowledge(raw: unknown): DistilledKnowledge {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new Error('Invalid distilled payload');
-  }
-
-  const payload = raw as Record<string, unknown>;
-
-  const memories = Array.isArray(payload.memories)
-    ? payload.memories.filter((memory): memory is string => typeof memory === 'string')
-    : [];
-
-  const entities = Array.isArray(payload.entities)
-    ? payload.entities.filter(
-        (entity): entity is DistilledKnowledge['entities'][number] =>
-          entity !== null &&
-          typeof entity === 'object' &&
-          typeof entity.id === 'string' &&
-          typeof entity.type === 'string' &&
-          typeof entity.name === 'string' &&
-          typeof entity.description === 'string',
-      )
-    : [];
-
-  const relations = Array.isArray(payload.relations)
-    ? payload.relations
-        .filter(
-          (
-            relation,
-          ): relation is {
-            sourceId: string;
-            targetId: string;
-            relationType: string;
-            weight?: number | string | null;
-          } =>
-            relation !== null &&
-            typeof relation === 'object' &&
-            typeof (relation as { sourceId?: unknown }).sourceId === 'string' &&
-            typeof (relation as { targetId?: unknown }).targetId === 'string' &&
-            typeof (relation as { relationType?: unknown }).relationType === 'string',
-        )
-        .map((relation) => {
-          const rawWeight = relation.weight;
-          if (rawWeight === undefined || rawWeight === null || rawWeight === '') {
-            return {
-              sourceId: relation.sourceId,
-              targetId: relation.targetId,
-              relationType: relation.relationType,
-            };
-          }
-
-          const numericWeight = typeof rawWeight === 'number' ? rawWeight : Number(rawWeight);
-          if (!Number.isFinite(numericWeight)) {
-            return {
-              sourceId: relation.sourceId,
-              targetId: relation.targetId,
-              relationType: relation.relationType,
-            };
-          }
-
-          return {
-            sourceId: relation.sourceId,
-            targetId: relation.targetId,
-            relationType: relation.relationType,
-            weight: numericWeight,
-          };
-        })
-    : [];
-
-  return { memories, entities, relations };
+  return DistilledKnowledgeSchema.parse(raw);
 }
 
 /**
@@ -248,7 +159,10 @@ ${transcript}
     {
       encoding: 'utf-8',
       env: { ...process.env },
-      timeout: Number.isFinite(LLM_TIMEOUT_MS) && LLM_TIMEOUT_MS > 0 ? LLM_TIMEOUT_MS : 90000,
+      timeout:
+        Number.isFinite(LLM_TIMEOUT_MS) && LLM_TIMEOUT_MS > 0
+          ? LLM_TIMEOUT_MS
+          : config.llm.defaultTimeoutMs * 2,
     },
   );
 
@@ -337,17 +251,7 @@ export async function judgeAndMergeEntities(
     if (!jsonMatch) return { shouldMerge: false };
 
     const parsed = JSON.parse(jsonMatch[0].replace(/,\s*([\}\]])/g, '$1'));
-
-    if (parsed.shouldMerge && parsed.merged) {
-      return {
-        shouldMerge: true,
-        merged: {
-          name: String(parsed.merged.name).trim(),
-          type: String(parsed.merged.type).trim(),
-          description: String(parsed.merged.description).trim(),
-        },
-      };
-    }
+    return MergedEntityResultSchema.parse(parsed);
   } catch (error) {
     console.error('Failed to judge and merge entities:', error);
   }

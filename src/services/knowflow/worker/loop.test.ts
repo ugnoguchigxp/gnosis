@@ -1,7 +1,7 @@
 import { describe, expect, it, mock, spyOn } from 'bun:test';
-import { runWorkerOnce, runWorkerLoop } from './loop.js';
 import type { TopicTask } from '../domain/task.js';
 import type { QueueRepository } from '../queue/repository.js';
+import { runWorkerLoop, runWorkerOnce } from './loop.js';
 
 describe('worker loop', () => {
   const mockTask: TopicTask = {
@@ -48,9 +48,9 @@ describe('worker loop', () => {
     repo.applyFailureAction = mock().mockResolvedValue({ ...mockTask, status: 'deferred' });
 
     // Handler that takes too long
-    const handler = async (task: any, signal: AbortSignal) => {
+    const handler = async (task: TopicTask, signal?: AbortSignal) => {
       await new Promise((resolve) => setTimeout(resolve, 100));
-      return { ok: true };
+      return { ok: true as const };
     };
 
     const result = await runWorkerOnce(repo, handler, { taskTimeoutMs: 10 });
@@ -81,8 +81,12 @@ describe('worker loop', () => {
 
     // Check if circuit breaker event was logged
     const calls = logger.mock.calls;
-    const circuitBreakEvent = calls.find((c: any) => c[0].event === 'worker.loop.circuit_break');
+    const circuitBreakEvent = calls.find(
+      (c) => (c[0] as { event: string }).event === 'worker.loop.circuit_break',
+    );
     expect(circuitBreakEvent).toBeDefined();
-    expect(circuitBreakEvent[0].consecutiveErrors).toBe(5);
+    if (circuitBreakEvent) {
+      expect(circuitBreakEvent[0].consecutiveErrors).toBe(5);
+    }
   });
 });

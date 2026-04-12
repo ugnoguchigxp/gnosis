@@ -84,4 +84,58 @@ describe('verifier', () => {
     expect(summary).toContain('accepted=1');
     expect(summary).toContain('rejected=1');
   });
+
+  it('derives domain from source url and accepts high-quality recent claim', () => {
+    const now = Date.now();
+    const result = verifyEvidence({
+      topic: 'Python',
+      now,
+      sources: [
+        {
+          id: 'src-url-only',
+          url: 'https://docs.python.org/3/tutorial/',
+          fetchedAt: now - 2 * 24 * 60 * 60 * 1000,
+        },
+      ],
+      claims: [
+        {
+          text: 'Python supports multiple programming paradigms.',
+          confidence: 0.9,
+          sourceIds: ['src-url-only'],
+        },
+      ],
+    });
+
+    expect(result.acceptedClaims).toHaveLength(1);
+    expect(result.rejectedClaims).toHaveLength(0);
+  });
+
+  it('rejects stale low-quality evidence with explicit reasons', () => {
+    const now = Date.now();
+    const result = verifyEvidence({
+      topic: 'Example Topic',
+      now,
+      sources: [
+        {
+          id: 'src-old-blog',
+          domain: 'my-blog.example',
+          fetchedAt: now - 500 * 24 * 60 * 60 * 1000,
+          qualityScore: 0.2,
+        },
+      ],
+      claims: [
+        {
+          text: 'An unsupported claim with weak citation.',
+          confidence: 0.9,
+          sourceIds: ['src-old-blog'],
+        },
+      ],
+    });
+
+    expect(result.acceptedClaims).toHaveLength(0);
+    expect(result.rejectedClaims).toHaveLength(1);
+    expect(result.rejectedClaims[0]?.reasons).toContain('outdated');
+    expect(result.rejectedClaims[0]?.reasons).toContain('low-domain-quality');
+    expect(result.rejectedClaims[0]?.reasons).toContain('low-overall-score');
+  });
 });

@@ -3,10 +3,11 @@ import { desc, eq, inArray, sql } from 'drizzle-orm';
 import { config } from '../config.js';
 import { db } from '../db/index.js';
 import { vibeMemories } from '../db/schema.js';
+import { VibeMemoryInputSchema } from '../domain/schemas.js';
+
+import { sleep } from '../utils/time.js';
 
 type DbClient = Pick<typeof db, 'insert' | 'select'>;
-
-const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 const runEmbedCommand = (
   command: string,
@@ -104,7 +105,10 @@ const parseEmbeddingVector = (output: string): number[] => {
  * テキストからベクトルを生成します
  * ユーザー環境の埋め込みコマンドを利用します
  */
-export async function generateEmbedding(text: string, retries = 3): Promise<number[]> {
+export async function generateEmbedding(
+  text: string,
+  retries = config.memory.retries,
+): Promise<number[]> {
   let lastError: unknown;
 
   for (let i = 0; i < retries; i++) {
@@ -117,7 +121,7 @@ export async function generateEmbedding(text: string, retries = 3): Promise<numb
         const message = error instanceof Error ? error.message : String(error);
         throw new Error(`Embedding generation failed after ${retries} retries: ${message}`);
       }
-      await wait(1000 * (i + 1));
+      await sleep(config.memory.retryWaitMultiplier * (i + 1));
     }
   }
 
@@ -134,6 +138,7 @@ export async function saveMemory(
   metadata: Record<string, unknown> = {},
   database: DbClient = db,
 ) {
+  VibeMemoryInputSchema.parse({ sessionId, content, metadata });
   const embedding = await generateEmbedding(content);
 
   const [memory] = await database

@@ -16,7 +16,12 @@ export type HealthCheckResult = {
 export async function checkLlmHealth(
   llmConfig: LlmClientConfig = config.knowflow.llm,
   logger: StructuredLogger = defaultStructuredLogger,
-  deps: { exec?: (cmd: string, options: any) => Promise<{ stdout: string; stderr: string }> } = {},
+  deps: {
+    exec?: (
+      cmd: string,
+      options: Record<string, unknown>,
+    ) => Promise<{ stdout: string; stderr: string }>;
+  } = {},
 ): Promise<HealthCheckResult> {
   const checkExec = deps.exec ?? execAsync;
   const result: HealthCheckResult = {

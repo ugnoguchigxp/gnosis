@@ -7,22 +7,8 @@ import {
   knowledgeTopics,
 } from '../db/schema.js';
 
-export type KnowledgeClaimResult = {
-  topic: string;
-  text: string;
-  confidence: number;
-  score: number;
-};
-
-export type DetailedKnowledge = {
-  topic: string;
-  aliases: string[];
-  confidence: number;
-  coverage: number;
-  claims: { text: string; confidence: number; sourceIds: string[] }[];
-  relations: { type: string; targetTopic: string; confidence: number }[];
-  sources: { url: string; title: string | null; domain: string | null }[];
-};
+import { DetailedKnowledgeSchema, KnowledgeClaimResultSchema } from '../domain/schemas.js';
+import type { DetailedKnowledge, KnowledgeClaimResult } from '../domain/schemas.js';
 
 /**
  * knowFlow が書き込んだ knowledge_claims テーブルをテキスト検索します。
@@ -54,7 +40,7 @@ export async function searchKnowledgeClaims(
       .limit(safeLimit);
 
     if (ftsResults.length > 0) {
-      return ftsResults;
+      return ftsResults.map((r) => KnowledgeClaimResultSchema.parse(r));
     }
   } catch {
     // Fall through to LIKE fallback
@@ -81,7 +67,7 @@ export async function searchKnowledgeClaims(
       .where(or(...conditions))
       .orderBy(desc(knowledgeClaims.confidence))
       .limit(safeLimit);
-    return fallbackResults;
+    return fallbackResults.map((r) => KnowledgeClaimResultSchema.parse(r));
   } catch {
     return [];
   }
@@ -131,17 +117,23 @@ export async function getKnowledgeByTopic(topicName: string): Promise<DetailedKn
         .where(eq(knowledgeSources.topicId, topic.id)),
     ]);
 
-    return {
+    const result = {
       topic: topic.canonicalTopic,
       aliases: (topic.aliases as string[]) || [],
       confidence: topic.confidence,
       coverage: topic.coverage,
-      // biome-ignore lint/suspicious/noExplicitAny: cast required for returned Knowledge interface compatibility
-      claims: claims as any,
+      claims: claims.map((c) => ({
+        text: c.text,
+        confidence: c.confidence,
+        sourceIds: (c.sourceIds as string[]) || [],
+      })),
       relations,
       sources,
     };
-  } catch {
+
+    return DetailedKnowledgeSchema.parse(result);
+  } catch (error) {
+    console.error(`Error in getKnowledgeByTopic: ${error}`);
     return null;
   }
 }

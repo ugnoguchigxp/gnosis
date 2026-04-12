@@ -28,10 +28,10 @@ type Args = {
   guidanceProject?: string;
 };
 
-const DEFAULT_API_BASE_URL = 'http://localhost:8000';
-const DEFAULT_API_PATH = '/v1/chat/completions';
-const DEFAULT_API_KEY_ENV = 'LOCAL_LLM_API_KEY';
-const DEFAULT_MODEL = 'gemma4-default';
+const DEFAULT_API_BASE_URL = config.llmharness.defaultApiBaseUrl;
+const DEFAULT_API_PATH = config.llmharness.defaultApiPath;
+const DEFAULT_API_KEY_ENV = config.llmharness.defaultApiKeyEnv;
+const DEFAULT_MODEL = config.llmharness.defaultModel;
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
   if (!value) return fallback;
@@ -114,16 +114,18 @@ function parseArgs(argv: string[]): Args {
     guidanceAlwaysLimit:
       Number.isFinite(guidanceAlwaysLimit) && guidanceAlwaysLimit > 0
         ? Math.floor(guidanceAlwaysLimit)
-        : 4,
+        : config.guidance.alwaysLimit,
     guidanceOnDemandLimit:
       Number.isFinite(guidanceOnDemandLimit) && guidanceOnDemandLimit > 0
         ? Math.floor(guidanceOnDemandLimit)
-        : 5,
-    guidanceMinSimilarity: Number.isFinite(guidanceMinSimilarity) ? guidanceMinSimilarity : 0.72,
+        : config.guidance.onDemandLimit,
+    guidanceMinSimilarity: Number.isFinite(guidanceMinSimilarity)
+      ? guidanceMinSimilarity
+      : config.guidance.minSimilarity,
     guidanceMaxChars:
       Number.isFinite(guidanceMaxChars) && guidanceMaxChars > 0
         ? Math.floor(guidanceMaxChars)
-        : 3000,
+        : config.guidance.maxPromptChars,
     guidanceProject:
       parseArgValue(argv, '--guidance-project') || process.env.GUIDANCE_PROJECT || undefined,
   };
@@ -345,13 +347,20 @@ async function main() {
     throw new Error('prompt is required. pass --prompt or stdin');
   }
 
-  const [memories, guidanceContext] = await Promise.all([
+  const [memories, guidanceResult] = await Promise.all([
     searchMemory(args.sessionId, prompt, args.limit).catch(() => []),
-    args.guidanceEnabled ? getGuidanceContext(prompt).catch(() => '') : Promise.resolve(''),
+    args.guidanceEnabled
+      ? loadGuidanceContext(args, prompt).catch(() => ({
+          guidanceContext: '',
+          alwaysCount: 0,
+          onDemandCount: 0,
+        }))
+      : Promise.resolve({ guidanceContext: '', alwaysCount: 0, onDemandCount: 0 }),
   ]);
+  const guidanceContext = guidanceResult.guidanceContext;
 
   const memoryContext = formatMemoryContext(
-    memories.map((m) => ({
+    memories.map((m: GuidanceItem) => ({
       content: m.content,
       similarity: m.similarity,
       metadata: m.metadata,

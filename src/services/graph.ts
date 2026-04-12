@@ -3,6 +3,8 @@ import Graph from 'graphology';
 import { config } from '../config.js';
 import { db } from '../db/index.js';
 import { communities, entities, relations } from '../db/schema.js';
+import { EntityInputSchema, RelationInputSchema } from '../domain/schemas.js';
+import type { EntityInput, RelationInput } from '../domain/schemas.js';
 import { extractEntitiesFromText, judgeAndMergeEntities } from './llm.js';
 import { generateEmbedding } from './memory.js';
 
@@ -30,31 +32,17 @@ export async function buildGraph() {
 type DbClient = Pick<typeof db, 'insert' | 'select' | 'update' | 'delete' | 'execute'>;
 type EmbeddingGenerator = (text: string) => Promise<number[]>;
 
-export interface EntityInput {
-  id: string;
-  type: string;
-  name: string;
-  description?: string;
-  metadata?: Record<string, unknown>;
-}
-
-export interface RelationInput {
-  sourceId: string;
-  targetId: string;
-  relationType: string;
-  weight?: number | string;
-}
-
 /**
  * エンティティ群を保存または更新します。
  * 保存前に意味的な類似度をチェックし、既存のエンティティと重複（類似度 > config.dedupeThreshold）している場合は
  * LLM を用いて自動的にマージ（名寄せ）を試みます。
  */
 export async function saveEntities(
-  inputs: EntityInput[],
+  rawInputs: EntityInput[],
   database: DbClient = db,
   embeddingGenerator: EmbeddingGenerator = generateEmbedding,
 ) {
+  const inputs = rawInputs.map((i) => EntityInputSchema.parse(i));
   if (inputs.length === 0) return;
 
   const processedInputs: (EntityInput & { embedding: number[] })[] = [];
@@ -81,7 +69,7 @@ export async function saveEntities(
 
     let finalInput = { ...input, embedding: vector };
 
-    if (similar && similar.similarity > config.dedupeThreshold) {
+    if (similar && similar.similarity > config.graph.similarityThreshold) {
       console.info(
         `[Deduplication] High similarity detected: "${input.name}" vs "${
           similar.name
@@ -141,7 +129,8 @@ export async function saveEntities(
 /**
  * リレーションを保存します
  */
-export async function saveRelations(inputs: RelationInput[], database: DbClient = db) {
+export async function saveRelations(rawInputs: RelationInput[], database: DbClient = db) {
+  const inputs = rawInputs.map((i) => RelationInputSchema.parse(i));
   if (inputs.length === 0) return;
   for (const input of inputs) {
     const numericWeight =
@@ -315,7 +304,11 @@ export async function searchEntitiesByText(
 /**
  * テキストからエンティティを抽出し、既存のグラフデータと紐付けて返します (高度な Digestion)
  */
-export async function digestTextIntelligence(text: string, limit = 5, similarityThreshold = 0.8) {
+export async function digestTextIntelligence(
+  text: string,
+  limit = 5,
+  similarityThreshold = config.graph.similarityThreshold,
+) {
   // 1. LLM でエンティティを抽出
   const extracted = await extractEntitiesFromText(text);
   const extractedLimited = extracted.slice(0, limit);

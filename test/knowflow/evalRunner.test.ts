@@ -18,5 +18,5 @@ describe('eval runner', () => {
     expect(result.caseCount).toBeGreaterThan(0);
     expect(result.caseCount).toBe(result.passedCount + result.failedCount);
     expect(result.cases).toHaveLength(result.caseCount);
-  });
+  }, 60000); // Heavy sequential LLM tasks need more time
 });

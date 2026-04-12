@@ -2,13 +2,13 @@ import { resolve } from 'node:path';
 import { createLocalLlmRetriever } from '../adapters/retriever/mcpRetriever.js';
 import { config } from '../config.js';
 import { PgKnowledgeRepository } from '../services/knowflow/knowledge/repository.js';
+import { checkLlmHealth } from '../services/knowflow/ops/healthCheck.js';
 import { createRunLogger } from '../services/knowflow/ops/runLog.js';
 import { PgJsonbQueueRepository } from '../services/knowflow/queue/pgJsonbRepository.js';
 import {
   createKnowFlowTaskHandler,
   createMcpEvidenceProvider,
 } from '../services/knowflow/worker/knowFlowHandler.js';
-import { checkLlmHealth } from '../services/knowflow/ops/healthCheck.js';
 import { runWorkerLoop } from '../services/knowflow/worker/loop.js';
 
 async function main() {
@@ -39,7 +39,9 @@ async function main() {
   });
 
   // 起動時にスタックしているタスクをクリーンアップ (1時間以上動きがないもの)
-  const cleanedCount = await queueRepository.clearStaleTasks(3600000);
+  const cleanedCount = await queueRepository.clearStaleTasks(
+    config.knowflow.worker.cronRunWindowMs,
+  );
   if (cleanedCount > 0) {
     logger({
       event: 'worker.startup.cleanup',
@@ -51,13 +53,15 @@ async function main() {
   // LLMの生存確認（ヘルスチェック）
   const health = await checkLlmHealth(config.knowflow.llm, logger);
   if (!health.ok) {
-    console.error('--- Critical: LLM Health Check Failed. Checking configuration and environment... ---');
+    console.error(
+      '--- Critical: LLM Health Check Failed. Checking configuration and environment... ---',
+    );
   }
 
   try {
     await runWorkerLoop(queueRepository, handler, {
       workerId: `daemon-${process.pid}`,
-      intervalMs: 10000, // 10秒おきにキューを確認
+      intervalMs: config.knowflow.worker.pollIntervalMs, // Configurable interval
       logger,
     });
   } catch (error) {
