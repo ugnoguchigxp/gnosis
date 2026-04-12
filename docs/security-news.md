@@ -1,47 +1,235 @@
 # Gnosis: セキュリティニュース収集とキュレーション実装計画
 
 ## 1. 目的と概要
-Tauriで構築中のGnosis監視アプリに、「セキュリティニュースのキュレーション」機能を追加する。
-`localLlm`をバックグラウンドで活用していくつかのセキュリティ情報サイトを定期チェックし、Knowledge Graph（KG）に記録されているプロジェクトの技術スタックと記事の内容を照合する。
-関連するセキュリティの脅威や脆弱性が確認された場合、監視アプリ上で「Security News」ボタンを通じてキュレーションされたニュースリンクを開発者に提示する。
+
+Tauriで構築中のGnosis監視アプリに「セキュリティニュースのキュレーション」機能を追加する。
+`localLlm` をバックグラウンドで活用していくつかのセキュリティ情報ソースを定期チェックし、
+Knowledge Graph（KG）に記録されているプロジェクトの技術スタックと記事の内容を照合する。
+関連するセキュリティの脅威や脆弱性が確認された場合、監視アプリの「Security News」ボタンを通じて、
+キュレーションされたニュースリンクを開発者に提示する。
+
+---
 
 ## 2. アーキテクチャと要素技術
 
 ### 2.1 ニュース収集プロセス (Crawler & LLM Analyzer)
-- **バッチ処理**: 定期的に動作するジョブとして実行（例: 1日1回、特定のバックグラウンド処理としてLaunchAgent等で登録）
-- **ターゲットサイト**: 主要な脆弱性情報データベースや、各種セキュリティニュースサイト（RSS、API、または簡単なスクレイピングで取得）
-- **処理フロー**:
-  1. **取得**: ターゲットサイトの最新記事や情報をダウンロード。事前フィルタリング（頻出キーワード等）を実施し、対象を絞る。
-  2. **LLM解析**: `localLlm`（マシン全体の同時実行上限、リソース制限を遵守）を活用し、記事テキストから「関連する技術スタック」「脆弱性の内容」「深刻度」を抽出。
-  3. **KG照合**: 抽出された技術スタックを、KGに登録されているプロジェクト固有の「技術スタック情報」と突き合わせる。
-  4. **保存/通知**: 関連度が高いと判定（マッチ判定）された場合、キュレーション済みの脆弱性/ニュース情報として専用のJSONLログ、あるいはPostgres DBに保存する。
 
-### 2.2 Tauri 監視アプリへの統合 (UI)
-- **Rust バックエンド (Collector)**: 
-  - 監視アプリ起動時、および定期的に、蓄積された「セキュリティニュース一覧」をロード/監視する。
-- **SvelteKit フロントエンド (UI)**:
-  - **Security News ボタン**: ヘッダーまたはサイドバーに追加。関連する最新ニュースがある場合はアラートバッジ（赤色のインジケータなど）を表示して注意を喚起する。
-  - **詳細パネル (Dialog / Sheet)**: ボタン押下でスライドインまたはポップアップを開き、キュレーションされたニュースをリスト表示する。
-  - **表示項目**: 「記事タイトル」「影響のある技術スタック（タグ）」「重要度」「元記事・詳細への外部リンク」
+- **バッチ処理**: 1日1回を基本とし、macOS LaunchAgent で登録・管理する（`com.gnosis.secnews.plist`）。
+- **ターゲットソース**: 下表のAPIを優先する（無料・無認証で利用可能な公式APIから始める）。
+
+| ソース | 形式 | カバー範囲 |
+|--------|------|-----------|
+| [OSV.dev](https://api.osv.dev/) | REST API (JSON) | npm / cargo / pypi 等エコシステム別 |
+| [NVD](https://nvd.nist.gov/developers/vulnerabilities) | REST API (JSON) | CVE全般 |
+| [GitHub Advisory Database](https://github.com/advisories) | REST API + RSS | npm / cargo 特化 |
+| [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) | JSON feed | 実際に悪用されたCVE |
+| [Snyk Vulnerability DB](https://security.snyk.io/rss.xml) | RSS | 言語別 |
+
+> **優先度**: OSV.dev と GitHub Advisory Database はエコシステム（npm/cargo）でフィルタできるため、プロジェクトのスタックへの適合度が高く、Phase 1 で最初に対応する。
+
+---
+
+### 2.2 処理フロー（2段階フィルタリング）
+
+LLMへの不要な呼び出しを抑えるため、以下の2段階で処理する。
+
+```
+[ソース取得]
+    │
+    ▼
+[Step 1: ルールベース一次フィルタ]
+  - CVE番号パターン(CVE-YYYY-NNNN)の抽出
+  - KGの技術スタック名キーワードとタイトル/タグの文字列照合
+  - 明らかに無関係（対象外OS/クラウド固有）な記事を除外
+    │ 通過した記事のみ
+    ▼
+[Step 2: LLM詳細解析 (localLlm)]
+  - 影響を受けるバージョン範囲の抽出
+  - 深刻度(CVSS)の確認・正規化
+  - 技術スタックとのマッチ確認（二重チェック）
+    │
+    ▼
+[KG照合 → 保存]
+```
+
+---
+
+### 2.3 KGからの技術スタック取得方法
+
+KGの `entities` テーブルから、`type` が技術スタック関連のエンティティを一括取得して照合キーとして使う。
+
+```typescript
+// 利用する既存関数: src/services/graph.ts
+import { searchEntitiesByText } from '../services/graph.js';
+
+// 技術スタック一覧の取得（type: "Technology" / "Library" / "Framework" 等でフィルタ）
+// drizzle で直接クエリする場合:
+const stackEntities = await db
+  .select({ id: entities.id, name: entities.name, type: entities.type })
+  .from(entities)
+  .where(inArray(entities.type, ['Technology', 'Library', 'Framework', 'Tool']));
+```
+
+> **Note**: KGに登録されていない技術スタックは検出対象外になる。初期セットアップ時に代表的な技術（Bun, TypeScript, Rust, Tauri, PostgreSQL, Drizzle, Svelte, Node.js 等）がKGに登録済みであることを前提とする。
+
+---
+
+### 2.4 保存スキーマ
+
+#### JSONL形式（`logs/security_news.jsonl`）
+
+各行が1件のキュレーション済みニュースを表す。
+
+```jsonc
+{
+  "id": "CVE-2024-12345",               // CVE番号 or URLベースのdedupeキー
+  "title": "...",                        // 記事タイトル
+  "url": "https://...",                 // 元記事URL
+  "source": "osv.dev",                  // 収集元ソース
+  "publishedAt": "2024-01-15T00:00:00Z", // 公開日時 (ISO8601)
+  "severity": "HIGH",                   // CRITICAL / HIGH / MEDIUM / LOW
+  "cvss": 8.5,                          // CVSS スコア (nullable)
+  "matchedStacks": ["Bun", "Node.js"],   // KGとマッチした技術スタック名
+  "summary": "...",                     // LLMが生成した1〜2行の要約
+  "affectedVersions": "< 1.2.0",        // 影響バージョン (nullable)
+  "isRead": false,                      // 既読フラグ
+  "curatedAt": "2024-01-16T00:00:00Z"   // キュレーション日時
+}
+```
+
+> **Note**: JSONLは追記専用のため、既読更新は「id一致でフラグ更新した全件を再書き出し」するか、
+> 別ファイル（`logs/security_news_state.json`）に既読IDセットを保持する簡易方式を採用する。
+> ※ DB管理に昇格する場合は後述のDrizzleスキーマ案を参照。
+
+#### DBテーブル案（将来拡張）
+
+JSONLではなくDB管理に移行する場合は、`schema.ts` に以下を追加し `drizzle-kit push` でマイグレーションする。
+
+```typescript
+export const securityNews = pgTable(
+  'security_news',
+  {
+    id: text('id').primaryKey(),           // CVE番号 or URL hash
+    title: text('title').notNull(),
+    url: text('url').notNull(),
+    source: text('source').notNull(),
+    publishedAt: timestamp('published_at'),
+    severity: text('severity').notNull(),  // 'CRITICAL'|'HIGH'|'MEDIUM'|'LOW'
+    cvss: real('cvss'),
+    matchedStacks: jsonb('matched_stacks').default([]).notNull(),
+    summary: text('summary'),
+    affectedVersions: text('affected_versions'),
+    isRead: boolean('is_read').default(false).notNull(),
+    curatedAt: timestamp('curated_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    severityIdx: index('security_news_severity_idx').on(table.severity),
+    curatedAtIdx: index('security_news_curated_at_idx').on(table.curatedAt),
+  }),
+);
+```
+
+---
+
+### 2.5 重複排除（Deduplication）
+
+- **CVE番号ベース**: 同一CVEが複数ソース（NVD + Snyk等）に載る場合、`id = CVE番号` をdedupeキーとして扱い、後発情報でupsertする。
+- **CVE番号なし記事**: URLをSHA256ハッシュしたものをdedupeキーとする。
+- **冪等実行**: 既存の `syncState` テーブル（`src/db/schema.ts`）を活用し、ソースごとに最終取得カーソル（`lastFetchedAt`）を記録する。これにより再実行時に同じ記事を二重処理しない。
+
+```typescript
+// syncState テーブルのID規則
+// 'secnews:osv.dev', 'secnews:nvd', 'secnews:github-advisory' 等
+```
+
+---
+
+### 2.6 LLMロック競合戦略
+
+既存の `withGlobalLock('local-llm', ...)` と競合するため、以下の **skip-if-busy** 方針を採用する。
+
+```typescript
+// セキュリティニュースバッチはロックが取れない場合はスキップ（エラーにしない）
+const result = await tryGlobalLock('local-llm', async () => {
+  return await analyzeArticleWithLlm(article);
+});
+if (!result) {
+  console.log('[SecNews] LLM busy, skipping article analysis. Will retry next batch.');
+  return;
+}
+```
+
+> **理由**: セキュリティニュースは数時間〜1日の遅延が許容されるため、KnowFlowワーカー等の優先度が高いジョブをブロックしない。スキップされた記事は次回バッチで再処理する（syncStateのカーソルを進めない）。
+
+---
+
+### 2.7 Tauri 監視アプリへの統合 (UI)
+
+#### Rust バックエンド (Collector)
+
+- `tauri-monitoring-implementation-plan.md` の「CLI先行」原則を踏襲し、Rustバックエンドは **CLIコマンド経由** でJSONLを読み取る。
+
+```rust
+// src-tauri/src/monitor/cli.rs に追加
+// `bun run src/scripts/monitor-secnews.ts` を呼び出し、JSONを受け取る
+```
+
+- Tauri起動時 + 30分に1回 `logs/security_news.jsonl` の更新を `notify-rs` で検知し、変化があればフロントエンドに `secnews_updated` イベントをpushする。
+
+#### SvelteKit フロントエンド (UI)
+
+- **Security News ボタン**: ヘッダーに追加。未読件数 > 0 かつ CRITICAL/HIGH が含まれる場合は赤バッジを表示。MEDIUM以下のみの場合は黄バッジ。
+- **詳細パネル (Sheet)**: ボタン押下でスライドインし、キュレーションされたニュースをリスト表示。
+- **表示項目**: タイトル / 影響スタック（Badgeタグ） / 重要度（色付きBadge） / 公開日 / 外部リンク
+- **既読フラグ**: パネル表示時に一括既読（または個別に既読ボタン）。既読IDセットを `logs/security_news_state.json` に書き戻す（Tauri `fs` API経由）。
+
+---
 
 ## 3. 実装フェーズ
 
-### Phase 1: 収集と判定ロジックの実装 (Node / Bun)
-- セキュリティニュース（RSS/API/HTML）からテキスト情報を取ってくるスクレイパーの実装。
-- `localLlm` に渡すためのプロンプト定義（技術名・重要度の抽出に特化）。
-- KGの情報を引き出し、LLMの出力結果とマッチングさせて、関連ニュースだけを特定するロジックの実装。
-- キュレーション結果を `logs/security_news.jsonl` もしくはDBの専用テーブルへ保存する。
+### Phase 1: 収集と判定ロジックの実装 (Bun)
 
-### Phase 2: バッチタスクとしての定期実行化
-- Phase 1で作成したスクリプトを、Gnosisのcronスケジュール、またはmacOS LaunchAgentのスケジュールに登録する。
-- LLMの起動が重ならないよう、既存の1プロセス同時実行制限を遵守し、マシンリソースを圧迫しないスケジュール（深夜等、または他のバッチとズラす）に設定する。
+- [ ] `src/scripts/secnews-fetch.ts` — OSV.dev / GitHub Advisory API から記事を取得し、ルールベース一次フィルタを実施
+- [ ] `src/scripts/secnews-analyze.ts` — LLM解析プロンプト定義、KG照合、スコアリング
+- [ ] `src/scripts/secnews-curator.ts` — 上記2つを組み合わせ `logs/security_news.jsonl` へ保存するエントリポイント
+- [ ] `syncState` テーブルへのカーソル記録（冪等実行の保証）
 
-### Phase 3: Tauri UIの改修 (Rust + SvelteKit)
-- Tauriの監視アプリから、キュレーション済みのニュースデータ（JSONLまたはDB）を読み取り、UIツリー上のstoreで保持する。
-- shadcn/ui を利用して、一覧表示の`Sheet` (または`Dialog`) を構築。
-- 通知状態（既読/未読フラグ）の管理を行い、ボタンバッチのオンオフを切り替え可能にする。
+### Phase 2: バッチ定期実行化
+
+- [ ] `scripts/automation/com.gnosis.secnews.plist` の作成
+  - 実行タイミング: 毎朝4:00（KnowFlowワーカーの稼働が少ない時間帯）
+  - ログ出力先: `logs/secnews.log`
+- [ ] `scripts/setup-automation.sh` にインストールステップを追記
+
+### Phase 3: Tauri UI 改修 (Rust + SvelteKit)
+
+- [ ] `src-tauri/src/monitor/cli.rs` — `monitor-secnews` CLIの呼び出し追加
+- [ ] `src-tauri/src/monitor/state.rs` — SecurityNews ストアの追加（リングバッファ、最大100件）
+- [ ] `src-tauri/src/monitor/ws.rs` — `secnews_updated` イベントの配信
+- [ ] `apps/monitor/src/lib/monitor/types.ts` — `SecurityNewsItem` 型の追加
+- [ ] `apps/monitor/src/routes/+page.svelte` — Security News ボタン・バッジ・Sheetの追加
+
+---
 
 ## 4. 考慮事項と課題
-- **ローカルLLMの負荷制御**: `localLlm`を使うため、あらゆる記事を読み込ませると処理時間がかかりすぎる。ルールベースで明らかに無関係な記事（例：関係のないOSやクラウドプロバイダ特有の脆弱性）はLLMを使わずに除外する。
-- **過検知（False Positives）の削減**: 技术スタックの名称が一般的な単語と同じ場合（例: Go, React）の誤判定。また、特定のバージョンにのみ依存する脆弱性の場合、KGにバージョン情報が精緻に記録されていないと「実際に影響があるか」までは判定しきれない。今回はあくまで「関連ニュースの提示」とする。
-- **リアルタイム性**: 監視アプリ自体のメトリクス（Queue, Worker）は数秒単位のリアルタイム性が求められるが、セキュリティニュースについては数時間〜1日遅れのバッチ反映で許容する。
+
+- **LLMの負荷制御**: ルールベース一次フィルタで対象記事を絞り込み、LLMには1バッチあたり最大10〜20件のみ渡す。
+- **過検知（False Positives）**: 技術名が一般的な単語と同じ場合（Go, Node等）は、CVE番号または公式記述との組み合わせで判定。今回はあくまで「関連ニュースの提示」であり、「確実に影響あり」とは明示しない。
+- **保持期間**: キュレーション済みニュースは **30日** を上限とし、バッチ実行時に古いエントリを自動削除（JSONLの全件再書き出し）する。
+- **オフライン時**: ネットワーク取得に失敗した場合はサイレントにスキップ（ログ記録のみ）し、次回バッチで再試行する。syncStateのカーソルは進めない。
+- **重要度アラートレベル**:
+  - `CRITICAL`（CVSS 9.0+）: 赤バッジ + 即時macOS通知
+  - `HIGH`（CVSS 7.0〜8.9）: 赤バッジのみ
+  - `MEDIUM`以下: 黄バッジのみ（通知なし）
+- **リアルタイム性**: メトリクス監視（Queue/Worker）は秒単位、セキュリティニュースは数時間〜1日遅れのバッチ反映で許容する。
+
+---
+
+## 5. 受け入れ基準
+
+- OSV.dev / GitHub Advisory から最新の脆弱性情報を取得し、プロジェクトのKGスタックとの照合が動作すること
+- 関連ニュースが1件以上ある場合、監視アプリのSecurityNewsボタンにバッジが表示されること
+- ボタン押下でキュレーション済みニュース一覧がSheetに表示され、外部リンクへ遷移できること
+- 既読フラグが正しく保존・反映され、全件既読後はバッジが消えること
+- LLMバッチ実行中にKnowFlowワーカー等の他ジョブをブロックしないこと（skip-if-busy）
+- 1か月連続稼働でJSONLの件数が上限（30日分）を超えないこと
