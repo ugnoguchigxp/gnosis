@@ -1,0 +1,205 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueSnapshot {
+    pub pending: u64,
+    pub running: u64,
+    pub deferred: u64,
+    pub failed: u64,
+}
+
+impl Default for QueueSnapshot {
+    fn default() -> Self {
+        Self {
+            pending: 0,
+            running: 0,
+            deferred: 0,
+            failed: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerSnapshot {
+    pub last_success_ts: Option<i64>,
+    pub last_failure_ts: Option<i64>,
+    pub consecutive_failures: u64,
+}
+
+impl Default for WorkerSnapshot {
+    fn default() -> Self {
+        Self {
+            last_success_ts: None,
+            last_failure_ts: None,
+            consecutive_failures: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EvalSnapshot {
+    pub degraded_rate: f64,
+    pub passed: u64,
+    pub failed: u64,
+    pub updated_at_ts: Option<i64>,
+}
+
+impl Default for EvalSnapshot {
+    fn default() -> Self {
+        Self {
+            degraded_rate: 0.0,
+            passed: 0,
+            failed: 0,
+            updated_at_ts: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MonitorSnapshotData {
+    pub queue: QueueSnapshot,
+    pub worker: WorkerSnapshot,
+    pub eval: EvalSnapshot,
+    pub task_index: Vec<TaskIndexEntry>,
+}
+
+impl Default for MonitorSnapshotData {
+    fn default() -> Self {
+        Self {
+            queue: QueueSnapshot::default(),
+            worker: WorkerSnapshot::default(),
+            eval: EvalSnapshot::default(),
+            task_index: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskIndexEntry {
+    pub task_id: String,
+    pub topic: Option<String>,
+    pub source: Option<String>,
+    pub status: String,
+    pub updated_at_ts: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotEnvelope {
+    pub ts: i64,
+    pub data: MonitorSnapshotData,
+}
+
+impl Default for SnapshotEnvelope {
+    fn default() -> Self {
+        Self {
+            ts: 0,
+            data: MonitorSnapshotData::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineEvent {
+    pub id: String,
+    pub kind: String,
+    pub ts: i64,
+    pub run_id: Option<String>,
+    pub task_id: Option<String>,
+    pub result_summary: Option<String>,
+    pub error_reason: Option<String>,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum OutboundBroadcast {
+    Snapshot(SnapshotEnvelope),
+    Event(TimelineEvent),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotCliPayload {
+    pub ts: i64,
+    pub queue: QueueSnapshot,
+    pub worker: WorkerSnapshot,
+    pub eval: EvalSnapshot,
+    #[serde(default)]
+    pub task_index: Vec<TaskIndexEntry>,
+}
+
+impl From<SnapshotCliPayload> for SnapshotEnvelope {
+    fn from(value: SnapshotCliPayload) -> Self {
+        Self {
+            ts: value.ts,
+            data: MonitorSnapshotData {
+                queue: value.queue,
+                worker: value.worker,
+                eval: value.eval,
+                task_index: value.task_index,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskDetailLogSnippet {
+    pub ts: i64,
+    pub kind: String,
+    pub run_id: Option<String>,
+    pub task_id: Option<String>,
+    pub summary: Option<String>,
+    pub error: Option<String>,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskDetailPayload {
+    pub task_id: String,
+    pub run_id: Option<String>,
+    pub topic: Option<String>,
+    pub source: Option<String>,
+    pub status: Option<String>,
+    pub result_summary: Option<String>,
+    pub error_reason: Option<String>,
+    #[serde(default)]
+    pub logs: Vec<TaskDetailLogSnippet>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ClientHello {
+    #[serde(rename = "type")]
+    pub message_type: String,
+    #[serde(rename = "clientVersion")]
+    pub client_version: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ServerMessage {
+    HelloAck {
+        #[serde(rename = "serverVersion")]
+        server_version: String,
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u32,
+    },
+    Snapshot {
+        ts: i64,
+        data: MonitorSnapshotData,
+    },
+    Event {
+        ts: i64,
+        event: TimelineEvent,
+    },
+    Heartbeat {
+        ts: i64,
+    },
+}
