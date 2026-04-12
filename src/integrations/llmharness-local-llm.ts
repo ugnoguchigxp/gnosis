@@ -1,4 +1,5 @@
-import { saveMemory, searchMemory } from '../services/memory.js';
+import { config } from '../config.js';
+import { listMemoriesByMetadata, saveMemory, searchMemory } from '../services/memory.js';
 
 type OpenAICompatibleResponse = {
   choices?: Array<{
@@ -18,12 +19,27 @@ type Args = {
   apiKeyEnv: string;
   temperature: number;
   store: boolean;
+  guidanceEnabled: boolean;
+  guidanceSessionId: string;
+  guidanceAlwaysLimit: number;
+  guidanceOnDemandLimit: number;
+  guidanceMinSimilarity: number;
+  guidanceMaxChars: number;
+  guidanceProject?: string;
 };
 
 const DEFAULT_API_BASE_URL = 'http://localhost:8000';
 const DEFAULT_API_PATH = '/v1/chat/completions';
 const DEFAULT_API_KEY_ENV = 'LOCAL_LLM_API_KEY';
 const DEFAULT_MODEL = 'gemma4-default';
+
+function parseBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (!value) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (['1', 'true', 'yes'].includes(normalized)) return true;
+  if (['0', 'false', 'no'].includes(normalized)) return false;
+  return fallback;
+}
 
 function parseArgValue(argv: string[], key: string): string | undefined {
   const idx = argv.indexOf(key);
@@ -52,9 +68,22 @@ function parseArgs(argv: string[]): Args {
   const limitRaw = parseArgValue(argv, '--limit') || process.env.GNOSIS_CONTEXT_LIMIT || '5';
   const temperatureRaw =
     parseArgValue(argv, '--temperature') || process.env.LOCAL_LLM_TEMPERATURE || '0';
+  const guidanceAlwaysLimitRaw =
+    parseArgValue(argv, '--guidance-always-limit') || String(config.guidance.alwaysLimit);
+  const guidanceOnDemandLimitRaw =
+    parseArgValue(argv, '--guidance-on-demand-limit') || String(config.guidance.onDemandLimit);
+  const guidanceMinSimilarityRaw =
+    parseArgValue(argv, '--guidance-min-similarity') || String(config.guidance.minSimilarity);
+  const guidanceMaxCharsRaw =
+    parseArgValue(argv, '--guidance-max-chars') || String(config.guidance.maxPromptChars);
+  const guidanceDisabled = hasArg(argv, '--no-guidance');
 
   const limit = Number(limitRaw);
   const temperature = Number(temperatureRaw);
+  const guidanceAlwaysLimit = Number(guidanceAlwaysLimitRaw);
+  const guidanceOnDemandLimit = Number(guidanceOnDemandLimitRaw);
+  const guidanceMinSimilarity = Number(guidanceMinSimilarityRaw);
+  const guidanceMaxChars = Number(guidanceMaxCharsRaw);
 
   return {
     prompt: parseArgValue(argv, '--prompt'),
@@ -75,6 +104,28 @@ function parseArgs(argv: string[]): Args {
     store:
       hasArg(argv, '--store') ||
       (process.env.GNOSIS_LLMHARNESS_STORE || '').toLowerCase() === 'true',
+    guidanceEnabled:
+      !guidanceDisabled &&
+      parseBoolean(process.env.GUIDANCE_ENABLED, config.guidance.enabled ?? true),
+    guidanceSessionId:
+      parseArgValue(argv, '--guidance-session-id') ||
+      process.env.GUIDANCE_SESSION_ID ||
+      config.guidance.sessionId,
+    guidanceAlwaysLimit:
+      Number.isFinite(guidanceAlwaysLimit) && guidanceAlwaysLimit > 0
+        ? Math.floor(guidanceAlwaysLimit)
+        : 4,
+    guidanceOnDemandLimit:
+      Number.isFinite(guidanceOnDemandLimit) && guidanceOnDemandLimit > 0
+        ? Math.floor(guidanceOnDemandLimit)
+        : 5,
+    guidanceMinSimilarity: Number.isFinite(guidanceMinSimilarity) ? guidanceMinSimilarity : 0.72,
+    guidanceMaxChars:
+      Number.isFinite(guidanceMaxChars) && guidanceMaxChars > 0
+        ? Math.floor(guidanceMaxChars)
+        : 3000,
+    guidanceProject:
+      parseArgValue(argv, '--guidance-project') || process.env.GUIDANCE_PROJECT || undefined,
   };
 }
 
@@ -121,6 +172,130 @@ function formatMemoryContext(
   });
 
   return lines.join('\n\n');
+}
+
+type GuidanceItem = {
+  content: string;
+  similarity?: unknown;
+  metadata: unknown;
+  createdAt: unknown;
+};
+
+function formatGuidanceContext(items: GuidanceItem[], maxChars: number): string {
+  if (items.length === 0) return '';
+
+  const blocks: string[] = [];
+  let usedChars = 0;
+
+  for (const [index, item] of items.entries()) {
+    const metadata =
+      item.metadata && typeof item.metadata === 'object'
+        ? (item.metadata as Record<string, unknown>)
+        : {};
+    const priority =
+      typeof metadata.priority === 'number' && Number.isFinite(metadata.priority)
+        ? metadata.priority
+        : 0;
+    const title = typeof metadata.title === 'string' ? metadata.title : 'untitled';
+    const docPath = typeof metadata.docPath === 'string' ? metadata.docPath : '';
+    const guidanceType =
+      typeof metadata.guidanceType === 'string' ? metadata.guidanceType : 'guidance';
+    const scope = typeof metadata.scope === 'string' ? metadata.scope : '';
+    const similarity =
+      item.similarity === undefined || item.similarity === null
+        ? 'n/a'
+        : Number(item.similarity).toFixed(4);
+
+    const block = [
+      `#${
+        index + 1
+      } type=${guidanceType} scope=${scope} priority=${priority} similarity=${similarity}`,
+      `title=${title}`,
+      docPath ? `docPath=${docPath}` : '',
+      `content=${item.content}`,
+    ]
+      .filter((line) => line.length > 0)
+      .join('\n');
+
+    const nextSize = usedChars + block.length + (blocks.length > 0 ? 2 : 0);
+    if (nextSize > maxChars && blocks.length > 0) {
+      break;
+    }
+
+    blocks.push(block);
+    usedChars = nextSize;
+  }
+
+  return blocks.join('\n\n');
+}
+
+async function loadGuidanceContext(
+  args: Args,
+  prompt: string,
+): Promise<{
+  guidanceContext: string;
+  alwaysCount: number;
+  onDemandCount: number;
+}> {
+  if (!args.guidanceEnabled) {
+    return { guidanceContext: '', alwaysCount: 0, onDemandCount: 0 };
+  }
+
+  const alwaysFilter: Record<string, unknown> = {
+    kind: 'guidance',
+    scope: 'always',
+  };
+  const onDemandFilter: Record<string, unknown> = {
+    kind: 'guidance',
+    scope: 'on_demand',
+  };
+
+  if (args.guidanceProject) {
+    alwaysFilter.project = args.guidanceProject;
+    onDemandFilter.project = args.guidanceProject;
+  }
+
+  const always = await listMemoriesByMetadata(
+    args.guidanceSessionId,
+    alwaysFilter,
+    args.guidanceAlwaysLimit,
+    { sortByPriority: true },
+  ).catch(() => []);
+
+  const onDemandRaw = await searchMemory(
+    args.guidanceSessionId,
+    prompt,
+    args.guidanceOnDemandLimit,
+    onDemandFilter,
+  ).catch(() => []);
+
+  const onDemand = onDemandRaw.filter((item) => {
+    const similarity = Number(item.similarity);
+    return Number.isFinite(similarity) && similarity >= args.guidanceMinSimilarity;
+  });
+
+  const formatted = formatGuidanceContext(
+    [
+      ...always.map((item) => ({
+        content: item.content,
+        metadata: item.metadata,
+        createdAt: item.createdAt,
+      })),
+      ...onDemand.map((item) => ({
+        content: item.content,
+        metadata: item.metadata,
+        similarity: item.similarity,
+        createdAt: item.createdAt,
+      })),
+    ],
+    args.guidanceMaxChars,
+  );
+
+  return {
+    guidanceContext: formatted,
+    alwaysCount: always.length,
+    onDemandCount: onDemand.length,
+  };
 }
 
 async function generateWithApi(prompt: string, args: Args): Promise<string> {
@@ -170,7 +345,11 @@ async function main() {
     throw new Error('prompt is required. pass --prompt or stdin');
   }
 
-  const memories = await searchMemory(args.sessionId, prompt, args.limit).catch(() => []);
+  const [memories, guidanceContext] = await Promise.all([
+    searchMemory(args.sessionId, prompt, args.limit).catch(() => []),
+    args.guidanceEnabled ? getGuidanceContext(prompt).catch(() => '') : Promise.resolve(''),
+  ]);
+
   const memoryContext = formatMemoryContext(
     memories.map((m) => ({
       content: m.content,
@@ -180,18 +359,26 @@ async function main() {
     })),
   );
 
-  const augmentedPrompt = memoryContext
-    ? [
-        'You are given retrieved memory context from previous coding sessions.',
-        'Use relevant facts only when helpful.',
-        '',
-        '[Retrieved Memory]',
-        memoryContext,
-        '',
-        '[Current Request]',
-        prompt,
-      ].join('\n')
-    : prompt;
+  const promptParts: string[] = [];
+
+  if (guidanceContext) {
+    promptParts.push('[Guidance & Skills]');
+    promptParts.push(guidanceContext);
+    promptParts.push('');
+  }
+
+  if (memoryContext) {
+    promptParts.push('You are given retrieved memory context from previous coding sessions.');
+    promptParts.push('Use relevant facts only when helpful.');
+    promptParts.push('');
+    promptParts.push('[Retrieved Memory]');
+    promptParts.push(memoryContext);
+    promptParts.push('');
+  }
+
+  promptParts.push('[Current Request]');
+  promptParts.push(prompt);
+  const augmentedPrompt = promptParts.join('\n');
 
   const generated = await generateWithApi(augmentedPrompt, args);
 
@@ -200,16 +387,20 @@ async function main() {
       source: 'llmharness.localLlm',
       model: args.model,
       contextCount: memories.length,
+      hasGuidance: Boolean(guidanceContext),
     }).catch(() => {});
   }
 
   process.stdout.write(
     JSON.stringify({
       response: generated,
-      summary: `Generated with Gnosis context (${memories.length} memories)`,
+      summary: `Generated with Gnosis context (${memories.length} memories${
+        guidanceContext ? ', with guidance' : ''
+      })`,
       rawResponse: {
         sessionId: args.sessionId,
         contextCount: memories.length,
+        hasGuidance: Boolean(guidanceContext),
       },
     }),
   );

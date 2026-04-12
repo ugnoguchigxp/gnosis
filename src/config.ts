@@ -109,4 +109,24 @@ export const config = {
       cronRunBudget: envNumber(process.env.CRON_RUN_BUDGET, 30),
     }),
   },
+
+  guidance: {
+    sessionId: process.env.GUIDANCE_SESSION_ID || 'guidance-registry',
+    inboxDir:
+      process.env.GUIDANCE_INBOX_DIR || path.resolve(process.cwd(), 'imports/guidance/inbox'),
+    processedDir:
+      process.env.GUIDANCE_PROCESSED_DIR || path.resolve(process.cwd(), 'imports/guidance/processed'),
+    failedDir:
+      process.env.GUIDANCE_FAILED_DIR || path.resolve(process.cwd(), 'imports/guidance/failed'),
+    maxFilesPerZip: Math.max(1, envNumber(process.env.GUIDANCE_MAX_FILES_PER_ZIP, 500)),
+    maxZipSizeBytes: Math.max(1, envNumber(process.env.GUIDANCE_MAX_ZIP_SIZE_BYTES, 50_000_000)),
+    maxChunkChars: Math.max(200, envNumber(process.env.GUIDANCE_MAX_CHUNK_CHARS, 2000)),
+    maxFileChars: Math.max(200, envNumber(process.env.GUIDANCE_MAX_FILE_CHARS, 120_000)),
+    alwaysLimit: Math.max(1, envNumber(process.env.GUIDANCE_ALWAYS_LIMIT, 4)),
+    onDemandLimit: Math.max(1, envNumber(process.env.GUIDANCE_ON_DEMAND_LIMIT, 5)),
+    maxPromptChars: Math.max(200, envNumber(process.env.GUIDANCE_MAX_PROMPT_CHARS, 3000)),
+    minSimilarity: envNumber(process.env.GUIDANCE_MIN_SIMILARITY, 0.72),
+    enabled: envBoolean(process.env.GUIDANCE_ENABLED, true),
+    project: process.env.GUIDANCE_PROJECT,
+  },
 };

@@ -201,6 +201,58 @@ export async function searchMemory(
 }
 
 /**
+ * メタデータ条件でメモリを一覧取得します（埋め込み生成は行いません）。
+ */
+export async function listMemoriesByMetadata(
+  sessionId: string,
+  filter: Record<string, unknown>,
+  limit = 5,
+  options: {
+    sortByPriority?: boolean;
+  } = {},
+) {
+  const safeLimit = Math.max(1, Math.trunc(limit));
+  const whereClause =
+    filter && Object.keys(filter).length > 0
+      ? sql`${vibeMemories.sessionId} = ${sessionId} AND ${
+          vibeMemories.metadata
+        } @> ${JSON.stringify(filter)}::jsonb`
+      : sql`${vibeMemories.sessionId} = ${sessionId}`;
+
+  const orderByClause = options.sortByPriority
+    ? [
+        sql`COALESCE((${vibeMemories.metadata}->>'priority')::double precision, 0) DESC`,
+        desc(vibeMemories.createdAt),
+      ]
+    : [desc(vibeMemories.createdAt)];
+
+  const results = await db
+    .select({
+      id: vibeMemories.id,
+      content: vibeMemories.content,
+      metadata: vibeMemories.metadata,
+      createdAt: vibeMemories.createdAt,
+    })
+    .from(vibeMemories)
+    .where(whereClause)
+    .orderBy(...orderByClause)
+    .limit(safeLimit);
+
+  if (results.length > 0) {
+    const resultIds = results.map((r) => r.id);
+    await db
+      .update(vibeMemories)
+      .set({
+        referenceCount: sql`${vibeMemories.referenceCount} + 1`,
+        lastReferencedAt: new Date(),
+      })
+      .where(inArray(vibeMemories.id, resultIds));
+  }
+
+  return results;
+}
+
+/**
  * メモリを削除します
  */
 export async function deleteMemory(memoryId: string, database: Pick<typeof db, 'delete'> = db) {

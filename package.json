@@ -13,6 +13,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:seed": "bun run src/db/seed.ts",
     "db:push": "drizzle-kit push",
+    "guidance:import": "bun run src/scripts/import-guidance.ts",
     "lint": "biome check .",
     "format": "biome format --write .",
     "smoke": "bun run scripts/smoke.ts",

@@ -1,11 +1,14 @@
-import { PgJsonbQueueRepository } from '../services/knowflow/queue/pgJsonbRepository.js';
-import { runWorkerLoop } from '../services/knowflow/worker/loop.js';
-import { PgKnowledgeRepository } from '../services/knowflow/knowledge/repository.js';
-import { createLocalLlmRetriever } from '../adapters/retriever/mcpRetriever.js';
-import { createMcpEvidenceProvider, createKnowFlowTaskHandler } from '../services/knowflow/worker/knowFlowHandler.js';
-import { config } from '../config.js';
-import { createRunLogger } from '../services/knowflow/ops/runLog.js';
 import { resolve } from 'node:path';
+import { createLocalLlmRetriever } from '../adapters/retriever/mcpRetriever.js';
+import { config } from '../config.js';
+import { PgKnowledgeRepository } from '../services/knowflow/knowledge/repository.js';
+import { createRunLogger } from '../services/knowflow/ops/runLog.js';
+import { PgJsonbQueueRepository } from '../services/knowflow/queue/pgJsonbRepository.js';
+import {
+  createKnowFlowTaskHandler,
+  createMcpEvidenceProvider,
+} from '../services/knowflow/worker/knowFlowHandler.js';
+import { runWorkerLoop } from '../services/knowflow/worker/loop.js';
 
 async function main() {
   const runLogger = await createRunLogger({ runId: `worker-daemon-${Date.now()}` });
@@ -20,7 +23,7 @@ async function main() {
   // localLlm のパス解決（プロジェクトルートからの相対パスを想定）
   const localLlmPath = resolve(process.cwd(), '../localLlm');
   const retriever = createLocalLlmRetriever(localLlmPath);
-  
+
   const evidenceProvider = createMcpEvidenceProvider(retriever, {
     logger,
     llmConfig: config.knowflow.llm,
