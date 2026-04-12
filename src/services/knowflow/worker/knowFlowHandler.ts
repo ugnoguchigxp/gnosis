@@ -63,6 +63,24 @@ export const createMcpEvidenceProvider = (
       },
     );
 
+    // LLMがdegradedの場合（フォールバック出力）はMCP検索をスキップ
+    if (queryResult.degraded) {
+      logger({
+        event: 'retriever.mcp.skipped',
+        taskId: task.id,
+        topic: task.topic,
+        level: 'warn',
+        message: 'LLM degraded, skipping MCP search to avoid connection errors',
+      });
+      return {
+        claims: [],
+        sources: [],
+        normalizedSources: [],
+        relations: [],
+        queryCountUsed: 0,
+      };
+    }
+
     const queries = queryResult.output.queries.slice(0, MAX_INITIAL_QUERIES);
     const allClaims: EvidenceClaim[] = [];
     const allSources: EvidenceSource[] = [];
@@ -73,7 +91,19 @@ export const createMcpEvidenceProvider = (
     for (const query of queries) {
       if (queryCountUsed >= config.knowflow.worker.maxQueriesPerTask) break; // Hard limit
 
-      const searchResultText = await retriever.search(query);
+      let searchResultText: string;
+      try {
+        searchResultText = await retriever.search(query);
+      } catch (searchError) {
+        logger({
+          event: 'retriever.mcp.search_error',
+          taskId: task.id,
+          query,
+          message: searchError instanceof Error ? searchError.message : String(searchError),
+          level: 'warn',
+        });
+        continue; // 検索失敗は次のクエリへ
+      }
       queryCountUsed += 1;
 
       // Simple regex to find URLs in search result snippets

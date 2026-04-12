@@ -18,19 +18,19 @@ export const HypothesisItemSchema = z
     rationale: z.string().min(1).optional(),
     priority: z.number().min(0).max(1).optional(),
   })
-  .strict();
+  .passthrough();
 
 export const HypothesisOutputSchema = z
   .object({
     hypotheses: z.array(HypothesisItemSchema).default([]),
   })
-  .strict();
+  .passthrough();
 
 export const QueryGenerationOutputSchema = z
   .object({
     queries: z.array(z.string().min(1)).default([]),
   })
-  .strict();
+  .passthrough();
 
 export const GapTypeSchema = z.enum([
   'missing_definition',
@@ -48,13 +48,13 @@ export const GapSchema = z
     description: z.string().min(1),
     priority: z.number().min(0).max(1),
   })
-  .strict();
+  .passthrough();
 
 export const GapDetectionOutputSchema = z
   .object({
     gaps: z.array(GapSchema).default([]),
   })
-  .strict();
+  .passthrough();
 
 export const GapPlannerStepSchema = z
   .object({
@@ -62,20 +62,20 @@ export const GapPlannerStepSchema = z
     reason: z.string().min(1).optional(),
     queries: z.array(z.string().min(1)).default([]),
   })
-  .strict();
+  .passthrough();
 
 export const GapPlannerOutputSchema = z
   .object({
     steps: z.array(GapPlannerStepSchema).default([]),
   })
-  .strict();
+  .passthrough();
 
 export const SummarizeOutputSchema = z
   .object({
     summary: z.string(),
     findings: z.array(z.string()).default([]),
   })
-  .strict();
+  .passthrough();
 
 export const ExtractEvidenceOutputSchema = z
   .object({
@@ -97,7 +97,7 @@ export const ExtractEvidenceOutputSchema = z
       )
       .default([]),
   })
-  .strict();
+  .passthrough();
 
 export type HypothesisOutput = z.infer<typeof HypothesisOutputSchema>;
 export type QueryGenerationOutput = z.infer<typeof QueryGenerationOutputSchema>;
