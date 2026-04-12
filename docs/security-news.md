@@ -15,41 +15,122 @@ Knowledge Graph（KG）に記録されているプロジェクトの技術スタ
 ### 2.1 ニュース収集プロセス (Crawler & LLM Analyzer)
 
 - **バッチ処理**: 1日1回を基本とし、macOS LaunchAgent で登録・管理する（`com.gnosis.secnews.plist`）。
-- **ターゲットソース**: 下表のAPIを優先する（無料・無認証で利用可能な公式APIから始める）。
+- **ターゲットソース**: 以下4サイトのトップページをHTMLスクレイピングで取得し、記事リストを抽出する。
 
-| ソース | 形式 | カバー範囲 |
-|--------|------|-----------|
-| [OSV.dev](https://api.osv.dev/) | REST API (JSON) | npm / cargo / pypi 等エコシステム別 |
-| [NVD](https://nvd.nist.gov/developers/vulnerabilities) | REST API (JSON) | CVE全般 |
-| [GitHub Advisory Database](https://github.com/advisories) | REST API + RSS | npm / cargo 特化 |
-| [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) | JSON feed | 実際に悪用されたCVE |
-| [Snyk Vulnerability DB](https://security.snyk.io/rss.xml) | RSS | 言語別 |
+| サイト | URL | 取得方法 | 特徴 |
+|--------|-----|---------|------|
+| [The Hacker News](https://thehackernews.com/) | `https://thehackernews.com/` | HTML scraping | 英語・セキュリティ専門・更新頻度高 |
+| [BleepingComputer](https://www.bleepingcomputer.com/) | `https://www.bleepingcomputer.com/` | HTML scraping | 英語・マルウェア/CVE速報が豊富 |
+| [CSO Online](https://www.csoonline.com/) | `https://www.csoonline.com/` | HTML scraping | 英語・企業向けセキュリティ記事 |
+| [ITmedia エンタープライズ（セキュリティ）](https://www.itmedia.co.jp/enterprise/security/) | `https://www.itmedia.co.jp/enterprise/security/` | HTML scraping | 日本語・国内脅威情報もカバー |
 
-> **優先度**: OSV.dev と GitHub Advisory Database はエコシステム（npm/cargo）でフィルタできるため、プロジェクトのスタックへの適合度が高く、Phase 1 で最初に対応する。
+#### 各サイトのスクレイピング仕様
+
+```typescript
+// src/scripts/secnews-fetch.ts
+// fetch() + HTMLRewriter (Bun組み込み) または cheerio でDOM解析
+
+const SOURCES = [
+  {
+    id: 'thehackernews',
+    url: 'https://thehackernews.com/',
+    lang: 'en',
+    // 記事リストのCSSセレクタ（トップページの記事カード）
+    articleSelector: 'div.body-post',
+    titleSelector: 'h2.home-title',
+    linkSelector: 'a.story-link',
+    summarySelector: 'div.home-desc',
+  },
+  {
+    id: 'bleepingcomputer',
+    url: 'https://www.bleepingcomputer.com/',
+    lang: 'en',
+    articleSelector: 'div.bc_latest_news_text',
+    titleSelector: 'h4 > a',
+    linkSelector: 'h4 > a',
+    summarySelector: 'p',
+  },
+  {
+    id: 'csoonline',
+    url: 'https://www.csoonline.com/',
+    lang: 'en',
+    articleSelector: 'div.card--article',
+    titleSelector: 'h3.card__title',
+    linkSelector: 'a.card__title-link',
+    summarySelector: 'p.card__description',
+  },
+  {
+    id: 'itmedia-enterprise-security',
+    url: 'https://www.itmedia.co.jp/enterprise/security/',
+    lang: 'ja',
+    articleSelector: 'div.colBoxIndex ul li',
+    titleSelector: 'a',
+    linkSelector: 'a',
+    summarySelector: 'p',
+  },
+] satisfies ScrapeSource[];
+```
+
+> **注意**: 各サイトのDOM構造は変更される場合があるため、セレクタは定数として管理し、フォールバック（テキスト全文抽出）を持たせる。
+> スクレイピングは相手サーバーへの配慮として1サイトあたり1リクエストのみ（トップページのHTMLのみ取得）とし、個別記事への自動クロールは行わない。
 
 ---
 
-### 2.2 処理フロー（2段階フィルタリング）
+### 2.2 処理フロー（スクレイピング → 2段階フィルタリング → LLM評価）
 
-LLMへの不要な呼び出しを抑えるため、以下の2段階で処理する。
+LLMへの不要な呼び出しを抑えるため、以下の順序で処理する。
 
 ```
-[ソース取得]
+[Step 0: 4サイトのトップページをHTMLスクレイピング]
+  - fetch() でHTMLを取得 → cheerio/HTMLRewriter でDOM解析
+  - 記事タイトル・URL・概要テキストを構造化して抽出
+  - 1サイト = 1リクエスト（トップページのみ、クロールなし）
+    │ 抽出された記事リスト（全サイト合計: 目安30〜60件）
+    ▼
+[Step 1: ルールベース一次フィルタ]  ← LLMを使わない高速フィルタ
+  - dedupeキー確認（既処理URLはスキップ）
+  - CVE番号パターン (CVE-YYYY-NNNN) の有無を確認
+  - KGの技術スタック名キーワードとタイトル/概要を文字列照合
+    （例: "Bun", "TypeScript", "Rust", "PostgreSQL", "Svelte", "npm", "Node.js" 等）
+  - 明らかに無関係な記事を除外（Windows固有、iOS/Android固有、物理セキュリティ等）
+    │ 通過した記事のみ（目安: 5〜15件）
+    ▼
+[Step 2: LLM評価 (localLlm)]  ← 1記事ずつ順次処理、skip-if-busy
+  - タイトル + 概要テキストをプロンプトに渡す
+  - 出力: matchedStacks（影響技術）/ severity（CRITICAL/HIGH/MEDIUM/LOW）
+           / summary（1〜2行の日本語要約）/ affectedVersions
+  - LLMが「関係なし」と判定した記事はここで除外
     │
     ▼
-[Step 1: ルールベース一次フィルタ]
-  - CVE番号パターン(CVE-YYYY-NNNN)の抽出
-  - KGの技術スタック名キーワードとタイトル/タグの文字列照合
-  - 明らかに無関係（対象外OS/クラウド固有）な記事を除外
-    │ 通過した記事のみ
-    ▼
-[Step 2: LLM詳細解析 (localLlm)]
-  - 影響を受けるバージョン範囲の抽出
-  - 深刻度(CVSS)の確認・正規化
-  - 技術スタックとのマッチ確認（二重チェック）
-    │
-    ▼
-[KG照合 → 保存]
+[Step 3: 保存]
+  - logs/security_news.jsonl に追記
+  - syncState テーブルのカーソルを更新（冪等保証）
+```
+
+#### LLM評価プロンプト仕様
+
+```typescript
+// 1記事あたりのプロンプト（トークン数を抑えるためタイトル+概要のみ渡す）
+const prompt = `
+以下のセキュリティニュース記事を読み、プロジェクトの技術スタックへの関連性を評価してください。
+
+【対象技術スタック】
+${stackNames.join(', ')}
+
+【記事情報】
+タイトル: ${article.title}
+概要: ${article.summary}
+URL: ${article.url}
+
+以下のJSON形式のみで返答してください。余分な説明は不要です。
+{
+  "relevant": true または false,
+  "matchedStacks": ["マッチした技術名"],
+  "severity": "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "UNKNOWN",
+  "summary": "1〜2行の日本語要約（relevantがfalseの場合は空文字）",
+  "affectedVersions": "影響バージョン範囲（不明な場合はnull）"
+}
+`.trim();
 ```
 
 ---
