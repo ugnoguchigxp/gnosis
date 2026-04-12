@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { z } from 'zod';
 import { config } from '../config.js';
+import { withGlobalLock } from '../utils/lock.js';
 
 const LLM_SCRIPT = config.llmScript;
 const LLM_TIMEOUT_MS = config.llmTimeoutMs;
@@ -29,14 +30,16 @@ export async function extractEntitiesFromText(text: string): Promise<ExtractedEn
 `.trim();
 
   try {
-    const result = spawnSync(LLM_SCRIPT, ['--output', 'text', '--prompt', prompt], {
-      encoding: 'utf-8',
-      env: { ...process.env },
-      timeout:
-        Number.isFinite(LLM_TIMEOUT_MS) && LLM_TIMEOUT_MS > 0
-          ? LLM_TIMEOUT_MS
-          : config.llm.defaultTimeoutMs,
-    });
+    const result = await withGlobalLock('local-llm', async () =>
+      spawnSync(LLM_SCRIPT, ['--output', 'text', '--prompt', prompt], {
+        encoding: 'utf-8',
+        env: { ...process.env },
+        timeout:
+          Number.isFinite(LLM_TIMEOUT_MS) && LLM_TIMEOUT_MS > 0
+            ? LLM_TIMEOUT_MS
+            : config.llm.defaultTimeoutMs,
+      }),
+    );
 
     if (result.error) {
       console.error('LLM Extraction Error:', result.error);
@@ -88,17 +91,15 @@ ${context}
 `.trim();
 
   try {
-    const result = spawnSync(
-      LLM_SCRIPT,
-      ['--output', 'text', '--max-tokens', '512', '--prompt', prompt],
-      {
+    const result = await withGlobalLock('local-llm', async () =>
+      spawnSync(LLM_SCRIPT, ['--output', 'text', '--max-tokens', '512', '--prompt', prompt], {
         encoding: 'utf-8',
         env: { ...process.env },
         timeout:
           Number.isFinite(LLM_TIMEOUT_MS) && LLM_TIMEOUT_MS > 0
             ? LLM_TIMEOUT_MS
             : config.llm.defaultTimeoutMs,
-      },
+      }),
     );
 
     const output = result.stdout?.trim();
@@ -153,17 +154,15 @@ ${transcript}
 """
 `.trim();
 
-  const result = spawnSync(
-    LLM_SCRIPT,
-    ['--output', 'text', '--max-tokens', '1500', '--prompt', prompt],
-    {
+  const result = await withGlobalLock('local-llm', async () =>
+    spawnSync(LLM_SCRIPT, ['--output', 'text', '--max-tokens', '1500', '--prompt', prompt], {
       encoding: 'utf-8',
       env: { ...process.env },
       timeout:
         Number.isFinite(LLM_TIMEOUT_MS) && LLM_TIMEOUT_MS > 0
           ? LLM_TIMEOUT_MS
           : config.llm.defaultTimeoutMs * 2,
-    },
+    }),
   );
 
   if (result.error) {
@@ -234,14 +233,12 @@ export async function judgeAndMergeEntities(
 `.trim();
 
   try {
-    const result = spawnSync(
-      LLM_SCRIPT,
-      ['--output', 'text', '--max-tokens', '800', '--prompt', prompt],
-      {
+    const result = await withGlobalLock('local-llm', async () =>
+      spawnSync(LLM_SCRIPT, ['--output', 'text', '--max-tokens', '800', '--prompt', prompt], {
         encoding: 'utf-8',
         env: { ...process.env },
         timeout: LLM_TIMEOUT_MS,
-      },
+      }),
     );
 
     const output = result.stdout?.trim();

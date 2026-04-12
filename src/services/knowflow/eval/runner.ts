@@ -110,12 +110,15 @@ export type EvalRunResult = {
   cases: EvalCaseResult[];
 };
 
+export type EvalRunMode = 'live' | 'mock';
+
 export const runEvalSuite = async (options: {
   suiteName: string;
   llmConfig?: Partial<LlmClientConfig>;
   requestPrefix?: string;
   llmLogger?: (event: LlmLogEvent) => void;
   maxDegradedRate?: number;
+  mode?: EvalRunMode;
 }): Promise<EvalRunResult> => {
   if (
     options.maxDegradedRate !== undefined &&
@@ -129,11 +132,26 @@ export const runEvalSuite = async (options: {
   const suitePath = resolve(process.cwd(), 'eval', 'suites', `${options.suiteName}.json`);
   const raw = await readFile(suitePath, 'utf-8');
   const suite = parseEvalSuite(JSON.parse(raw));
+  const mode = options.mode ?? 'live';
 
   const cases: EvalCaseResult[] = [];
   for (const item of suite.cases) {
     const startedAt = Date.now();
     const requestId = `${options.requestPrefix ?? 'eval'}:${options.suiteName}:${item.id}`;
+    if (mode === 'mock') {
+      const latencyMs = Date.now() - startedAt;
+      cases.push({
+        id: item.id,
+        task: item.task,
+        ok: true,
+        degraded: false,
+        backend: 'cli',
+        warnings: [],
+        latencyMs,
+      });
+      continue;
+    }
+
     try {
       const result = await runLlmTask(
         {

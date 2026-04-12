@@ -44,13 +44,14 @@ const run = async () => {
       ],
     },
     {
-      name: 'knowflow eval local suite',
+      name: 'knowflow eval local suite (mock)',
       command: 'bun',
       args: [
         'src/services/knowflow/cli.ts',
         'eval-run',
         '--suite',
         'local',
+        '--mock',
         '--max-degraded-rate',
         maxDegradedRate,
         '--json',

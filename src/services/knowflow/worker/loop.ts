@@ -157,6 +157,7 @@ export const runWorkerOnce = async (
 
 export type LoopOptions = WorkerOptions & {
   intervalMs?: number;
+  postTaskDelayMs?: number;
   maxIterations?: number;
   maxConsecutiveErrors?: number;
 };
@@ -167,6 +168,7 @@ export const runWorkerLoop = async (
   options: LoopOptions = {},
 ): Promise<void> => {
   const intervalMs = options.intervalMs ?? config.knowflow.worker.pollIntervalMs;
+  const postTaskDelayMs = options.postTaskDelayMs ?? config.knowflow.worker.postTaskDelayMs;
   const maxIterations = options.maxIterations ?? Number.POSITIVE_INFINITY;
   const maxConsecutiveErrors =
     options.maxConsecutiveErrors ?? config.knowflow.worker.maxConsecutiveErrors;
@@ -185,6 +187,9 @@ export const runWorkerLoop = async (
         await sleep(intervalMs);
         continue;
       }
+
+      // タスク処理後のクールダウン (負荷集中回避)
+      await sleep(postTaskDelayMs);
 
       if (result.status === 'done') {
         consecutiveErrors = 0;

@@ -9,6 +9,8 @@ import {
   getTaskOutputHint,
   parseLlmTaskOutput,
 } from '../services/knowflow/schemas/llm.js';
+import { withGlobalLock } from '../utils/lock.js';
+import { sleep } from '../utils/time.js';
 
 const execAsync = promisify(exec);
 
@@ -57,8 +59,6 @@ const defaultLogger = (event: LlmLogEvent): void => {
   };
   console.log(JSON.stringify(payload));
 };
-
-import { sleep } from '../utils/time.js';
 
 const shellQuote = (value: string): string => `'${value.replace(/'/g, `'"'"'`)}'`;
 
@@ -148,30 +148,32 @@ const defaultInvokeCli = async (
   prompt: string,
   llmClientConfig: LlmClientConfig,
 ): Promise<string> => {
-  let command = llmClientConfig.cliCommand;
-  let stdin: string | undefined;
+  return await withGlobalLock('local-llm', async () => {
+    let command = llmClientConfig.cliCommand;
+    let stdin: string | undefined;
 
-  if (command.includes(llmClientConfig.cliPromptPlaceholder)) {
-    command = command.split(llmClientConfig.cliPromptPlaceholder).join(shellQuote(prompt));
-  } else if (llmClientConfig.cliPromptMode === 'arg') {
-    command = `${command} ${shellQuote(prompt)}`;
-  } else {
-    stdin = prompt;
-  }
+    if (command.includes(llmClientConfig.cliPromptPlaceholder)) {
+      command = command.split(llmClientConfig.cliPromptPlaceholder).join(shellQuote(prompt));
+    } else if (llmClientConfig.cliPromptMode === 'arg') {
+      command = `${command} ${shellQuote(prompt)}`;
+    } else {
+      stdin = prompt;
+    }
 
-  const { stdout, stderr } = stdin
-    ? await runCommandWithStdin(command, stdin, llmClientConfig.timeoutMs)
-    : await execAsync(command, {
-        timeout: llmClientConfig.timeoutMs,
-        maxBuffer: config.llm.maxBuffer,
-      });
+    const { stdout, stderr } = stdin
+      ? await runCommandWithStdin(command, stdin, llmClientConfig.timeoutMs)
+      : await execAsync(command, {
+          timeout: llmClientConfig.timeoutMs,
+          maxBuffer: config.llm.maxBuffer,
+        });
 
-  const output = stdout.trim();
-  if (output.length === 0) {
-    throw new Error(`CLI returned empty output. stderr=${stderr}`);
-  }
+    const output = stdout.trim();
+    if (output.length === 0) {
+      throw new Error(`CLI returned empty output. stderr=${stderr}`);
+    }
 
-  return output;
+    return output;
+  });
 };
 
 const runCommandWithStdin = (

@@ -50,6 +50,7 @@ export const WorkerConfigSchema = z
   .object({
     taskTimeoutMs: z.number().int().positive(),
     pollIntervalMs: z.number().int().positive(),
+    postTaskDelayMs: z.number().int().nonnegative(),
     maxConsecutiveErrors: z.number().int().positive(),
     maxQueriesPerTask: z.number().int().positive(),
     cronRunWindowMs: z.number().int().positive(),
@@ -121,7 +122,8 @@ export const config = {
     }),
     worker: WorkerConfigSchema.parse({
       taskTimeoutMs: envNumber(process.env.KNOWFLOW_WORKER_TASK_TIMEOUT_MS, 600_000),
-      pollIntervalMs: envNumber(process.env.KNOWFLOW_WORKER_POLL_INTERVAL_MS, 1_000),
+      pollIntervalMs: envNumber(process.env.KNOWFLOW_WORKER_POLL_INTERVAL_MS, 60_000),
+      postTaskDelayMs: envNumber(process.env.KNOWFLOW_WORKER_POST_TASK_DELAY_MS, 30_000),
       maxConsecutiveErrors: envNumber(process.env.KNOWFLOW_WORKER_MAX_CONSECUTIVE_ERRORS, 5),
       maxQueriesPerTask: envNumber(process.env.KNOWFLOW_WORKER_MAX_QUERIES_PER_TASK, 10),
       cronRunWindowMs: envNumber(process.env.KNOWFLOW_WORKER_CRON_RUN_WINDOW_MS, 3_600_000),

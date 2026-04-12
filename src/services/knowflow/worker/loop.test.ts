@@ -76,6 +76,7 @@ describe('worker loop', () => {
       maxIterations: 6,
       maxConsecutiveErrors: 5,
       intervalMs: 1,
+      postTaskDelayMs: 1,
       logger,
     });
 

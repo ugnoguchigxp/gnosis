@@ -30,7 +30,7 @@ const usage = `Usage:
   bun src/services/knowflow/cli.ts search-knowledge --query <text> [--limit <n>]
   bun src/services/knowflow/cli.ts get-knowledge --topic <text>
   bun src/services/knowflow/cli.ts merge-knowledge --input <json> [--dry-run]
-  bun src/services/knowflow/cli.ts eval-run [--suite local] [--max-degraded-rate <0-100>]
+  bun src/services/knowflow/cli.ts eval-run [--suite local] [--max-degraded-rate <0-100>] [--mock]
 
 Global options:
   --json | --table
@@ -382,17 +382,20 @@ const run = async () => {
       writeErrorOnlyForMutationCommands(command);
       const suiteName = readStringFlag(args, 'suite') ?? 'local';
       const maxDegradedRate = readNumberFlag(args, 'max-degraded-rate');
+      const mockMode = readBooleanFlag(args, 'mock');
       const result = await runEvalSuite({
         suiteName,
         llmConfig,
         requestPrefix: runLogger.runId,
         llmLogger,
         maxDegradedRate,
+        mode: mockMode ? 'mock' : 'live',
       });
       writeResult({
         command,
         runId: runLogger.runId,
         profilePath,
+        mode: mockMode ? 'mock' : 'live',
         result,
       });
       return;

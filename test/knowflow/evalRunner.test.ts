@@ -2,14 +2,10 @@ import { describe, expect, it } from 'bun:test';
 import { runEvalSuite } from '../../src/services/knowflow/eval/runner';
 
 describe('eval runner', () => {
-  it('runs local eval suite and reports summary', async () => {
+  it('runs local eval suite in mock mode with deterministic success', async () => {
     const result = await runEvalSuite({
       suiteName: 'local',
-      llmConfig: {
-        timeoutMs: 2000,
-        maxRetries: 1,
-        retryDelayMs: 0,
-      },
+      mode: 'mock',
       requestPrefix: 'test',
       llmLogger: () => {},
     });
@@ -18,5 +14,8 @@ describe('eval runner', () => {
     expect(result.caseCount).toBeGreaterThan(0);
     expect(result.caseCount).toBe(result.passedCount + result.failedCount);
     expect(result.cases).toHaveLength(result.caseCount);
-  }, 60000); // Heavy sequential LLM tasks need more time
+    expect(result.failedCount).toBe(0);
+    expect(result.degradedCount).toBe(0);
+    expect(result.cases.every((c) => c.backend === 'cli')).toBe(true);
+  });
 });
