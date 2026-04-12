@@ -62,6 +62,11 @@ export const config = {
 
   // 埋め込みベクトルの生成コマンド
   embedCommand: process.env.GNOSIS_EMBED_COMMAND || path.join(os.homedir(), '.local/bin/embed'),
+  embedTimeoutMs: Math.max(1, envNumber(process.env.GNOSIS_EMBED_TIMEOUT_MS, 30_000)),
+
+  // Bun バイナリのパス (fallback を含む解決)
+  bunCommand: process.env.GNOSIS_BUN_COMMAND || 'bun',
+  bunFallbackPath: path.join(os.homedir(), '.bun/bin/bun'),
 
   // ベクトルの次元数
   embeddingDimension: envNumber(process.env.GNOSIS_EMBEDDING_DIMENSION, 384),

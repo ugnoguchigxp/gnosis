@@ -115,7 +115,17 @@ export const runEvalSuite = async (options: {
   llmConfig?: Partial<LlmClientConfig>;
   requestPrefix?: string;
   llmLogger?: (event: LlmLogEvent) => void;
+  maxDegradedRate?: number;
 }): Promise<EvalRunResult> => {
+  if (
+    options.maxDegradedRate !== undefined &&
+    (!Number.isFinite(options.maxDegradedRate) ||
+      options.maxDegradedRate < 0 ||
+      options.maxDegradedRate > 100)
+  ) {
+    throw new Error('--max-degraded-rate must be between 0 and 100');
+  }
+
   const suitePath = resolve(process.cwd(), 'eval', 'suites', `${options.suiteName}.json`);
   const raw = await readFile(suitePath, 'utf-8');
   const suite = parseEvalSuite(JSON.parse(raw));
@@ -168,7 +178,7 @@ export const runEvalSuite = async (options: {
   const latencyValues = cases.map((item) => item.latencyMs);
   const sumLatency = latencyValues.reduce((sum, value) => sum + value, 0);
 
-  return {
+  const result: EvalRunResult = {
     suite: suite.name,
     description: suite.description,
     caseCount,
@@ -190,4 +200,12 @@ export const runEvalSuite = async (options: {
     },
     cases,
   };
+
+  if (options.maxDegradedRate !== undefined && result.degradedRate > options.maxDegradedRate) {
+    throw new Error(
+      `Eval degraded rate ${result.degradedRate}% exceeded threshold ${options.maxDegradedRate}% (${result.degradedCount}/${result.caseCount})`,
+    );
+  }
+
+  return result;
 };

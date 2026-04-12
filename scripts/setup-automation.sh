@@ -9,6 +9,7 @@ LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 
 SYNC_PLIST="com.gnosis.sync.plist"
 REFLECT_PLIST="com.gnosis.reflect.plist"
+WORKER_PLIST="com.gnosis.worker.plist"
 
 # ログディレクトリの作成
 mkdir -p "$PROJECT_ROOT/logs"
@@ -19,10 +20,12 @@ function install() {
     # ファイルをコピー
     cp "$PLIST_DIR/$SYNC_PLIST" "$LAUNCH_AGENTS_DIR/"
     cp "$PLIST_DIR/$REFLECT_PLIST" "$LAUNCH_AGENTS_DIR/"
+    cp "$PLIST_DIR/$WORKER_PLIST" "$LAUNCH_AGENTS_DIR/"
     
     # 権限の確認
     chmod 644 "$LAUNCH_AGENTS_DIR/$SYNC_PLIST"
     chmod 644 "$LAUNCH_AGENTS_DIR/$REFLECT_PLIST"
+    chmod 644 "$LAUNCH_AGENTS_DIR/$WORKER_PLIST"
     
     echo "Done. Files copied to $LAUNCH_AGENTS_DIR."
     echo "To start the jobs, run: $0 load"
@@ -32,6 +35,7 @@ function load() {
     echo "Loading Gnosis jobs into launchctl..."
     launchctl load "$LAUNCH_AGENTS_DIR/$SYNC_PLIST"
     launchctl load "$LAUNCH_AGENTS_DIR/$REFLECT_PLIST"
+    launchctl load "$LAUNCH_AGENTS_DIR/$WORKER_PLIST"
     echo "Jobs loaded."
 }
 
@@ -39,6 +43,7 @@ function unload() {
     echo "Unloading Gnosis jobs from launchctl..."
     launchctl unload "$LAUNCH_AGENTS_DIR/$SYNC_PLIST"
     launchctl unload "$LAUNCH_AGENTS_DIR/$REFLECT_PLIST"
+    launchctl unload "$LAUNCH_AGENTS_DIR/$WORKER_PLIST"
     echo "Jobs unloaded."
 }
 
@@ -47,6 +52,7 @@ function uninstall() {
     unload
     rm "$LAUNCH_AGENTS_DIR/$SYNC_PLIST"
     rm "$LAUNCH_AGENTS_DIR/$REFLECT_PLIST"
+    rm "$LAUNCH_AGENTS_DIR/$WORKER_PLIST"
     echo "Files removed."
 }
 

@@ -2,26 +2,30 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { Pool } from 'pg';
-import { PgJsonbQueueRepository } from '../../src/services/knowflow/queue/pgJsonbRepository';
 
-const connectionString = process.env.QUEUE_POSTGRES_URL;
+const connectionString = process.env.QUEUE_POSTGRES_URL ?? process.env.DATABASE_URL;
 const shouldRunIntegration = process.env.KNOWFLOW_RUN_INTEGRATION === '1' && !!connectionString;
 
 const describeIntegration = shouldRunIntegration ? describe : describe.skip;
 
 describeIntegration('postgres queue integration', () => {
   let pool: Pool;
-  let repository: PgJsonbQueueRepository;
+  let repository: import('../../src/services/knowflow/queue/pgJsonbRepository').PgJsonbQueueRepository;
 
   beforeAll(async () => {
+    if (connectionString && !process.env.DATABASE_URL) {
+      process.env.DATABASE_URL = connectionString;
+    }
     pool = new Pool({ connectionString });
     const migrationSql = await readFile(
-      resolve(process.cwd(), 'migrations/0001_phase3_pg.sql'),
+      resolve(process.cwd(), 'drizzle/0007_knowflow_queue_knowledge.sql'),
       'utf-8',
     );
+    await pool.query('CREATE EXTENSION IF NOT EXISTS pgcrypto');
     await pool.query(migrationSql);
 
-    // Gnosis integrated version uses global db instance
+    const module = await import('../../src/services/knowflow/queue/pgJsonbRepository');
+    const PgJsonbQueueRepository = module.PgJsonbQueueRepository;
     repository = new PgJsonbQueueRepository();
   });
 

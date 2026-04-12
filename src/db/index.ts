@@ -1,15 +1,12 @@
 import { drizzle } from 'drizzle-orm/node-postgres';
 import pkg from 'pg';
 const { Pool } = pkg;
+import { config } from '../config.js';
 import * as schema from './schema.js';
-
-// 環境変数からデータベースURLを取得
-const connectionString =
-  process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:7888/gnosis';
 
 // pg pool の作成
 const pool = new Pool({
-  connectionString,
+  connectionString: config.databaseUrl,
 });
 
 // Drizzle ORM インスタンスの作成

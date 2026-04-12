@@ -149,11 +149,25 @@ const enqueueKnowledgeTaskSchema = z.object({
     .optional()
     .default('directed')
     .describe('調査モード'),
-  priority: z.number().optional().default(10).describe('優先度 (低いほど早い)'),
+  priority: z.number().optional().default(10).describe('優先度 (高いほど先に実行)'),
 });
 
 const runKnowledgeWorkerSchema = z.object({
   maxAttempts: z.number().optional().default(1).describe('最大試行回数'),
+});
+
+const searchUnifiedSchema = z.object({
+  query: z.string().describe('検索クエリ'),
+  mode: z
+    .enum(['fts', 'kg', 'semantic'])
+    .describe(
+      '検索モード: fts (知識ベースの全文検索), kg (ナレッジグラフ探索), semantic (ベクトル検索による意味探索)',
+    ),
+  limit: z.number().int().positive().optional().default(5).describe('取得件数'),
+  sessionId: z
+    .string()
+    .optional()
+    .describe('semantic モード使用時のセッションID (デフォルト: gnosis)'),
 });
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -259,6 +273,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         description: `キューに溜まっている KnowFlow タスクを1つ取り出して実行します。
 ウェブ検索や LLM による解析を伴うため、完了まで時間がかかる場合があります。`,
         inputSchema: zodToJsonSchema(runKnowledgeWorkerSchema),
+      },
+      {
+        name: 'search_unified',
+        description: `目的や対象に応じた最適な手法（全文検索・グラフ・意味検索）を選択して検索を実行します。
+- fts: knowFlow が蓄積した検証済み知識の全文検索
+- kg: ナレッジグラフ内のエンティティとそのつながりの探索
+- semantic: 保存済みの記憶（Vibe Memory）の意味的類似度検索`,
+        inputSchema: zodToJsonSchema(searchUnifiedSchema),
       },
     ],
   };
@@ -483,6 +505,42 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             },
           ],
         };
+      }
+
+      case 'search_unified': {
+        const { query, mode, limit, sessionId } = searchUnifiedSchema.parse(args);
+
+        if (mode === 'fts') {
+          const results = await searchKnowledgeClaims(query, limit);
+          return {
+            content: [{ type: 'text', text: JSON.stringify(results, null, 2) }],
+          };
+        }
+
+        if (mode === 'kg') {
+          const exactMatchId = await findEntityById(query);
+          const entityId = exactMatchId || (await searchEntityByQuery(query));
+          if (!entityId) {
+            return {
+              content: [
+                { type: 'text', text: `No entity found in graph matching query: ${query}` },
+              ],
+            };
+          }
+          const context = await queryGraphContext(entityId);
+          return {
+            content: [{ type: 'text', text: JSON.stringify(context, null, 2) }],
+          };
+        }
+
+        if (mode === 'semantic') {
+          const results = await searchMemory(sessionId || 'gnosis', query, limit);
+          return {
+            content: [{ type: 'text', text: JSON.stringify(results, null, 2) }],
+          };
+        }
+
+        throw new Error(`Unsupported search mode: ${mode}`);
       }
 
       default:

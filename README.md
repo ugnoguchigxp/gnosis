@@ -132,6 +132,7 @@ bun run src/services/knowflow/cli.ts eval-run --suite local
 - `--run-id <id>`: 実行IDを指定（未指定時は自動採番）
 - `--profile <name-or-path>`: `profiles/*.toml` または任意の TOML ファイルを適用
 - `--dry-run`: `enqueue` / `merge-knowledge` を副作用なしで検証実行
+- `--max-degraded-rate <0-100>`: `eval-run` の劣化率(degradedRate)の許容上限（超過時は終了コード1）
 
 各 CLI 実行は `logs/runs/<run-id>.jsonl` に実行ログを記録します。
 
@@ -173,6 +174,9 @@ bun test
 
 # Local smoke (CLI dry-run + eval)
 bun run smoke
+
+# 必要に応じて eval 劣化率の許容を緩和（既定は 0）
+KNOWFLOW_MAX_DEGRADED_RATE=100 bun run smoke
 
 # All-in-one local gate
 bun run verify
