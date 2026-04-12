@@ -14,7 +14,9 @@
     "db:seed": "bun run src/db/seed.ts",
     "db:push": "drizzle-kit push",
     "lint": "biome check .",
-    "format": "biome format --write ."
+    "format": "biome format --write .",
+    "smoke": "bun run scripts/smoke.ts",
+    "verify": "bun run scripts/verify.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

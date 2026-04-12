@@ -1,4 +1,5 @@
-import { runLlmTask } from '../../../adapters/llm.js';
+import { type LlmLogEvent, runLlmTask } from '../../../adapters/llm.js';
+import type { LlmClientConfig } from '../../../config.js';
 import type { FlowEvidence } from '../flows/types';
 
 export type EvidenceExtractionInput = {
@@ -8,21 +9,29 @@ export type EvidenceExtractionInput = {
   text: string;
   requestId?: string;
   now?: number;
+  llmConfig?: Partial<LlmClientConfig>;
+  llmLogger?: (event: LlmLogEvent) => void;
 };
 
 export const extractEvidenceFromText = async (
   input: EvidenceExtractionInput,
 ): Promise<FlowEvidence> => {
-  const result = await runLlmTask({
-    task: 'extract_evidence',
-    context: {
-      topic: input.topic,
-      url: input.url,
-      title: input.title,
-      text: input.text,
+  const result = await runLlmTask(
+    {
+      task: 'extract_evidence',
+      context: {
+        topic: input.topic,
+        url: input.url,
+        title: input.title,
+        text: input.text,
+      },
+      requestId: input.requestId,
     },
-    requestId: input.requestId,
-  });
+    {
+      config: input.llmConfig,
+      deps: input.llmLogger ? { logger: input.llmLogger } : undefined,
+    },
+  );
 
   const now = input.now ?? Date.now();
   const sourceId = `fetch:${Buffer.from(input.url).toString('base64').slice(0, 16)}`;

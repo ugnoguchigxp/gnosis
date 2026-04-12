@@ -24,16 +24,34 @@ const isMcpContent = (value: unknown): value is McpContent => {
   return typeof value.text === 'string';
 };
 
+type McpToolResult = {
+  content: McpContent[];
+  isError?: boolean;
+};
+
+const toText = (contents: McpContent[]): string =>
+  contents
+    .map((item) => (item.type === 'text' ? item.text : ''))
+    .join('\n')
+    .trim();
+
 const extractTextContent = (result: unknown): string => {
   if (!isRecord(result) || !Array.isArray(result.content)) {
     throw new Error(`Unexpected MCP tool result format: ${JSON.stringify(result)}`);
   }
 
-  const contents = result.content.filter(isMcpContent);
-  return contents
-    .map((item) => (item.type === 'text' ? item.text : ''))
-    .join('\n')
-    .trim();
+  const toolResult = result as McpToolResult;
+  const contents = toolResult.content.filter(isMcpContent);
+  const text = toText(contents);
+
+  if (toolResult.isError) {
+    if (text) {
+      throw new Error(`MCP tool returned an error: ${text}`);
+    }
+    throw new Error('MCP tool returned an error');
+  }
+
+  return text;
 };
 
 export class McpRetriever {

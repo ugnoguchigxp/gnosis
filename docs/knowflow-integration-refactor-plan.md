@@ -1,5 +1,8 @@
 # KnowFlow 統合・一括移行計画書
 
+> この文書はディレクトリ再編と設定統合のための過去計画（完了済み）です。  
+> 現在の KG/全文検索一体運用の計画は `docs/knowflow-kg-fts-unified-plan.md` を参照してください。
+
 ## 1. 目的
 KnowFlow 実装を Gnosis の第一級サービスとして再編し、以下を同時達成する。
 - ディレクトリ構成の標準化 (`services`, `adapters`)

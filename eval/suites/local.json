@@ -1,0 +1,42 @@
+{
+  "name": "local",
+  "description": "Static local suite for knowflow task adapters",
+  "cases": [
+    {
+      "id": "hypothesis-graph-rag",
+      "task": "hypothesis",
+      "context": {
+        "topic": "Graph RAG for incident analysis"
+      }
+    },
+    {
+      "id": "query-generation-sql",
+      "task": "query_generation",
+      "context": {
+        "topic": "PostgreSQL logical replication"
+      }
+    },
+    {
+      "id": "gap-detection-runtime",
+      "task": "gap_detection",
+      "context": {
+        "topic": "Bun runtime differences from Node.js"
+      }
+    },
+    {
+      "id": "gap-planner-cache",
+      "task": "gap_planner",
+      "context": {
+        "topic": "cache invalidation strategies"
+      }
+    },
+    {
+      "id": "summarize-queue",
+      "task": "summarize",
+      "context": {
+        "topic": "distributed queue retry policy",
+        "notes": ["exponential backoff", "max retry cap", "dead-letter queue"]
+      }
+    }
+  ]
+}

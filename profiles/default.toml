@@ -1,0 +1,20 @@
+# Local baseline profile for knowflow CLI
+
+[knowflow.llm]
+apiBaseUrl = "http://127.0.0.1:44448"
+apiPath = "/v1/chat/completions"
+apiKeyEnv = "LOCAL_LLM_API_KEY"
+model = "gemma-4-e4b-it"
+temperature = 0
+timeoutMs = 60000
+maxRetries = 2
+retryDelayMs = 300
+enableCliFallback = true
+cliCommand = "gemma4 --prompt {{prompt}}"
+cliPromptMode = "arg"
+cliPromptPlaceholder = "{{prompt}}"
+
+[knowflow.budget]
+userBudget = 12
+cronBudget = 6
+cronRunBudget = 30

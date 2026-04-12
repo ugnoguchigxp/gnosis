@@ -1,6 +1,6 @@
-import { runLlmTask } from '../../../adapters/llm.js';
+import { type LlmLogEvent, runLlmTask } from '../../../adapters/llm.js';
 import type { McpRetriever } from '../../../adapters/retriever/mcpRetriever.js';
-import { type BudgetConfig, config } from '../../../config.js';
+import { type BudgetConfig, type LlmClientConfig, config } from '../../../config.js';
 import type { TopicTask } from '../domain/task';
 import { runCronFlow } from '../flows/cronFlow';
 import type { FlowEvidence } from '../flows/types';
@@ -32,7 +32,11 @@ export type CreateKnowFlowTaskHandlerOptions = {
 
 export const createMcpEvidenceProvider = (
   retriever: McpRetriever,
-  options?: { logger?: StructuredLogger },
+  options?: {
+    logger?: StructuredLogger;
+    llmConfig?: Partial<LlmClientConfig>;
+    llmLogger?: (event: LlmLogEvent) => void;
+  },
 ): EvidenceProvider => {
   const logger = options?.logger ?? defaultStructuredLogger;
 
@@ -44,11 +48,17 @@ export const createMcpEvidenceProvider = (
       level: 'info',
     });
 
-    const queryResult = await runLlmTask({
-      task: 'query_generation',
-      context: { topic: task.topic },
-      requestId: task.id,
-    });
+    const queryResult = await runLlmTask(
+      {
+        task: 'query_generation',
+        context: { topic: task.topic },
+        requestId: task.id,
+      },
+      {
+        config: options?.llmConfig,
+        deps: options?.llmLogger ? { logger: options.llmLogger } : undefined,
+      },
+    );
 
     const queries = queryResult.output.queries.slice(0, 3);
     const allClaims: EvidenceClaim[] = [];
@@ -77,6 +87,8 @@ export const createMcpEvidenceProvider = (
             title: query, // Use query as title fallback
             text: content,
             requestId: task.id,
+            llmConfig: options?.llmConfig,
+            llmLogger: options?.llmLogger,
           });
 
           allClaims.push(...extracted.claims);

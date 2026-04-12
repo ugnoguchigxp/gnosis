@@ -11,12 +11,14 @@ const RUNNABLE_STATUSES = ['pending', 'deferred'] as const;
 const activeStatuses = [...ACTIVE_STATUSES];
 const runnableStatuses = [...RUNNABLE_STATUSES];
 
+type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
 export class PgJsonbQueueRepository implements QueueRepository {
   async enqueue(input: unknown): Promise<{ task: TopicTask; deduped: boolean }> {
     const parsed = CreateTaskInputSchema.parse(input);
     const task = createTask(parsed);
 
-    return db.transaction(async (tx) => {
+    return db.transaction(async (tx: DbTransaction) => {
       // 重複チェック
       const existing = await tx
         .select({ id: topicTasks.id, payload: topicTasks.payload })
@@ -89,7 +91,7 @@ export class PgJsonbQueueRepository implements QueueRepository {
   }
 
   async dequeueAndLock(workerId: string, now = Date.now()): Promise<TopicTask | null> {
-    return db.transaction(async (tx) => {
+    return db.transaction(async (tx: DbTransaction) => {
       // 候補を選択
       // NOTE: status = ANY(...) は drizzle で any(column, values)
       const candidateRows = await tx
@@ -195,7 +197,7 @@ export class PgJsonbQueueRepository implements QueueRepository {
       return 0;
     }
 
-    await db.transaction(async (tx) => {
+    await db.transaction(async (tx: DbTransaction) => {
       for (const task of tasks) {
         const row = toTaskRowFields(task);
         await tx
@@ -234,7 +236,7 @@ export class PgJsonbQueueRepository implements QueueRepository {
     now: number,
     updater: (task: TopicTask) => TopicTask,
   ): Promise<TopicTask> {
-    return db.transaction(async (tx) => {
+    return db.transaction(async (tx: DbTransaction) => {
       const rows = await tx
         .select({ id: topicTasks.id, payload: topicTasks.payload })
         .from(topicTasks)
