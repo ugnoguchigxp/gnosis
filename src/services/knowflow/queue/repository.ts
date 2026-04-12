@@ -24,6 +24,7 @@ export type QueueRepository = {
   dequeueAndLock: (workerId: string, now?: number) => Promise<TopicTask | null>;
   markDone: (taskId: string, resultSummary?: string, now?: number) => Promise<TopicTask>;
   applyFailureAction: (taskId: string, action: FailureAction, now?: number) => Promise<TopicTask>;
+  clearStaleTasks: (timeoutMs: number, now?: number) => Promise<number>;
 };
 
 export class FileQueueRepository implements QueueRepository {
@@ -167,6 +168,27 @@ export class FileQueueRepository implements QueueRepository {
       }
 
       return { tasks: nextTasks, output: updated };
+    });
+  }
+
+  async clearStaleTasks(timeoutMs: number, now = Date.now()): Promise<number> {
+    return this.withMutation<number>(async (tasks) => {
+      let clearedCount = 0;
+      const nextTasks = tasks.map((task) => {
+        if (task.status === 'running' && task.updatedAt + timeoutMs < now) {
+          clearedCount += 1;
+          return TopicTaskSchema.parse({
+            ...task,
+            status: 'pending',
+            updatedAt: now,
+            lockedAt: undefined,
+            lockOwner: undefined,
+          });
+        }
+        return task;
+      });
+
+      return { tasks: nextTasks, output: clearedCount };
     });
   }
 

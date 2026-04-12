@@ -12,15 +12,17 @@ export type TaskExecutionResult =
   | {
       ok: false;
       error: string;
+      retryable?: boolean;
     };
 
-export type TaskHandler = (task: TopicTask) => Promise<TaskExecutionResult>;
+export type TaskHandler = (task: TopicTask, signal?: AbortSignal) => Promise<TaskExecutionResult>;
 
 export type WorkerOptions = {
   workerId?: string;
   maxAttempts?: number;
   baseBackoffMs?: number;
   maxBackoffMs?: number;
+  taskTimeoutMs?: number; // Added
   now?: () => number;
   logger?: StructuredLogger;
 };
@@ -33,6 +35,7 @@ export type RunOnceResult =
       processed: true;
       taskId: string;
       status: 'done' | 'deferred' | 'failed';
+      error?: string;
     };
 
 export const defaultTaskHandler: TaskHandler = async (task) => ({
@@ -58,6 +61,7 @@ export const runWorkerOnce = async (
     });
     return { processed: false };
   }
+
   logger({
     event: 'task.dequeue.locked',
     workerId,
@@ -68,8 +72,21 @@ export const runWorkerOnce = async (
     level: 'info',
   });
 
+  const abortController = new AbortController();
+  const timeoutMs = options.taskTimeoutMs ?? 600_000; // Default 10 mins
+
+  let timeoutId: any;
+  const timeoutPromise = new Promise<TaskExecutionResult>((resolve) => {
+    timeoutId = setTimeout(() => {
+      abortController.abort();
+      resolve({ ok: false, error: `Task execution timed out after ${timeoutMs}ms` });
+    }, timeoutMs);
+  });
+
   try {
-    const result = await handler(task);
+    const result = await Promise.race([handler(task, abortController.signal), timeoutPromise]);
+    clearTimeout(timeoutId);
+
     if (result.ok) {
       await repository.markDone(task.id, result.summary, options.now?.() ?? Date.now());
       logger({
@@ -82,7 +99,8 @@ export const runWorkerOnce = async (
       return { processed: true, taskId: task.id, status: 'done' };
     }
 
-    const action = decideFailureAction(task, result.error, {
+    const error = result.error;
+    const action = decideFailureAction(task, error, {
       now: options.now?.() ?? Date.now(),
       maxAttempts: options.maxAttempts,
       baseBackoffMs: options.baseBackoffMs,
@@ -93,7 +111,7 @@ export const runWorkerOnce = async (
       event: action.kind === 'fail' ? 'task.failed' : 'task.deferred',
       workerId,
       taskId: task.id,
-      error: result.error,
+      error,
       attempts: action.attempts,
       nextRunAt: action.kind === 'defer' ? action.nextRunAt : undefined,
       level: action.kind === 'fail' ? 'error' : 'warn',
@@ -102,6 +120,7 @@ export const runWorkerOnce = async (
       processed: true,
       taskId: task.id,
       status: action.kind === 'fail' ? 'failed' : 'deferred',
+      error,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -125,27 +144,68 @@ export const runWorkerOnce = async (
       processed: true,
       taskId: task.id,
       status: action.kind === 'fail' ? 'failed' : 'deferred',
+      error: message,
     };
+  } finally {
+    abortController.abort();
   }
+};
+
+export type LoopOptions = WorkerOptions & {
+  intervalMs?: number;
+  maxIterations?: number;
+  maxConsecutiveErrors?: number;
 };
 
 export const runWorkerLoop = async (
   repository: QueueRepository,
   handler: TaskHandler = defaultTaskHandler,
-  options: WorkerOptions & {
-    intervalMs?: number;
-    maxIterations?: number;
-  } = {},
+  options: LoopOptions = {},
 ): Promise<void> => {
   const intervalMs = options.intervalMs ?? 1_000;
   const maxIterations = options.maxIterations ?? Number.POSITIVE_INFINITY;
+  const maxConsecutiveErrors = options.maxConsecutiveErrors ?? 5;
+  const logger = options.logger ?? defaultStructuredLogger;
 
   let iteration = 0;
+  let consecutiveErrors = 0;
+
   while (iteration < maxIterations) {
     iteration += 1;
-    const result = await runWorkerOnce(repository, handler, options);
-    if (!result.processed) {
-      await sleep(intervalMs);
+
+    try {
+      const result = await runWorkerOnce(repository, handler, options);
+
+      if (!result.processed) {
+        // Reset error count if we successfully polled an empty queue (means system is stable)
+        // Or keep it? Usually, we reset on success.
+        await sleep(intervalMs);
+        continue;
+      }
+
+      if (result.status === 'done') {
+        consecutiveErrors = 0;
+      } else {
+        consecutiveErrors += 1;
+        if (consecutiveErrors >= maxConsecutiveErrors) {
+          logger({
+            event: 'worker.loop.circuit_break',
+            consecutiveErrors,
+            message: `Circuit breaker triggered after ${consecutiveErrors} consecutive errors. Sleeping longer.`,
+            level: 'error',
+          });
+          await sleep(intervalMs * 10); // Sleep 10x longer
+          consecutiveErrors = 0; // Reset after long wait
+        }
+      }
+    } catch (criticalError) {
+      const msg = criticalError instanceof Error ? criticalError.message : String(criticalError);
+      logger({
+        event: 'worker.loop.critical_error',
+        message: msg,
+        level: 'error',
+      });
+      await sleep(intervalMs * 2);
     }
   }
 };

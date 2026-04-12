@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, lte, ne, or } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, lt, lte, ne, or } from 'drizzle-orm';
 import { db } from '../../../db/index.js';
 import { topicTasks } from '../../../db/schema.js';
 import { CreateTaskInputSchema, type TopicTask, TopicTaskSchema, createTask } from '../domain/task';
@@ -229,6 +229,49 @@ export class PgJsonbQueueRepository implements QueueRepository {
     });
 
     return tasks.length;
+  }
+
+  async clearStaleTasks(timeoutMs: number, now = Date.now()): Promise<number> {
+    const staleThreshold = new Date(now - timeoutMs);
+
+    const staleTasks = await db
+      .select({ id: topicTasks.id, payload: topicTasks.payload })
+      .from(topicTasks)
+      .where(and(eq(topicTasks.status, 'running'), lt(topicTasks.updatedAt, staleThreshold)));
+
+    if (staleTasks.length === 0) {
+      return 0;
+    }
+
+    let clearedCount = 0;
+    await db.transaction(async (tx) => {
+      for (const row of staleTasks) {
+        const task = parseTaskPayload(row.payload);
+        const updated = TopicTaskSchema.parse({
+          ...task,
+          status: 'pending',
+          updatedAt: now,
+          lockedAt: undefined,
+          lockOwner: undefined,
+        });
+        const fields = toTaskRowFields(updated);
+
+        await tx
+          .update(topicTasks)
+          .set({
+            status: fields.status,
+            lockOwner: fields.lockOwner,
+            lockedAt: fields.lockedAt,
+            payload: fields.payload,
+            updatedAt: new Date(now),
+          })
+          .where(eq(topicTasks.id, row.id));
+
+        clearedCount += 1;
+      }
+    });
+
+    return clearedCount;
   }
 
   private async updateTask(

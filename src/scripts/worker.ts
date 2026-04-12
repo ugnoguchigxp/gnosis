@@ -8,6 +8,7 @@ import {
   createKnowFlowTaskHandler,
   createMcpEvidenceProvider,
 } from '../services/knowflow/worker/knowFlowHandler.js';
+import { checkLlmHealth } from '../services/knowflow/ops/healthCheck.js';
 import { runWorkerLoop } from '../services/knowflow/worker/loop.js';
 
 async function main() {
@@ -36,6 +37,22 @@ async function main() {
     budget: config.knowflow.budget,
     logger,
   });
+
+  // 起動時にスタックしているタスクをクリーンアップ (1時間以上動きがないもの)
+  const cleanedCount = await queueRepository.clearStaleTasks(3600000);
+  if (cleanedCount > 0) {
+    logger({
+      event: 'worker.startup.cleanup',
+      clearedCount: cleanedCount,
+      level: 'info',
+    });
+  }
+
+  // LLMの生存確認（ヘルスチェック）
+  const health = await checkLlmHealth(config.knowflow.llm, logger);
+  if (!health.ok) {
+    console.error('--- Critical: LLM Health Check Failed. Checking configuration and environment... ---');
+  }
 
   try {
     await runWorkerLoop(queueRepository, handler, {

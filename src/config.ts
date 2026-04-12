@@ -99,7 +99,9 @@ export const config = {
       maxRetries: Math.max(1, envNumber(process.env.LOCAL_LLM_MAX_RETRIES, 2)),
       retryDelayMs: Math.max(0, envNumber(process.env.LOCAL_LLM_RETRY_DELAY_MS, 300)),
       enableCliFallback: envBoolean(process.env.LOCAL_LLM_ENABLE_CLI_FALLBACK, true),
-      cliCommand: process.env.LOCAL_LLM_CLI_COMMAND ?? 'gemma4 --prompt {{prompt}}',
+      cliCommand:
+        process.env.LOCAL_LLM_CLI_COMMAND ??
+        `${process.env.GNOSIS_LLM_SCRIPT || path.join(os.homedir(), 'Code/localLlm/scripts/gemma4')} --prompt {{prompt}}`,
       cliPromptMode: process.env.LOCAL_LLM_CLI_PROMPT_MODE === 'stdin' ? 'stdin' : 'arg',
       cliPromptPlaceholder: process.env.LOCAL_LLM_CLI_PROMPT_PLACEHOLDER ?? '{{prompt}}',
     }),

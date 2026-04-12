@@ -18,6 +18,7 @@
     <key>StandardErrorPath</key>
     <string>/Users/y.noguchi/Code/gnosis/logs/report.log</string>
     <key>RunAtLoad</key>
-    <true/>
+    <false/>
+
 </dict>
 </plist>
