@@ -821,3 +821,67 @@ export async function getGuidanceContext(query: string): Promise<string> {
   return sections.join('\n\n');
 }
 
+/**
+ * 単独のガイダンス（ルールやスキル）をレジストリに直接登録します。
+ */
+export async function saveGuidance(
+  input: {
+    title: string;
+    content: string;
+    guidanceType: GuidanceType;
+    scope: GuidanceScope;
+    priority: number;
+    tags?: string[];
+    archiveKey?: string;
+    sessionId?: string;
+  },
+  deps: Partial<GuidanceImportDependencies> = {},
+): Promise<{ id: string; archiveKey: string }> {
+  const resolvedDeps = {
+    generateEmbedding: deps.generateEmbedding ?? generateEmbedding,
+    now: deps.now ?? (() => new Date()),
+  };
+
+  const sessionId = input.sessionId ?? config.guidance.sessionId;
+  const now = resolvedDeps.now();
+  const archiveKey = input.archiveKey ?? `manual:${sha256(input.title.toLowerCase())}`;
+  const tags = uniqueStrings([...(input.tags ?? []), 'manual-entry']);
+
+  const embedding = await resolvedDeps.generateEmbedding(input.content);
+  const contentHash = sha256(input.content);
+  const dedupeKey = sha256(`manual:${archiveKey}:${contentHash}:${input.scope}`);
+
+  const metadata = {
+    kind: 'guidance',
+    guidanceType: input.guidanceType,
+    scope: input.scope,
+    priority: input.priority,
+    title: input.title,
+    tags,
+    archiveKey,
+    importedAt: now.toISOString(),
+  };
+
+  const row: GuidanceMemoryRow = {
+    sessionId,
+    content: input.content,
+    embedding,
+    dedupeKey,
+    metadata,
+  };
+
+  // 同一アーカイブキーの既存エントリーを削除して更新（簡易的な実装）
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(vibeMemories)
+      .where(
+        sql`${vibeMemories.sessionId} = ${sessionId} AND ${
+          vibeMemories.metadata
+        } @> ${JSON.stringify({ kind: 'guidance', archiveKey })}::jsonb`,
+      );
+    await tx.insert(vibeMemories).values(row);
+  });
+
+  return { id: dedupeKey, archiveKey };
+}
+

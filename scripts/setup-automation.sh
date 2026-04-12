@@ -3,7 +3,14 @@
 # Gnosis Automation Setup Script
 # macOS LaunchAgents の登録・解除を管理します。
 
-PROJECT_ROOT="/Users/y.noguchi/Code/gnosis"
+# プロジェクトのルートディレクトリを動的に取得
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do
+  DIR="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+PROJECT_ROOT="$( cd -P "$( dirname "$SOURCE" )/.." && pwd )"
 PLIST_DIR="$PROJECT_ROOT/scripts/automation"
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 
@@ -19,12 +26,18 @@ mkdir -p "$PROJECT_ROOT/logs"
 function install() {
     echo "Installing Gnosis LaunchAgents..."
     
-    # ファイルをコピー
-    cp "$PLIST_DIR/$SYNC_PLIST" "$LAUNCH_AGENTS_DIR/"
-    cp "$PLIST_DIR/$REFLECT_PLIST" "$LAUNCH_AGENTS_DIR/"
-    cp "$PLIST_DIR/$WORKER_PLIST" "$LAUNCH_AGENTS_DIR/"
-    cp "$PLIST_DIR/$GUIDANCE_PLIST" "$LAUNCH_AGENTS_DIR/"
-    cp "$PLIST_DIR/$REPORT_PLIST" "$LAUNCH_AGENTS_DIR/"
+    # Bunのパスをもとめる
+    BUN_PATH=$(which bun)
+    if [ -z "$BUN_PATH" ]; then
+        BUN_PATH="$HOME/.bun/bin/bun"
+    fi
+    echo "Using BUN_PATH: $BUN_PATH"
+    echo "Using PROJECT_ROOT: $PROJECT_ROOT"
+
+    # ファイルをコピーしてプレースホルダーを置換
+    for plist in "$SYNC_PLIST" "$REFLECT_PLIST" "$WORKER_PLIST" "$GUIDANCE_PLIST" "$REPORT_PLIST"; do
+        sed "s|{{PROJECT_ROOT}}|$PROJECT_ROOT|g; s|{{BUN_PATH}}|$BUN_PATH|g" "$PLIST_DIR/$plist" > "$LAUNCH_AGENTS_DIR/$plist"
+    done
     
     # 権限の確認
     chmod 644 "$LAUNCH_AGENTS_DIR/$SYNC_PLIST"

@@ -6,17 +6,17 @@
     <string>com.gnosis.report</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/y.noguchi/.bun/bin/bun</string>
+        <string>{{BUN_PATH}}</string>
         <string>src/scripts/status-report.ts</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/y.noguchi/Code/gnosis</string>
+    <string>{{PROJECT_ROOT}}</string>
     <key>StartInterval</key>
     <integer>86400</integer>
     <key>StandardOutPath</key>
-    <string>/Users/y.noguchi/Code/gnosis/logs/report.log</string>
+    <string>{{PROJECT_ROOT}}/logs/report.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/y.noguchi/Code/gnosis/logs/report.log</string>
+    <string>{{PROJECT_ROOT}}/logs/report.log</string>
     <key>RunAtLoad</key>
     <false/>
 

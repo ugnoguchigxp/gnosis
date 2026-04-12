@@ -1,8 +1,12 @@
 import { setTimeout as sleep } from 'node:timers/promises';
+import { config } from '../../../config.js';
 import type { TopicTask } from '../domain/task';
 import { type StructuredLogger, defaultStructuredLogger } from '../ops/logger';
 import type { QueueRepository } from '../queue/repository';
 import { decideFailureAction } from '../scheduler/policy';
+
+const CIRCUIT_BREAKER_BACKOFF_MULTIPLIER = 10;
+const CRITICAL_ERROR_BACKOFF_MULTIPLIER = 2;
 
 export type TaskExecutionResult =
   | {
@@ -22,7 +26,7 @@ export type WorkerOptions = {
   maxAttempts?: number;
   baseBackoffMs?: number;
   maxBackoffMs?: number;
-  taskTimeoutMs?: number; // Added
+  taskTimeoutMs?: number;
   now?: () => number;
   logger?: StructuredLogger;
 };
@@ -73,7 +77,7 @@ export const runWorkerOnce = async (
   });
 
   const abortController = new AbortController();
-  const timeoutMs = options.taskTimeoutMs ?? 600_000; // Default 10 mins
+  const timeoutMs = options.taskTimeoutMs ?? config.knowflow.worker.taskTimeoutMs;
 
   let timeoutId: any;
   const timeoutPromise = new Promise<TaskExecutionResult>((resolve) => {
@@ -162,9 +166,9 @@ export const runWorkerLoop = async (
   handler: TaskHandler = defaultTaskHandler,
   options: LoopOptions = {},
 ): Promise<void> => {
-  const intervalMs = options.intervalMs ?? 1_000;
+  const intervalMs = options.intervalMs ?? config.knowflow.worker.pollIntervalMs;
   const maxIterations = options.maxIterations ?? Number.POSITIVE_INFINITY;
-  const maxConsecutiveErrors = options.maxConsecutiveErrors ?? 5;
+  const maxConsecutiveErrors = options.maxConsecutiveErrors ?? config.knowflow.worker.maxConsecutiveErrors;
   const logger = options.logger ?? defaultStructuredLogger;
 
   let iteration = 0;
@@ -177,8 +181,6 @@ export const runWorkerLoop = async (
       const result = await runWorkerOnce(repository, handler, options);
 
       if (!result.processed) {
-        // Reset error count if we successfully polled an empty queue (means system is stable)
-        // Or keep it? Usually, we reset on success.
         await sleep(intervalMs);
         continue;
       }
@@ -194,8 +196,8 @@ export const runWorkerLoop = async (
             message: `Circuit breaker triggered after ${consecutiveErrors} consecutive errors. Sleeping longer.`,
             level: 'error',
           });
-          await sleep(intervalMs * 10); // Sleep 10x longer
-          consecutiveErrors = 0; // Reset after long wait
+          await sleep(intervalMs * CIRCUIT_BREAKER_BACKOFF_MULTIPLIER);
+          consecutiveErrors = 0;
         }
       }
     } catch (criticalError) {
@@ -205,7 +207,7 @@ export const runWorkerLoop = async (
         message: msg,
         level: 'error',
       });
-      await sleep(intervalMs * 2);
+      await sleep(intervalMs * CRITICAL_ERROR_BACKOFF_MULTIPLIER);
     }
   }
 };

@@ -6,12 +6,12 @@
     <string>com.gnosis.reflect</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/y.noguchi/.bun/bin/bun</string>
+        <string>{{BUN_PATH}}</string>
         <string>run</string>
         <string>src/scripts/reflect.ts</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/y.noguchi/Code/gnosis</string>
+    <string>{{PROJECT_ROOT}}</string>
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
@@ -20,9 +20,9 @@
         <integer>0</integer>
     </dict>
     <key>StandardOutPath</key>
-    <string>/Users/y.noguchi/Code/gnosis/logs/reflect.log</string>
+    <string>{{PROJECT_ROOT}}/logs/reflect.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/y.noguchi/Code/gnosis/logs/reflect.log</string>
+    <string>{{PROJECT_ROOT}}/logs/reflect.log</string>
     <key>RunAtLoad</key>
     <false/>
 </dict>

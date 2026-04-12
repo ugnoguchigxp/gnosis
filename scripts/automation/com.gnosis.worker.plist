@@ -6,16 +6,16 @@
     <string>com.gnosis.worker</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/y.noguchi/.bun/bin/bun</string>
+        <string>{{BUN_PATH}}</string>
         <string>run</string>
         <string>src/scripts/worker.ts</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/y.noguchi/Code/gnosis</string>
+    <string>{{PROJECT_ROOT}}</string>
     <key>StandardOutPath</key>
-    <string>/Users/y.noguchi/Code/gnosis/logs/worker.log</string>
+    <string>{{PROJECT_ROOT}}/logs/worker.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/y.noguchi/Code/gnosis/logs/worker.log</string>
+    <string>{{PROJECT_ROOT}}/logs/worker.log</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>

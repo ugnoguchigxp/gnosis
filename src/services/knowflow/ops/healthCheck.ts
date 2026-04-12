@@ -16,7 +16,9 @@ export type HealthCheckResult = {
 export async function checkLlmHealth(
   llmConfig: LlmClientConfig = config.knowflow.llm,
   logger: StructuredLogger = defaultStructuredLogger,
+  deps: { exec?: (cmd: string, options: any) => Promise<{ stdout: string; stderr: string }> } = {},
 ): Promise<HealthCheckResult> {
+  const checkExec = deps.exec ?? execAsync;
   const result: HealthCheckResult = {
     ok: true,
     details: {},
@@ -26,7 +28,7 @@ export async function checkLlmHealth(
   try {
     const url = new URL(llmConfig.apiPath, llmConfig.apiBaseUrl).toString();
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
+    const timeout = setTimeout(() => controller.abort(), config.knowflow.healthCheck.timeoutMs);
 
     const response = await fetch(url, {
       method: 'OPTIONS', // Or a simple GET if supported, but typically LLM APIs use POST. OPTIONS is safe.
@@ -52,7 +54,7 @@ export async function checkLlmHealth(
     try {
       // Extract command binary
       const cmd = llmConfig.cliCommand.split(' ')[0];
-      await execAsync(`${cmd} --help`, { timeout: 5000 });
+      await checkExec(`${cmd} --help`, { timeout: config.knowflow.healthCheck.timeoutMs });
       result.details.cli = { ok: true, message: `Command '${cmd}' is available.` };
     } catch (err) {
       result.details.cli = { ok: false, message: `CLI command check failed: ${String(err)}` };

@@ -13,6 +13,9 @@ import { MetricsCollector } from '../ops/metrics';
 import type { EvidenceClaim, EvidenceSource } from '../verifier';
 import type { TaskExecutionResult, TaskHandler } from './loop';
 
+const MAX_INITIAL_QUERIES = 3;
+const MAX_URLS_PER_QUERY = 2;
+
 export type KnowledgeRepositoryLike = {
   getByTopic: (topic: string) => Promise<Knowledge | null>;
   merge: (input: KnowledgeUpsertInput) => Promise<{ knowledge: Knowledge; changed: boolean }>;
@@ -60,7 +63,7 @@ export const createMcpEvidenceProvider = (
       },
     );
 
-    const queries = queryResult.output.queries.slice(0, 3);
+    const queries = queryResult.output.queries.slice(0, MAX_INITIAL_QUERIES);
     const allClaims: EvidenceClaim[] = [];
     const allSources: EvidenceSource[] = [];
     const allNormalized: SourceRef[] = [];
@@ -68,7 +71,7 @@ export const createMcpEvidenceProvider = (
     let queryCountUsed = 0;
 
     for (const query of queries) {
-      if (queryCountUsed >= 10) break; // Hard limit
+      if (queryCountUsed >= config.knowflow.worker.maxQueriesPerTask) break; // Hard limit
 
       const searchResultText = await retriever.search(query);
       queryCountUsed += 1;
@@ -76,7 +79,7 @@ export const createMcpEvidenceProvider = (
       // Simple regex to find URLs in search result snippets
       const urls = [...searchResultText.matchAll(/https?:\/\/[^\s\)]+/g)]
         .map((m) => m[0])
-        .slice(0, 2);
+        .slice(0, MAX_URLS_PER_QUERY);
 
       for (const url of urls) {
         try {
@@ -174,7 +177,7 @@ export const createKnowFlowTaskHandler = (
     ...options.budget,
   } satisfies BudgetConfig;
   const evidenceProvider = options.evidenceProvider ?? defaultEvidenceProvider;
-  const cronRunWindowMs = Math.max(1, Math.trunc(options.cronRunWindowMs ?? 60 * 60 * 1000));
+  const cronRunWindowMs = Math.max(1, Math.trunc(options.cronRunWindowMs ?? config.knowflow.worker.cronRunWindowMs));
   let cronRunWindowStartedAt = 0;
   let cronRunConsumed = 0;
 

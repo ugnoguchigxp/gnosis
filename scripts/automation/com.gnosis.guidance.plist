@@ -6,19 +6,19 @@
     <string>com.gnosis.guidance</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/y.noguchi/.bun/bin/bun</string>
+        <string>{{BUN_PATH}}</string>
         <string>src/scripts/import-guidance.ts</string>
         <string>--max-zips</string>
         <string>1</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/y.noguchi/Code/gnosis</string>
+    <string>{{PROJECT_ROOT}}</string>
     <key>StartInterval</key>
     <integer>3600</integer>
     <key>StandardOutPath</key>
-    <string>/Users/y.noguchi/Code/gnosis/logs/guidance-import.log</string>
+    <string>{{PROJECT_ROOT}}/logs/guidance-import.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/y.noguchi/Code/gnosis/logs/guidance-import.log</string>
+    <string>{{PROJECT_ROOT}}/logs/guidance-import.log</string>
     <key>RunAtLoad</key>
     <false/>
 </dict>

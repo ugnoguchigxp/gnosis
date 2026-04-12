@@ -44,29 +44,39 @@ export const BudgetConfigSchema = z
   })
   .strict();
 
-export type BudgetConfig = z.infer<typeof BudgetConfigSchema>;
+export type BudgetConfig = z.infer<BudgetConfigSchema>;
+
+export const WorkerConfigSchema = z
+  .object({
+    taskTimeoutMs: z.number().int().positive(),
+    pollIntervalMs: z.number().int().positive(),
+    maxConsecutiveErrors: z.number().int().positive(),
+    maxQueriesPerTask: z.number().int().positive(),
+    cronRunWindowMs: z.number().int().positive(),
+  })
+  .strict();
+
+export type WorkerConfig = z.infer<WorkerConfigSchema>;
 
 /**
  * プロジェクト全体の設定管理
  */
 export const config = {
-  // LLM スクリプトのパス
-  llmScript:
-    process.env.GNOSIS_LLM_SCRIPT || path.join(os.homedir(), 'Code/localLlm/scripts/gemma4'),
+  // LLM スクリプトのパス (gemma4, bonsai 等に使用)
+  llmScript: process.env.GNOSIS_LLM_SCRIPT || 'gemma4',
 
   // localLlm プロジェクトのルートパス (MCP Retriever用)
-  localLlmPath: process.env.GNOSIS_LOCAL_LLM_PATH || path.join(os.homedir(), 'Code/localLlm'),
+  localLlmPath: process.env.GNOSIS_LOCAL_LLM_PATH || '',
 
   // エンティティ抽出/マージ時のタイムアウト (ms)
   llmTimeoutMs: envNumber(process.env.GNOSIS_LLM_TIMEOUT_MS, 90_000),
 
   // 埋め込みベクトルの生成コマンド
-  embedCommand: process.env.GNOSIS_EMBED_COMMAND || path.join(os.homedir(), '.local/bin/embed'),
+  embedCommand: process.env.GNOSIS_EMBED_COMMAND || 'embed',
   embedTimeoutMs: Math.max(1, envNumber(process.env.GNOSIS_EMBED_TIMEOUT_MS, 30_000)),
 
-  // Bun バイナリのパス (fallback を含む解決)
+  // Bun バイナリのパス
   bunCommand: process.env.GNOSIS_BUN_COMMAND || 'bun',
-  bunFallbackPath: path.join(os.homedir(), '.bun/bin/bun'),
 
   // ベクトルの次元数
   embeddingDimension: envNumber(process.env.GNOSIS_EMBEDDING_DIMENSION, 384),
@@ -75,9 +85,8 @@ export const config = {
   dedupeThreshold: envNumber(process.env.GNOSIS_DEDUPE_THRESHOLD, 0.9),
 
   // 各種ログのディレクトリパス
-  claudeLogDir: process.env.GNOSIS_CLAUDE_LOG_DIR || path.join(os.homedir(), '.claude/projects'),
-  antigravityLogDir:
-    process.env.GNOSIS_ANTIGRAVITY_LOG_DIR || path.join(os.homedir(), '.gemini/antigravity/brain'),
+  claudeLogDir: process.env.GNOSIS_CLAUDE_LOG_DIR || '',
+  antigravityLogDir: process.env.GNOSIS_ANTIGRAVITY_LOG_DIR || '',
 
   // 自己省察のバッチサイズ
   synthesisBatchSize: 10,
@@ -100,8 +109,7 @@ export const config = {
       retryDelayMs: Math.max(0, envNumber(process.env.LOCAL_LLM_RETRY_DELAY_MS, 300)),
       enableCliFallback: envBoolean(process.env.LOCAL_LLM_ENABLE_CLI_FALLBACK, true),
       cliCommand:
-        process.env.LOCAL_LLM_CLI_COMMAND ??
-        `${process.env.GNOSIS_LLM_SCRIPT || path.join(os.homedir(), 'Code/localLlm/scripts/gemma4')} --prompt {{prompt}}`,
+        process.env.LOCAL_LLM_CLI_COMMAND ?? `${process.env.GNOSIS_LLM_SCRIPT || 'gemma4'} --prompt {{prompt}}`,
       cliPromptMode: process.env.LOCAL_LLM_CLI_PROMPT_MODE === 'stdin' ? 'stdin' : 'arg',
       cliPromptPlaceholder: process.env.LOCAL_LLM_CLI_PROMPT_PLACEHOLDER ?? '{{prompt}}',
     }),
@@ -110,6 +118,16 @@ export const config = {
       cronBudget: envNumber(process.env.CRON_BUDGET, 6),
       cronRunBudget: envNumber(process.env.CRON_RUN_BUDGET, 30),
     }),
+    worker: WorkerConfigSchema.parse({
+      taskTimeoutMs: envNumber(process.env.KNOWFLOW_WORKER_TASK_TIMEOUT_MS, 600_000),
+      pollIntervalMs: envNumber(process.env.KNOWFLOW_WORKER_POLL_INTERVAL_MS, 1_000),
+      maxConsecutiveErrors: envNumber(process.env.KNOWFLOW_WORKER_MAX_CONSECUTIVE_ERRORS, 5),
+      maxQueriesPerTask: envNumber(process.env.KNOWFLOW_WORKER_MAX_QUERIES_PER_TASK, 10),
+      cronRunWindowMs: envNumber(process.env.KNOWFLOW_WORKER_CRON_RUN_WINDOW_MS, 3_600_000),
+    }),
+    healthCheck: {
+      timeoutMs: envNumber(process.env.KNOWFLOW_HEALTH_CHECK_TIMEOUT_MS, 5_000),
+    },
   },
 
   guidance: {

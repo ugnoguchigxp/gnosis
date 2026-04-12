@@ -20,6 +20,7 @@ import {
 } from '../services/graph.js';
 import { PgKnowledgeRepository } from '../services/knowflow/knowledge/repository.js';
 import { PgJsonbQueueRepository } from '../services/knowflow/queue/pgJsonbRepository.js';
+import { saveGuidance } from '../services/guidance.js';
 import {
   createKnowFlowTaskHandler,
   createMcpEvidenceProvider,
@@ -156,18 +157,22 @@ const runKnowledgeWorkerSchema = z.object({
   maxAttempts: z.number().optional().default(1).describe('最大試行回数'),
 });
 
-const searchUnifiedSchema = z.object({
-  query: z.string().describe('検索クエリ'),
-  mode: z
-    .enum(['fts', 'kg', 'semantic'])
-    .describe(
-      '検索モード: fts (知識ベースの全文検索), kg (ナレッジグラフ探索), semantic (ベクトル検索による意味探索)',
-    ),
   limit: z.number().int().positive().optional().default(5).describe('取得件数'),
   sessionId: z
     .string()
     .optional()
     .describe('semantic モード使用時のセッションID (デフォルト: gnosis)'),
+});
+
+const registerGuidanceSchema = z.object({
+  title: z.string().describe('ガイダンスのタイトル'),
+  content: z.string().describe('内容（マークダウン形式推奨）'),
+  guidanceType: z.enum(['rule', 'skill']).describe('種別 (rule: 規約・禁止事項, skill: 手順・ノウハウ)'),
+  scope: z.enum(['always', 'on_demand']).describe('適用範囲 (always: 常に参照, on_demand: 必要時のみ検索)'),
+  priority: z.number().int().min(0).max(100).optional().default(50).describe('優先度 (0-100)'),
+  tags: z.array(z.string()).optional().describe('関連タグ'),
+  archiveKey: z.string().optional().describe('管理用キー (省略時はタイトルから自動生成)'),
+  sessionId: z.string().optional().describe('セッションID (デフォルト: config.guidance.sessionId)'),
 });
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -281,6 +286,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 - kg: ナレッジグラフ内のエンティティとそのつながりの探索
 - semantic: 保存済みの記憶（Vibe Memory）の意味的類似度検索`,
         inputSchema: zodToJsonSchema(searchUnifiedSchema),
+      },
+      {
+        name: 'register_guidance',
+        description:
+          '新しいルールやスキルを Gnosis Guidance Registry に登録します。登録された内容は AI アシスタントへの指示（プロンプト）に自動挿入されるようになります。',
+        inputSchema: zodToJsonSchema(registerGuidanceSchema),
       },
     ],
   };
@@ -541,6 +552,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         throw new Error(`Unsupported search mode: ${mode}`);
+      }
+
+      case 'register_guidance': {
+        const input = registerGuidanceSchema.parse(args);
+        const result = await saveGuidance(input);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Guidance registered successfully: ${input.title} (archiveKey: ${result.archiveKey})`,
+            },
+          ],
+        };
       }
 
       default:
