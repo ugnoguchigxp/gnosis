@@ -12,3 +12,8 @@ logs/runs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Project folders
+imports/
+test_guidance/
+

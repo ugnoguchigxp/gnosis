@@ -6,6 +6,7 @@ type CliArgs = {
   inboxDir?: string;
   dryRun: boolean;
   project?: string;
+  maxZips?: number;
 };
 
 const parseArgs = (argv: string[]): CliArgs => {
@@ -18,11 +19,14 @@ const parseArgs = (argv: string[]): CliArgs => {
   const dryRun = argv.includes('--dry-run');
   const inboxDir = getArg('--inbox-dir');
   const project = getArg('--project') ?? config.guidance.project;
+  const maxZipsRaw = getArg('--max-zips');
+  const maxZips = maxZipsRaw ? Number.parseInt(maxZipsRaw, 10) : undefined;
 
   return {
     inboxDir,
     dryRun,
     project,
+    maxZips,
   };
 };
 
@@ -32,6 +36,7 @@ async function main() {
     inboxDir: args.inboxDir,
     dryRun: args.dryRun,
     project: args.project,
+    maxZips: args.maxZips,
   });
 
   const lines = [

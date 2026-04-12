@@ -71,6 +71,7 @@ export type ImportGuidanceOptions = {
   maxFileChars?: number;
   dryRun?: boolean;
   project?: string;
+  maxZips?: number;
 };
 
 type GuidanceArchiveFile = {
@@ -371,10 +372,30 @@ const createChunksFromZip = async (
 }> => {
   const manifest = await parseManifest(zipPath, entries, readEntryText);
 
+  const excludeBasenames = new Set([
+    'readme',
+    'license',
+    'licence',
+    'contributing',
+    'changelog',
+    'security',
+    'code_of_conduct',
+  ]);
+
   const markdownEntries = entries
-    .filter((entry) => entry.toLowerCase().endsWith('.md'))
-    .filter((entry) => isSafeZipEntryPath(entry))
+    .filter((entry) => {
+      const lowerEntry = entry.toLowerCase();
+      if (!lowerEntry.endsWith('.md')) return false;
+
+      const basename = path.posix.basename(lowerEntry, '.md');
+      if (excludeBasenames.has(basename)) return false;
+
+      if (basename.startsWith('.')) return false;
+
+      return isSafeZipEntryPath(entry);
+    })
     .slice(0, maxFilesPerZip);
+
 
   const chunks: GuidanceChunk[] = [];
 
@@ -563,13 +584,15 @@ export async function importGuidanceArchives(
   );
   const dryRun = options.dryRun ?? false;
   const project = options.project?.trim() || undefined;
+  const maxZips = options.maxZips ?? 1000;
 
   await ensureDirectory(inboxDir);
 
-  const zipFiles = await resolvedDeps.listArchiveFiles(inboxDir);
+  const allZipFiles = await resolvedDeps.listArchiveFiles(inboxDir);
+  const zipFiles = allZipFiles.slice(0, maxZips);
 
   const summary: GuidanceImportSummary = {
-    scanned: zipFiles.length,
+    scanned: allZipFiles.length,
     imported: 0,
     updated: 0,
     unchanged: 0,
