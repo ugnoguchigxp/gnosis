@@ -32,8 +32,8 @@ describe('importGuidanceArchives', () => {
               ? {
                   cursor: {
                     zipHash: 'same-hash',
-                    mtimeMs: 1,
-                    size: 1,
+                    mtimeMs: 1000,
+                    size: 120,
                     archiveKey: 'archive:content:old',
                   },
                 }
@@ -141,7 +141,7 @@ describe('importGuidanceArchives', () => {
 
     const metadata = persisted[0]?.metadata ?? {};
     expect(String(metadata.title)).toContain('react-best');
-    expect(metadata.docPath).toBe('frontend/react-best.md');
+    expect(metadata.entryPath).toBe('frontend/react-best.md');
     expect(metadata.guidanceType).toBe('skill');
     expect(Array.isArray(metadata.tags)).toBe(true);
     expect((metadata.tags as string[]).includes('frontend')).toBe(true);

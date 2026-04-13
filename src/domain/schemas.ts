@@ -24,13 +24,14 @@ export const GuidanceManifestSchema = z
 export type GuidanceManifest = z.infer<typeof GuidanceManifestSchema>;
 
 export const GuidanceChunkSchema = z.object({
-  docPath: z.string().min(1),
   title: z.string().min(1),
   content: z.string().min(1),
   guidanceType: GuidanceTypeSchema,
   scope: GuidanceScopeSchema,
   priority: z.number().int(),
   tags: z.array(z.string().min(1)),
+  entryPath: z.string().min(1),
+  project: z.string().optional(),
 });
 export type GuidanceChunk = z.infer<typeof GuidanceChunkSchema>;
 

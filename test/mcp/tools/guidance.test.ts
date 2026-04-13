@@ -62,7 +62,7 @@ mock.module('../../../src/config.js', () => ({
 }));
 
 const mockSaveGuidance = mock();
-mock.module('../../../src/services/guidance.js', () => ({
+mock.module('../../../src/services/guidance/index.js', () => ({
   saveGuidance: mockSaveGuidance,
 }));
 

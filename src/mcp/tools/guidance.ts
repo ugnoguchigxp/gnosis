@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { config } from '../../config.js';
-import { saveGuidance } from '../../services/guidance.js';
+import { saveGuidance } from '../../services/guidance/index.js';
 import type { ToolEntry } from '../registry.js';
 
 const registerGuidanceSchema = z.object({

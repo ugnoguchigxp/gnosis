@@ -1,6 +1,6 @@
 import { mkdir, rename } from 'node:fs/promises';
 import { config } from '../config.js';
-import { importGuidanceArchives } from '../services/guidance.js';
+import { importGuidanceArchives } from '../services/guidance/index.js';
 
 type CliArgs = {
   inboxDir?: string;
