@@ -12,7 +12,12 @@ const makeDb = (selectData: any[] = [], updateOk = true) => ({
   }),
   update: () => ({
     set: () => ({
-      where: async () => (updateOk ? undefined : (() => { throw new Error('update failed'); })()),
+      where: async () =>
+        updateOk
+          ? undefined
+          : (() => {
+              throw new Error('update failed');
+            })(),
     }),
   }),
 });
@@ -87,9 +92,7 @@ describe('synthesizeKnowledge', () => {
   });
 
   it('propagates errors from distillKnowledgeFromTranscript', async () => {
-    const memories = [
-      { id: 'm1', sessionId: 's', content: 'text', isSynthesized: false },
-    ];
+    const memories = [{ id: 'm1', sessionId: 's', content: 'text', isSynthesized: false }];
     const db = makeDb(memories);
     const mockDistill = mock().mockRejectedValue(new Error('LLM failed'));
 

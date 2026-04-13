@@ -1,5 +1,6 @@
 import { describe, expect, it, mock } from 'bun:test';
-import { runEvalSuite } from '../../src/services/knowflow/eval/runner';
+import type { runLlmTask } from '../../src/adapters/llm.js';
+import { type RunEvalSuiteDeps, runEvalSuite } from '../../src/services/knowflow/eval/runner.js';
 
 const validSuiteJson = JSON.stringify({
   name: 'test-suite',
@@ -70,8 +71,7 @@ describe('eval runner', () => {
       runEvalSuite(
         { suiteName: 'bad', mode: 'live' },
         {
-          readSuiteFile: async () =>
-            JSON.stringify({ name: 'x', cases: ['not-an-object'] }),
+          readSuiteFile: async () => JSON.stringify({ name: 'x', cases: ['not-an-object'] }),
         },
       ),
     ).rejects.toThrow('Invalid eval suite: cases[0] must be an object');
@@ -150,7 +150,7 @@ describe('eval runner', () => {
       { suiteName: 'test', mode: 'live', requestPrefix: 'unit' },
       {
         readSuiteFile: async () => validSuiteJson,
-        runLlmTask: mockRunLlmTask as Parameters<typeof runEvalSuite>[1]['runLlmTask'],
+        runLlmTask: mockRunLlmTask as unknown as NonNullable<RunEvalSuiteDeps['runLlmTask']>,
       },
     );
 
@@ -174,7 +174,7 @@ describe('eval runner', () => {
       { suiteName: 'test', mode: 'live' },
       {
         readSuiteFile: async () => validSuiteJson,
-        runLlmTask: mockRunLlmTask as Parameters<typeof runEvalSuite>[1]['runLlmTask'],
+        runLlmTask: mockRunLlmTask as unknown as NonNullable<RunEvalSuiteDeps['runLlmTask']>,
       },
     );
 
@@ -198,18 +198,26 @@ describe('eval runner', () => {
         { suiteName: 'test', mode: 'live', maxDegradedRate: 0 },
         {
           readSuiteFile: async () => validSuiteJson,
-          runLlmTask: mockRunLlmTask as Parameters<typeof runEvalSuite>[1]['runLlmTask'],
+          runLlmTask: mockRunLlmTask as unknown as NonNullable<RunEvalSuiteDeps['runLlmTask']>,
         },
       ),
     ).rejects.toThrow('exceeded threshold');
   });
 
   it('includes latency stats for zero-case suite', async () => {
+    const mockRunLlmTask = mock(async () => ({
+      ok: true,
+      degraded: false,
+      backend: 'cli' as const,
+      warnings: [],
+      text: '',
+    }));
+
     const result = await runEvalSuite(
       { suiteName: 'empty', mode: 'live' },
       {
         readSuiteFile: async () => JSON.stringify({ name: 'empty-suite', cases: [] }),
-        runLlmTask: mock(async () => ({ ok: true, degraded: false, backend: 'cli' as const, warnings: [], text: '' })) as Parameters<typeof runEvalSuite>[1]['runLlmTask'],
+        runLlmTask: mockRunLlmTask as unknown as NonNullable<RunEvalSuiteDeps['runLlmTask']>,
       },
     );
     expect(result.caseCount).toBe(0);
@@ -232,7 +240,7 @@ describe('eval runner', () => {
       { suiteName: 'test', mode: 'live' },
       {
         readSuiteFile: async () => validSuiteJson,
-        runLlmTask: mockRunLlmTask as Parameters<typeof runEvalSuite>[1]['runLlmTask'],
+        runLlmTask: mockRunLlmTask as unknown as NonNullable<RunEvalSuiteDeps['runLlmTask']>,
       },
     );
 

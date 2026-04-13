@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import type { TopicTask } from '../../src/services/knowflow/domain/task.js';
 import {
   createKnowFlowTaskHandler,
   createMcpEvidenceProvider,
 } from '../../src/services/knowflow/worker/knowFlowHandler.js';
-import type { TopicTask } from '../../src/services/knowflow/domain/task.js';
 
 const makeTask = (overrides: Partial<TopicTask> = {}): TopicTask => ({
   id: 'task-1',
