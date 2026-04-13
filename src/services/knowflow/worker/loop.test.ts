@@ -1,7 +1,7 @@
-import { describe, expect, it, mock, spyOn } from 'bun:test';
+import { describe, expect, it, mock } from 'bun:test';
 import type { TopicTask } from '../domain/task.js';
 import type { QueueRepository } from '../queue/repository.js';
-import { runWorkerLoop, runWorkerOnce } from './loop.js';
+import { defaultTaskHandler, runWorkerLoop, runWorkerOnce } from './loop.js';
 
 describe('worker loop', () => {
   const mockTask: TopicTask = {
@@ -89,5 +89,110 @@ describe('worker loop', () => {
     if (circuitBreakEvent) {
       expect(circuitBreakEvent[0].consecutiveErrors).toBe(5);
     }
+  });
+
+  it('runWorkerOnce returns processed=false when queue is empty', async () => {
+    const repo = mockRepo();
+    repo.dequeueAndLock = mock().mockResolvedValue(null);
+    const logger = mock();
+
+    const result = await runWorkerOnce(repo, undefined, { logger });
+
+    expect(result.processed).toBe(false);
+    const emptyEvents = (logger.mock.calls as { event: string }[][]).filter(
+      (c) => c[0]?.event === 'task.dequeue.empty',
+    );
+    expect(emptyEvents.length).toBeGreaterThan(0);
+  });
+
+  it('runWorkerOnce handles handler that throws exception', async () => {
+    const repo = mockRepo();
+    repo.dequeueAndLock = mock().mockResolvedValue(mockTask);
+    repo.applyFailureAction = mock().mockResolvedValue({ ...mockTask, status: 'deferred' });
+
+    const handler = mock().mockRejectedValue(new Error('unexpected crash'));
+
+    const result = await runWorkerOnce(repo, handler, { maxAttempts: 1 });
+
+    expect(result.processed).toBe(true);
+    if (result.processed) {
+      expect(result.error).toContain('unexpected crash');
+    }
+    expect(repo.applyFailureAction).toHaveBeenCalled();
+  });
+
+  it('defaultTaskHandler returns ok=true with summary', async () => {
+    const result = await defaultTaskHandler(mockTask);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.summary).toContain(mockTask.topic);
+    }
+  });
+
+  it('runWorkerLoop resets consecutiveErrors on successful task', async () => {
+    const repo = mockRepo();
+    repo.dequeueAndLock = mock().mockResolvedValue(mockTask);
+    repo.markDone = mock().mockResolvedValue({ ...mockTask, status: 'done' });
+    repo.applyFailureAction = mock().mockResolvedValue({ ...mockTask, status: 'deferred' });
+
+    const logger = mock();
+    let callCount = 0;
+    // First two fail, then succeed, then fail again - circuit breaker should not trigger
+    const handler = mock().mockImplementation(async () => {
+      callCount += 1;
+      if (callCount === 3) return { ok: true as const, summary: 'done' };
+      return { ok: false as const, error: 'fail' };
+    });
+
+    await runWorkerLoop(repo, handler, {
+      maxIterations: 5,
+      maxConsecutiveErrors: 3,
+      intervalMs: 1,
+      postTaskDelayMs: 1,
+      logger,
+    });
+
+    const circuitBreakEvent = (logger.mock.calls as { event: string }[][]).find(
+      (c) => c[0]?.event === 'worker.loop.circuit_break',
+    );
+    // With success at 3rd call, consecutive errors reset, so circuit breaker should not fire
+    expect(circuitBreakEvent).toBeUndefined();
+  });
+
+  it('runWorkerLoop handles critical error from runWorkerOnce', async () => {
+    const repo = mockRepo();
+    repo.dequeueAndLock = mock().mockRejectedValue(new Error('db connection lost'));
+
+    const logger = mock();
+
+    await runWorkerLoop(repo, undefined, {
+      maxIterations: 1,
+      intervalMs: 1,
+      postTaskDelayMs: 1,
+      logger,
+    });
+
+    const criticalEvents = (logger.mock.calls as { event: string }[][]).filter(
+      (c) => c[0]?.event === 'worker.loop.critical_error',
+    );
+    expect(criticalEvents.length).toBeGreaterThan(0);
+  });
+
+  it('runWorkerLoop sleeps when no task is available', async () => {
+    const repo = mockRepo();
+    repo.dequeueAndLock = mock().mockResolvedValue(null);
+    const logger = mock();
+
+    await runWorkerLoop(repo, undefined, {
+      maxIterations: 2,
+      intervalMs: 1,
+      postTaskDelayMs: 1,
+      logger,
+    });
+
+    const emptyEvents = (logger.mock.calls as { event: string }[][]).filter(
+      (c) => c[0]?.event === 'task.dequeue.empty',
+    );
+    expect(emptyEvents.length).toBe(2);
   });
 });

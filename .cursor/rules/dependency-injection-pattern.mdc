@@ -1,0 +1,60 @@
+---
+description: TypeScript でのパラメータ注入（DI）パターン
+globs: src/**/*.ts
+alwaysApply: false
+---
+
+# パラメータ注入パターン（DI なしDI）
+
+外部ライブラリなしで依存を差し替え可能にする。関数の最後の引数に `deps?` オブジェクトを追加する。
+
+## 基本パターン
+
+```typescript
+// ✅ deps の型を export して、テストから再利用できるようにする
+export type MyServiceDeps = {
+  database?: Pick<typeof db, 'insert' | 'delete' | 'update'>;
+  runLlm?: (prompt: string) => Promise<string>;
+  logger?: (msg: string) => void;
+};
+
+export async function myService(input: Input, deps: MyServiceDeps = {}) {
+  const database = deps.database ?? db;
+  const runLlm = deps.runLlm ?? defaultRunLlm;
+  const logger = deps.logger ?? console.log;
+  // ...
+}
+```
+
+## 型が複雑な関数（overload を持つ Node.js API 等）はラッパー型で切り出す
+
+```typescript
+// ❌ typeof nodeSpawnSync をそのまま使うと overload で型が合わない
+type SpawnFn = typeof nodeSpawnSync;
+
+// ✅ 使う口だけを型で表現する
+export type SpawnSyncResult = { stdout: string; stderr: string; status: number | null };
+export type SpawnSyncFn = (cmd: string, args: string[], opts: { encoding: 'utf-8' }) => SpawnSyncResult;
+const defaultSpawnSync: SpawnSyncFn = (cmd, args, opts) =>
+  nodeSpawnSync(cmd, args, opts as SpawnSyncOptionsWithStringEncoding);
+```
+
+## テストでの使い方
+
+```typescript
+const noLock = async <T>(_name: string, fn: () => Promise<T>) => fn();
+const testDeps = {
+  llmScript: 'mock-llm',
+  llmTimeoutMs: 1000,
+  withLock: noLock,
+  spawnSync: mock(() => ({ stdout: JSON.stringify({ entities: [] }), stderr: '', status: 0 })),
+};
+
+const result = await myService(input, testDeps);
+```
+
+## いつ適用するか
+
+- 外部プロセス（spawnSync）、DB、ファイルロック、外部APIを呼ぶ関数
+- `mock.module` で汚染が起きているモジュール
+- カバレッジが 0% の関数

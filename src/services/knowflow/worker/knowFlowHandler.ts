@@ -33,15 +33,21 @@ export type CreateKnowFlowTaskHandlerOptions = {
   now?: () => number;
 };
 
+export type McpEvidenceProviderOptions = {
+  logger?: StructuredLogger;
+  llmConfig?: Partial<LlmClientConfig>;
+  llmLogger?: (event: LlmLogEvent) => void;
+  runLlmTask?: typeof runLlmTask;
+  extractEvidence?: typeof extractEvidenceFromText;
+};
+
 export const createMcpEvidenceProvider = (
   retriever: Retriever,
-  options?: {
-    logger?: StructuredLogger;
-    llmConfig?: Partial<LlmClientConfig>;
-    llmLogger?: (event: LlmLogEvent) => void;
-  },
+  options?: McpEvidenceProviderOptions,
 ): EvidenceProvider => {
   const logger = options?.logger ?? defaultStructuredLogger;
+  const _runLlmTask = options?.runLlmTask ?? runLlmTask;
+  const _extractEvidence = options?.extractEvidence ?? extractEvidenceFromText;
 
   return async (task): Promise<FlowEvidence> => {
     logger({
@@ -51,7 +57,7 @@ export const createMcpEvidenceProvider = (
       level: 'info',
     });
 
-    const queryResult = await runLlmTask(
+    const queryResult = await _runLlmTask(
       {
         task: 'query_generation',
         context: { topic: task.topic },
@@ -114,7 +120,7 @@ export const createMcpEvidenceProvider = (
       for (const url of urls) {
         try {
           const content = await retriever.fetch(url);
-          const extracted = await extractEvidenceFromText({
+          const extracted = await _extractEvidence({
             topic: task.topic,
             url,
             title: query, // Use query as title fallback

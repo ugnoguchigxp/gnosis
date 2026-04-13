@@ -1,0 +1,56 @@
+---
+description: Bun テストでのモック汚染を防ぐルール
+globs: test/**/*.ts,src/**/*.test.ts,src/**/*.spec.ts
+alwaysApply: false
+---
+
+# Bun テスト：モック汚染の防止
+
+Bun の `mock.module` はプロセス全体に漏れる。テストファイルをまたいでモックが残留し、他のテストを破壊する。
+
+## configモックは完全な shape で書く
+
+```typescript
+// ❌ 不完全なconfigモック（他のテストがknowflow.llmにアクセスすると壊れる）
+mock.module('../src/config.js', () => ({
+  config: { embedCommand: 'mock-embed', graph: { similarityThreshold: 0.8 } },
+}));
+
+// ✅ 横断的に使われる全ネームスペースを含める
+mock.module('../src/config.js', () => ({
+  config: {
+    embedCommand: 'mock-embed',
+    graph: { similarityThreshold: 0.8, maxPathHops: 5 },
+    memory: { retries: 1, retryWaitMultiplier: 0.01 },
+    knowflow: {
+      llm: { apiBaseUrl: '...', model: 'test', maxRetries: 1, /* 全フィールド */ },
+      worker: { taskTimeoutMs: 5000, pollIntervalMs: 1000, /* ... */ },
+      healthCheck: { timeoutMs: 5000 },
+      budget: { userBudget: 12, cronBudget: 6, cronRunBudget: 30 },
+    },
+    guidance: { inboxDir: '/tmp', sessionId: 'test', priorityHigh: 100, /* ... */ },
+    llm: { maxBuffer: 10485760, defaultTimeoutMs: 45000 },
+  },
+}));
+```
+
+## mockReset() で実装を確実にリセットする
+
+```typescript
+// ❌ mockClear() はコール履歴のみリセット、実装（throw等）が残留する
+beforeEach(() => { mockFn.mockClear(); });
+
+// ✅ mockReset() は実装もリセット。特にエラー系テストの後に必須
+beforeEach(() => { mockFn.mockReset(); });
+afterEach(() => { mockFn.mockReset(); }); // ← 最後のテストの漏れを防ぐ
+```
+
+## 統合テストには環境変数ガードを付ける
+
+```typescript
+// DB等の外部リソースが必要なテストはデフォルトでスキップ
+const shouldRun = process.env.GNOSIS_RUN_INTEGRATION === '1' && !!process.env.DATABASE_URL;
+const describeIntegration = shouldRun ? describe : describe.skip;
+
+describeIntegration('Graph Engine Services', () => { /* ... */ });
+```

@@ -25,10 +25,20 @@ const mockDbSelect = {
   from: mock(() => createMockQuery([])),
 };
 
+const mockDbUpdateSet = {
+  set: mock(() => ({ where: mock(async () => {}) })),
+};
+
+const mockDbDeleteWhere = {
+  where: mock(async () => {}),
+};
+
 const mockDb = {
   select: mock(() => mockDbSelect),
   insert: mock(() => mockDbInsert),
   execute: mock(async () => {}),
+  update: mock(() => mockDbUpdateSet),
+  delete: mock(() => mockDbDeleteWhere),
 };
 
 mock.module('../src/db/index.js', () => ({
@@ -113,10 +123,14 @@ const mockJudgeAndMerge = mock();
 
 import {
   buildGraph,
+  deleteRelation,
+  digestTextIntelligence,
   findPathBetweenEntities,
   queryGraphContext,
   saveEntities,
   saveRelations,
+  searchEntitiesByText,
+  updateEntity,
 } from '../src/services/graph';
 
 describe('graph service', () => {
@@ -237,6 +251,179 @@ describe('graph service', () => {
       const result = await queryGraphContext('none');
       expect(result.entities).toHaveLength(0);
       expect(result.relations).toHaveLength(0);
+    });
+
+    it('returns entity and community when found, traverses BFS', async () => {
+      const mockEntity = {
+        id: 'e1',
+        name: 'Entity1',
+        type: 'concept',
+        description: 'desc',
+        communityId: 'c1',
+        embedding: null,
+        referenceCount: 0,
+        lastReferencedAt: null,
+        metadata: null,
+      };
+      const mockCommunity = { id: 'c1', name: 'Community1', summary: 'A test community' };
+
+      let selectCallCount = 0;
+      // biome-ignore lint/suspicious/noExplicitAny: mock override
+      (mockDb as any).select = mock(() => {
+        selectCallCount += 1;
+        if (selectCallCount === 1) {
+          // startEntity lookup
+          return { from: mock(() => createMockQuery([mockEntity])) };
+        }
+        if (selectCallCount === 2) {
+          // community lookup
+          return { from: mock(() => createMockQuery([mockCommunity])) };
+        }
+        if (selectCallCount === 3) {
+          // BFS entity fetch
+          return { from: mock(() => createMockQuery([mockEntity])) };
+        }
+        // outgoing + incoming relations → empty
+        return { from: mock(() => createMockQuery([])) };
+      });
+
+      const result = await queryGraphContext('e1');
+
+      // restore
+      // biome-ignore lint/suspicious/noExplicitAny: mock restore
+      (mockDb as any).select = mock(() => mockDbSelect);
+
+      expect(result.entities.length).toBeGreaterThan(0);
+      expect(result.communities.length).toBeGreaterThan(0);
+      expect(result.communities[0]).toMatchObject({ id: 'c1' });
+    });
+  });
+
+  describe('searchEntitiesByText', () => {
+    it('returns empty results when db returns nothing', async () => {
+      // biome-ignore lint/suspicious/noExplicitAny: mock
+      const db = {
+        select: mock(() => ({
+          from: mock(() => createMockQuery([])),
+        })),
+        update: mock(() => ({ set: mock(() => ({ where: mock(async () => {}) })) })),
+        // biome-ignore lint/suspicious/noExplicitAny: mock
+      } as any;
+
+      const results = await searchEntitiesByText('TypeScript', 5, db);
+      expect(results).toEqual([]);
+    });
+
+    it('returns entities and updates referenceCount when found', async () => {
+      const mockEntityRow = {
+        id: 'e1',
+        name: 'TypeScript',
+        type: 'technology',
+        description: 'typed JS',
+        similarity: 0.9,
+      };
+      const mockUpdateWhere = mock(async () => {});
+      const mockUpdateSet = mock(() => ({ where: mockUpdateWhere }));
+      const mockUpdate = mock(() => ({ set: mockUpdateSet }));
+      // biome-ignore lint/suspicious/noExplicitAny: mock
+      const db = {
+        select: mock(() => ({
+          from: mock(() => createMockQuery([mockEntityRow])),
+        })),
+        update: mockUpdate,
+        // biome-ignore lint/suspicious/noExplicitAny: mock
+      } as any;
+
+      const results = await searchEntitiesByText('TypeScript', 5, db);
+      expect(results).toHaveLength(1);
+      expect(results[0]?.name).toBe('TypeScript');
+      expect(mockUpdate).toHaveBeenCalled();
+    });
+  });
+
+  describe('updateEntity', () => {
+    it('calls db.update with the given id and updates', async () => {
+      const mockUpdateWhere = mock(async () => {});
+      const mockUpdateSet = mock(() => ({ where: mockUpdateWhere }));
+      const mockUpdateFn = mock(() => ({ set: mockUpdateSet }));
+      // biome-ignore lint/suspicious/noExplicitAny: mock
+      const db = { update: mockUpdateFn } as any;
+
+      await updateEntity('e1', { name: 'Updated Name' }, db);
+
+      expect(mockUpdateFn).toHaveBeenCalled();
+      expect(mockUpdateSet).toHaveBeenCalledWith({ name: 'Updated Name' });
+      expect(mockUpdateWhere).toHaveBeenCalled();
+    });
+  });
+
+  describe('deleteRelation', () => {
+    it('calls db.delete with correct conditions', async () => {
+      const mockDeleteWhere = mock(async () => {});
+      const mockDeleteFn = mock(() => ({ where: mockDeleteWhere }));
+      // biome-ignore lint/suspicious/noExplicitAny: mock
+      const db = { delete: mockDeleteFn } as any;
+
+      await deleteRelation('src', 'tgt', 'related_to', db);
+
+      expect(mockDeleteFn).toHaveBeenCalled();
+      expect(mockDeleteWhere).toHaveBeenCalled();
+    });
+  });
+
+  describe('digestTextIntelligence', () => {
+    it('extracts entities and finds existing candidates', async () => {
+      const mockExtractor = mock().mockResolvedValue([
+        { id: 'e1', name: 'TypeScript', type: 'technology', description: 'typed JS' },
+      ]);
+      const mockSearcher = mock().mockResolvedValue([
+        {
+          id: 'existing-e1',
+          name: 'TS',
+          type: 'technology',
+          description: 'typed JS superset',
+          similarity: 0.95,
+        },
+      ]);
+
+      const results = await digestTextIntelligence('TypeScript is typed', 5, 0.8, {
+        extractor: mockExtractor,
+        searcher: mockSearcher,
+      });
+
+      expect(mockExtractor).toHaveBeenCalledWith('TypeScript is typed');
+      expect(results).toHaveLength(1);
+      expect(results[0]?.extracted.name).toBe('TypeScript');
+      expect(results[0]?.existingCandidates).toHaveLength(1);
+    });
+
+    it('filters candidates below similarity threshold', async () => {
+      const mockExtractor = mock().mockResolvedValue([
+        { id: 'e1', name: 'Bun', type: 'runtime', description: 'fast JS runtime' },
+      ]);
+      const mockSearcher = mock().mockResolvedValue([
+        { id: 'x', name: 'Node', type: 'runtime', description: 'old runtime', similarity: 0.5 },
+      ]);
+
+      const results = await digestTextIntelligence('Bun runtime', 5, 0.8, {
+        extractor: mockExtractor,
+        searcher: mockSearcher,
+      });
+
+      expect(results[0]?.existingCandidates).toHaveLength(0);
+    });
+
+    it('returns empty when extractor returns no entities', async () => {
+      const mockExtractor = mock().mockResolvedValue([]);
+      const mockSearcher = mock();
+
+      const results = await digestTextIntelligence('random text', 5, 0.8, {
+        extractor: mockExtractor,
+        searcher: mockSearcher,
+      });
+
+      expect(results).toHaveLength(0);
+      expect(mockSearcher).not.toHaveBeenCalled();
     });
   });
 });

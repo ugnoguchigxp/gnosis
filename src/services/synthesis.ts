@@ -5,15 +5,29 @@ import { vibeMemories } from '../db/schema.js';
 import { saveEntities, saveRelations } from './graph.js';
 import { distillKnowledgeFromTranscript } from './llm.js';
 
+type DbLike = Pick<typeof db, 'select' | 'update'>;
+
+export type SynthesizeKnowledgeDeps = {
+  database?: DbLike;
+  distill?: typeof distillKnowledgeFromTranscript;
+  saveEnts?: typeof saveEntities;
+  saveRels?: typeof saveRelations;
+  batchSize?: number;
+};
+
 /**
  * 自己省察（Reflective Synthesis）を実行します。
  * 未処理の Vibe Memory を分析し、Knowledge Graph（エンティティとリレーション）に統合します。
  */
-export async function synthesizeKnowledge() {
-  const batchSize = config.synthesisBatchSize;
+export async function synthesizeKnowledge(deps: SynthesizeKnowledgeDeps = {}) {
+  const database = deps.database ?? db;
+  const distill = deps.distill ?? distillKnowledgeFromTranscript;
+  const saveEnts = deps.saveEnts ?? saveEntities;
+  const saveRels = deps.saveRels ?? saveRelations;
+  const batchSize = deps.batchSize ?? config.synthesisBatchSize;
 
   // 1. 未処理のメモリを取得
-  const pendingMemories = await db
+  const pendingMemories = await database
     .select()
     .from(vibeMemories)
     .where(eq(vibeMemories.isSynthesized, false))
@@ -33,19 +47,19 @@ export async function synthesizeKnowledge() {
 
   try {
     // 3. LLMで知識を蒸留 (既存の関数を流用)
-    const distilled = await distillKnowledgeFromTranscript(combinedTranscript);
+    const distilled = await distill(combinedTranscript);
 
     // 4. グラフに反映
     if (distilled.entities.length > 0) {
-      await saveEntities(distilled.entities);
+      await saveEnts(distilled.entities);
     }
     if (distilled.relations.length > 0) {
-      await saveRelations(distilled.relations);
+      await saveRels(distilled.relations);
     }
 
     // 5. 処理済みフラグを更新
     const processedIds = pendingMemories.map((m) => m.id);
-    await db
+    await database
       .update(vibeMemories)
       .set({ isSynthesized: true })
       .where(inArray(vibeMemories.id, processedIds));

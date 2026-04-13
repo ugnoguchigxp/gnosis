@@ -66,4 +66,23 @@ describe('healthCheck', () => {
     expect(result.details.api?.ok).toBe(false);
     expect(result.details.cli?.ok).toBe(true);
   });
+
+  it('should return ok: false when cliFallback is disabled and API fails', async () => {
+    (global.fetch as unknown as () => Promise<unknown>) = mock().mockRejectedValue(
+      new Error('refused'),
+    );
+
+    const noCli = { ...llmConfig, enableCliFallback: false };
+    const result = await checkLlmHealth(noCli, undefined, { exec: mockExec(false) });
+
+    expect(result.ok).toBe(false);
+    expect(result.details.cli).toBeUndefined();
+  });
+
+  it('covers api catch block when URL construction throws', async () => {
+    const badConfig = { ...llmConfig, apiBaseUrl: 'not-a-url', apiPath: '/v1' };
+    const result = await checkLlmHealth(badConfig, undefined, { exec: mockExec(false) });
+
+    expect(result.details.api?.ok).toBe(false);
+  });
 });

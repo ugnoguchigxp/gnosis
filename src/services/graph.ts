@@ -309,6 +309,14 @@ export async function searchEntitiesByText(
   return results;
 }
 
+type DigestDeps = {
+  extractor?: (text: string) => Promise<EntityInput[]>;
+  searcher?: (
+    query: string,
+    limit: number,
+  ) => Promise<Awaited<ReturnType<typeof searchEntitiesByText>>>;
+};
+
 /**
  * テキストからエンティティを抽出し、既存のグラフデータと紐付けて返します (高度な Digestion)
  */
@@ -316,9 +324,13 @@ export async function digestTextIntelligence(
   text: string,
   limit = 5,
   similarityThreshold = config.graph.similarityThreshold,
+  deps: DigestDeps = {},
 ) {
+  const extractor = deps.extractor ?? extractEntitiesFromText;
+  const searcher = deps.searcher ?? ((q, l) => searchEntitiesByText(q, l));
+
   // 1. LLM でエンティティを抽出
-  const extracted = await extractEntitiesFromText(text);
+  const extracted = await extractor(text);
   const extractedLimited = extracted.slice(0, limit);
 
   // 2. 抽出された各エンティティについて既存ノードを探す
@@ -326,7 +338,7 @@ export async function digestTextIntelligence(
     extractedLimited.map(async (ext) => {
       // 名前と説明をセットにして検索クエリにする
       const query = `${ext.name} ${ext.description}`;
-      const candidates = await searchEntitiesByText(query, limit);
+      const candidates = await searcher(query, limit);
 
       return {
         extracted: ext,
