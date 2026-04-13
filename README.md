@@ -3,6 +3,49 @@
 Gnosis（グノーシス）は、AIエージェントに**長期記憶**と**構造化知識**を提供するローカル統合スタックです。  
 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) サーバーとして動作し、Cursor・Claude Code・Cline 等のエージェントクライアントから透過的に利用できます。
 
+エージェントが単発で応答するだけでなく、過去の文脈を思い出し、知識を構造化し、必要に応じて自律的に調査し、教訓を次回に活かすための基盤を目指しています。
+
+## 何ができるか
+
+- 会話・レビュー・設計判断を `store_memory` で蓄積し、後から `search_memory` で再利用できる
+- エンティティと関係をグラフ化し、`query_graph` や `find_path` で文脈を引き出せる
+- KnowFlow でトピック調査を非同期キューに積み、知識テーブルへ継続的に統合できる
+- 失敗と成功の経験を `record_experience` / `recall_lessons` で再利用できる
+- Guidance Registry でルールやスキルを登録し、エージェントの振る舞いを安定化できる
+- Monitor でキュー・ワーカー・評価状態をデスクトップ UI から監視できる
+
+## 想定ユースケース
+
+| ユースケース | 使い方 |
+|------|------|
+| エージェントの長期記憶 | レビュー結果、設計判断、調査メモを `store_memory` で保存し、次回の作業で `search_memory` から再利用 |
+| Graph RAG | ドメイン知識をエンティティ/リレーションとして保存し、関連文脈を `query_graph` で取得 |
+| 継続調査 | `enqueue_knowledge_task` で調査トピックを積み、KnowFlow ワーカーで段階的に知識化 |
+| ポストモーテム学習 | 障害対応や失敗事例を `record_experience` し、類似作業時に `recall_lessons` で参照 |
+| エージェント運用基盤 | ログ同期、自己省察、Guidance 登録、Monitor を組み合わせてローカル運用を整備 |
+
+## クイックスタート
+
+最短で触るなら、次の流れです。
+
+```bash
+bun install
+bun run monorepo:setup
+docker-compose up -d
+cp .env.example .env
+bun run db:init
+bun run verify
+bun run start
+```
+
+次に MCP クライアントへ `gnosis` を登録し、以下のような順で試すと全体像を掴みやすいです。
+
+1. `store_memory` で短いメモを保存する
+2. `search_memory` で意味検索してヒットを確認する
+3. `enqueue_knowledge_task` で調査トピックを積む
+4. `run_knowledge_worker` で 1 件処理する
+5. `search_knowledge` や `get_knowledge` で結果を確認する
+
 ## 特徴
 
 | 機能 | 概要 |
@@ -119,6 +162,18 @@ MCP 対応クライアントの設定ファイルに以下を追加:
 }
 ```
 
+### 5. 動作確認
+
+```bash
+# 品質ゲート
+bun run verify
+
+# 監視 UI（任意）
+bun run monitor:dev
+```
+
+`verify` が通れば、最低限のフォーマット・lint・型チェック・テスト・スモークは完了しています。
+
 ## MCP ツール一覧
 
 Gnosis は 18 の MCP ツールを提供します。
@@ -176,6 +231,53 @@ Gnosis は 18 の MCP ツールを提供します。
 |--------|------|
 | `register_guidance` | ルール・スキルを Guidance Registry に登録 |
 
+より詳しい入出力仕様や使い分けは `docs/mcp-tools.md` を追加予定です。
+
+## 最初の実行例
+
+### 1. メモリを保存して検索する
+
+クライアントから次のような情報を保存します。
+
+```json
+{
+  "tool": "store_memory",
+  "arguments": {
+    "sessionId": "demo",
+    "content": "Graph RAG for incident analysis should prioritize timeline reconstruction before root-cause summarization.",
+    "metadata": {
+      "source": "manual",
+      "topic": "incident-analysis"
+    }
+  }
+}
+```
+
+その後、次のような検索で取り出せます。
+
+```json
+{
+  "tool": "search_memory",
+  "arguments": {
+    "sessionId": "demo",
+    "query": "How should Graph RAG help with incident analysis?",
+    "limit": 3
+  }
+}
+```
+
+### 2. KnowFlow を単発で回す
+
+```bash
+bun run src/services/knowflow/cli.ts enqueue --topic "PostgreSQL logical replication"
+bun run src/services/knowflow/cli.ts run-once --json
+bun run src/services/knowflow/cli.ts search-knowledge --query "logical replication" --json
+```
+
+### 3. Guidance を登録する
+
+`register_guidance` にルール本文を渡すことで、共通の運用ルールを蓄積できます。たとえば「レビューでは再現条件を必ず明記する」といった規約を登録しておくと、エージェントの出力を安定化しやすくなります。
+
 ## 主要コマンド
 
 ### 基本操作
@@ -209,6 +311,17 @@ bun run src/services/knowflow/cli.ts eval-run --suite local --mock
 ```
 
 CLI の全フラグ: `--json` `--table` `--verbose` `--profile <name>` `--run-id <id>`
+
+主なコマンドの役割:
+
+- `enqueue`: 調査タスクを登録する
+- `run-once`: タスクを 1 件だけ処理する
+- `run-worker`: ワーカーループを回し続ける
+- `llm-task`: 個別の LLM タスクを直接試す
+- `search-knowledge`: 収集済み知識を検索する
+- `get-knowledge`: 1 トピックの詳細を確認する
+- `merge-knowledge`: 外部 JSON を知識テーブルへ統合する
+- `eval-run`: 評価スイートを実行する
 
 ### データベース
 
@@ -264,6 +377,12 @@ cronBudget = 6
 cronRunBudget = 30
 ```
 
+プロファイルは次の優先順で反映されます。
+
+1. CLI 引数
+2. `profiles/<name>.toml`
+3. `src/config.ts` のデフォルト値
+
 ## 環境変数
 
 主要な環境変数の一覧です。全量は `.env.example` を参照してください。
@@ -301,6 +420,15 @@ cronRunBudget = 30
 | `GNOSIS_CLAUDE_LOG_DIR` | (なし) | Claude Code ログディレクトリ |
 | `GNOSIS_ANTIGRAVITY_LOG_DIR` | (なし) | Gemini Antigravity ログディレクトリ |
 
+### Guidance
+
+| 変数 | デフォルト | 説明 |
+|------|-----------|------|
+| `GUIDANCE_ENABLED` | `true` | Guidance Registry の有効/無効 |
+| `GUIDANCE_PROJECT` | (なし) | プロジェクト識別子 |
+| `GUIDANCE_INBOX_DIR` | `imports/guidance/inbox` | ZIP アーカイブの投入先 |
+| `GUIDANCE_MAX_ZIPS` | `1000` | 読み込む ZIP 数の上限 |
+
 ## データベーススキーマ
 
 Gnosis は PostgreSQL 16 + pgvector 上に以下のテーブルを持ちます:
@@ -318,6 +446,20 @@ Gnosis は PostgreSQL 16 + pgvector 上に以下のテーブルを持ちます:
 | `knowledge_relations` | トピック間の関係 |
 | `knowledge_sources` | クレームの出典 URL |
 | `sync_state` | 外部ログ同期の進捗状態 |
+
+## コンポーネント別の責務
+
+| コンポーネント | 責務 |
+|------|------|
+| `src/mcp/` | MCP サーバー本体とツール定義 |
+| `src/services/memory.ts` | ベクトル化・保存・類似検索 |
+| `src/services/graph.ts` | グラフ探索、関連文脈、コミュニティ検出 |
+| `src/services/knowledge.ts` | KnowFlow の知識検索・取得 |
+| `src/services/guidance.ts` | Guidance の登録・インポート |
+| `src/services/knowflow/` | キュー、フロー、評価、LLM タスク |
+| `services/embedding/` | 埋め込み生成の Python サービス |
+| `services/local-llm/` | ローカル LLM API / MCP 補助サービス |
+| `apps/monitor/` | デスクトップ監視 UI |
 
 ## 開発
 
@@ -342,6 +484,13 @@ bun test test/knowflow/         # ディレクトリ指定
 KNOWFLOW_RUN_INTEGRATION=1 bun test test/knowflow/queuePostgres.integration.test.ts
 ```
 
+現在のテスト領域の中心:
+
+- MCP ツールの契約テスト
+- KnowFlow のキュー、フロー、評価、LLM アダプタ
+- Experience / lock / secret filter
+- 一部の integration / e2e テスト
+
 ### コミット規約
 
 [Conventional Commits](https://www.conventionalcommits.org/) に準拠:
@@ -359,6 +508,39 @@ docs: MCP ツール API リファレンスを追加
 # verify 通過後にバージョンタグを作成
 bun run release
 ```
+
+## トラブルシューティング
+
+### `bun run db:init` が失敗する
+
+- `docker-compose up -d` が完了しているか確認する
+- `DATABASE_URL` が `localhost:7888` を指しているか確認する
+- pgvector 拡張が有効な PostgreSQL コンテナを使っているか確認する
+
+### `search_memory` が失敗する
+
+- `GNOSIS_EMBED_COMMAND` が正しいか確認する
+- `services/embedding/.venv/bin/embed` が存在するか確認する
+- `bun run monorepo:setup` を再実行する
+
+### KnowFlow ワーカーが動かない
+
+- `LOCAL_LLM_API_BASE_URL` が正しいか確認する
+- `services/local-llm` 側が起動しているか確認する
+- まず `llm-task` を単体で実行して疎通確認する
+
+### Monitor が表示されない
+
+- `bun run monitor:dev` をリポジトリルートで実行しているか確認する
+- Tauri / Rust ツールチェーンがローカルにあるか確認する
+
+## ロードマップ
+
+- ドキュメント群の拡充: `docs/mcp-tools.md`, `docs/architecture.md`, `docs/configuration.md`, `docs/knowflow-guide.md`
+- `guidance.ts` の分割
+- `config.ts` の専用テスト追加
+- サービス層 DI の統一
+- `GnosisError` の横断適用
 
 ## 技術スタック
 
@@ -378,10 +560,24 @@ bun run release
 
 ## ドキュメント
 
-- [改善実装計画](docs/improve-plan.md) — 現在の改善ロードマップ
-- [Tauri 監視アプリ設計](docs/tauri-monitoring-implementation-plan.md) — Monitor の設計と WebSocket プロトコル
-- [KnowFlow KG/FTS 統合計画](docs/knowflow-kg-fts-unified-plan.md) — Knowledge Graph と全文検索の統合設計
+- [アーキテクチャ](docs/architecture.md) — 全体構成、主要コンポーネント、設計判断の整理
+- [MCP ツールリファレンス](docs/mcp-tools.md) — ツール一覧、用途、入出力の整理
+- [設定リファレンス](docs/configuration.md) — 環境変数、プロファイル、主要設定の説明
+- [KnowFlow ガイド](docs/knowflow-guide.md) — CLI、評価、運用フローのガイド
+- [自動化ガイド](docs/automation.md) — 自動化まわりの運用メモ
 - [セキュリティニュース計画](docs/security-news.md) — セキュリティニュース収集機能の設計
+
+README では入口に絞っているため、詳細な仕様・運用・設計判断は `docs/` 配下に段階的に切り出していく方針です。
+
+## OSS メタデータ
+
+- [LICENSE](LICENSE) — ライセンス本文
+- [CONTRIBUTING.md](CONTRIBUTING.md) — 開発参加ガイド
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — 行動規範
+- [SECURITY.md](SECURITY.md) — 脆弱性報告ポリシー
+- [SUPPORT.md](SUPPORT.md) — サポート窓口と使い分け
+- [GitHub Issue Templates](.github/ISSUE_TEMPLATE) — バグ報告・機能要望テンプレート
+- [Pull Request Template](.github/pull_request_template.md) — PR 作成時のチェックリスト
 
 ## ライセンス
 

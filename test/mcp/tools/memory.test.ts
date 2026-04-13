@@ -1,4 +1,4 @@
-import { describe, expect, it, mock, beforeEach } from 'bun:test';
+import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import { memoryTools } from '../../../src/mcp/tools/memory';
 
 // サービスのモック
@@ -21,14 +21,18 @@ mock.module('../../../src/services/graph.js', () => ({
 
 mock.module('../../../src/db/index.js', () => ({
   db: {
-    transaction: async (cb: (tx: any) => Promise<any>) => cb('mock-tx'),
+    transaction: async (cb: (tx: unknown) => Promise<unknown>) => cb('mock-tx'),
   },
 }));
 
 describe('memory tool handlers', () => {
-  const storeHandler = memoryTools.find(t => t.name === 'store_memory')?.handler!;
-  const searchHandler = memoryTools.find(t => t.name === 'search_memory')?.handler!;
-  const deleteHandler = memoryTools.find(t => t.name === 'delete_memory')?.handler!;
+  const storeHandler = memoryTools.find((t) => t.name === 'store_memory')?.handler;
+  const searchHandler = memoryTools.find((t) => t.name === 'search_memory')?.handler;
+  const deleteHandler = memoryTools.find((t) => t.name === 'delete_memory')?.handler;
+
+  if (!storeHandler || !searchHandler || !deleteHandler) {
+    throw new Error('Memory tools not found');
+  }
 
   beforeEach(() => {
     mockSaveMemory.mockClear();
@@ -45,7 +49,7 @@ describe('memory tool handlers', () => {
       sessionId: 's1',
       content: 'text contents',
       entities: [{ id: 'e1', type: 'node', name: 'entity1' }],
-      relations: [{ sourceId: 'e1', targetId: 'e2', relationType: 'linked' }]
+      relations: [{ sourceId: 'e1', targetId: 'e2', relationType: 'linked' }],
     };
 
     const result = await storeHandler(args);
@@ -62,7 +66,7 @@ describe('memory tool handlers', () => {
     const args = {
       sessionId: 's1',
       query: 'search query',
-      limit: 10
+      limit: 10,
     };
 
     const result = await searchHandler(args);

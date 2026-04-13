@@ -12,7 +12,9 @@ describe('llm adapter', () => {
     // Fenced without tag
     expect(extractJsonCandidate('```\n{"b":2}\n```')).toBe('{"b":2}');
     // No fences
-    expect(extractJsonCandidate('Sure, here is your JSON: {"c":3} and some more text.')).toBe('{"c":3}');
+    expect(extractJsonCandidate('Sure, here is your JSON: {"c":3} and some more text.')).toBe(
+      '{"c":3}',
+    );
     // Multiple blocks (should take first one found by regex which is non-greedy)
     expect(extractJsonCandidate('First: ```{"d":4}``` Second: ```{"e":5}```')).toBe('{"d":4}');
     // Empty/None

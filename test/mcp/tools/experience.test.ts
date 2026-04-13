@@ -1,6 +1,6 @@
 import { describe, expect, it, mock } from 'bun:test';
-import { experienceTools } from '../../../src/mcp/tools/experience';
 import { GnosisError } from '../../../src/domain/errors';
+import { experienceTools } from '../../../src/mcp/tools/experience';
 
 // サービスのモック
 const mockSaveExperience = mock();
@@ -12,8 +12,12 @@ mock.module('../../../src/services/experience.js', () => ({
 }));
 
 describe('experience tool handlers', () => {
-  const recordHandler = experienceTools.find(t => t.name === 'record_experience')?.handler!;
-  const recallHandler = experienceTools.find(t => t.name === 'recall_lessons')?.handler!;
+  const recordHandler = experienceTools.find((t) => t.name === 'record_experience')?.handler;
+  const recallHandler = experienceTools.find((t) => t.name === 'recall_lessons')?.handler;
+
+  if (!recordHandler || !recallHandler) {
+    throw new Error('Experience tools not found');
+  }
 
   it('record_experience: calls service and returns success message', async () => {
     mockSaveExperience.mockResolvedValue({ id: 'exp-123' });

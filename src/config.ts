@@ -2,13 +2,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 
-const envBoolean = (value: string | undefined, fallback: boolean): boolean => {
-  if (!value) return fallback;
+export const envBoolean = (value: string | undefined, fallback: boolean): boolean => {
+  if (value === undefined || value.trim() === '') return fallback;
   const normalized = value.trim().toLowerCase();
   return normalized === '1' || normalized === 'true' || normalized === 'yes';
 };
 
-const envNumber = (value: string | undefined, fallback: number): number => {
+export const envNumber = (value: string | undefined, fallback: number): number => {
   if (!value) return fallback;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;

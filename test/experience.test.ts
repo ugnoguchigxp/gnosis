@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from 'bun:test';
-import { saveExperience, recallExperienceLessons } from '../src/services/experience';
+import { recallExperienceLessons, saveExperience } from '../src/services/experience';
 
 // memory.js の generateEmbedding をモック
 mock.module('../src/services/memory.js', () => ({
@@ -19,6 +19,7 @@ describe('experience service', () => {
 
       const mockDb = {
         insert: mockInsert,
+        // biome-ignore lint/suspicious/noExplicitAny: <explanation>
       } as any;
 
       const input = {
@@ -32,33 +33,40 @@ describe('experience service', () => {
 
       const result = await saveExperience(input, mockDb);
 
-      expect(result).toEqual(mockReturning[0]);
+      // biome-ignore lint/suspicious/noExplicitAny: <explanation>
+      expect(result).toEqual(mockReturning[0] as any);
       expect(mockInsert).toHaveBeenCalled();
-      const insertArgs = mockValues.mock.calls[0][0];
+      // biome-ignore lint/suspicious/noExplicitAny: <explanation>
+      const insertArgs = (mockValues.mock.calls as any)[0][0];
       expect(insertArgs.content).toBe('success');
       expect(insertArgs.embedding).toEqual([0.1, 0.2, 0.3]);
       expect(insertArgs.metadata).toEqual({ foo: 'bar' });
     });
 
     it('uses empty metadata if not provided', async () => {
-        const mockValues = mock(() => ({
-          returning: async () => [{}],
-        }));
-        const mockDb = {
-          insert: mock(() => ({ values: mockValues })),
-        } as any;
-  
-        await saveExperience({
+      const mockValues = mock(() => ({
+        returning: async () => [{}],
+      }));
+      const mockDb = {
+        insert: mock(() => ({ values: mockValues })),
+        // biome-ignore lint/suspicious/noExplicitAny: <explanation>
+      } as any;
+
+      await saveExperience(
+        {
           sessionId: 's1',
           scenarioId: 'sc1',
           attempt: 1,
           type: 'failure',
           content: 'fail',
-        }, mockDb);
-  
-        const insertArgs = mockValues.mock.calls[0][0];
-        expect(insertArgs.metadata).toEqual({});
-      });
+        },
+        mockDb,
+      );
+
+      // biome-ignore lint/suspicious/noExplicitAny: <explanation>
+      const insertArgs = (mockValues.mock.calls as any)[0][0];
+      expect(insertArgs.metadata).toEqual({});
+    });
   });
 
   describe('recallExperienceLessons', () => {
@@ -73,6 +81,7 @@ describe('experience service', () => {
             }),
           }),
         }),
+        // biome-ignore lint/suspicious/noExplicitAny: <explanation>
       } as any;
 
       const lessons = await recallExperienceLessons('s1', 'query', 5, mockDb);
@@ -80,12 +89,8 @@ describe('experience service', () => {
     });
 
     it('recalls failures and their related solutions', async () => {
-      const mockFailures = [
-        { id: 'f1', scenarioId: 'sc1', content: 'fail 1', similarity: 0.9 },
-      ];
-      const mockSolutions = [
-        { id: 's1', content: 'solution 1', createdAt: new Date() },
-      ];
+      const mockFailures = [{ id: 'f1', scenarioId: 'sc1', content: 'fail 1', similarity: 0.9 }];
+      const mockSolutions = [{ id: 's1', content: 'solution 1', createdAt: new Date() }];
 
       // 最初の select (failures) と、その後の map 内での select (solutions) をモック
       let callCount = 0;
@@ -97,7 +102,7 @@ describe('experience service', () => {
                 if (callCount === 0) {
                   callCount++;
                   return {
-                    limit: mock(async () => mockFailures)
+                    limit: mock(async () => mockFailures),
                   };
                 }
                 return mockSolutions; // Promise.all 内の方は直接 Promise (または async/await で解決される値) を返すマナーにする
@@ -105,6 +110,7 @@ describe('experience service', () => {
             })),
           })),
         })),
+        // biome-ignore lint/suspicious/noExplicitAny: <explanation>
       } as any;
 
       // Promise.all 内の solutions 取得部分の select チェーンを考慮して再定義
@@ -112,10 +118,10 @@ describe('experience service', () => {
         select: () => ({
           from: () => ({
             where: () => ({
-              orderBy: async () => mockSolutions
-            })
-          })
-        })
+              orderBy: async () => mockSolutions,
+            }),
+          }),
+        }),
       };
 
       const lessons = await recallExperienceLessons('s1', 'query', 2, mockDb);
@@ -133,11 +139,12 @@ describe('experience service', () => {
           from: () => ({
             where: () => ({
               orderBy: () => ({
-                limit: mockLimit
+                limit: mockLimit,
               }),
             }),
           }),
         }),
+        // biome-ignore lint/suspicious/noExplicitAny: <explanation>
       } as any;
 
       // limit = 0 -> default 5
@@ -145,7 +152,7 @@ describe('experience service', () => {
       expect(mockLimit).toHaveBeenCalledWith(5);
 
       // limit = NaN -> default 5
-      await recallExperienceLessons('s1', 'query', NaN, mockDb);
+      await recallExperienceLessons('s1', 'query', Number.NaN, mockDb);
       expect(mockLimit).toHaveBeenCalledWith(5);
 
       // limit = -1 -> default 5

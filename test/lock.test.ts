@@ -1,4 +1,4 @@
-import { describe, expect, it, mock, beforeEach } from 'bun:test';
+import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import { withGlobalLock } from '../src/utils/lock';
 
 // mock 化したい関数を個別に定義
@@ -49,7 +49,7 @@ describe('lock utility', () => {
       if (calls === 0) {
         calls++;
         const err = new Error('EEXIST');
-        (err as any).code = 'EEXIST';
+        Object.defineProperty(err, 'code', { value: 'EEXIST' });
         throw err;
       }
       return 124;
@@ -66,13 +66,16 @@ describe('lock utility', () => {
   it('throws error if timeout is reached', async () => {
     mockOpenSync.mockImplementation(() => {
       const err = new Error('EEXIST');
+      // biome-ignore lint/suspicious/noExplicitAny: <explanation>
       (err as any).code = 'EEXIST';
       throw err;
     });
     mockExistsSync.mockReturnValue(false); // タイムアウト判定用
 
     // 非常に短いタイムアウトを設定
-    await expect(withGlobalLock('timeout-test', async () => 'bad', 10)).rejects.toThrow(/Global lock timeout/);
+    await expect(withGlobalLock('timeout-test', async () => 'bad', 10)).rejects.toThrow(
+      /Global lock timeout/,
+    );
   });
 
   it('releases lock even if inner function fails', async () => {
@@ -80,11 +83,11 @@ describe('lock utility', () => {
     mockExistsSync.mockReturnValue(true);
 
     try {
-        await withGlobalLock('error-test', async () => {
-            throw new Error('inner failure');
-        });
+      await withGlobalLock('error-test', async () => {
+        throw new Error('inner failure');
+      });
     } catch (e) {
-        // ignore
+      // ignore
     }
 
     expect(mockUnlinkSync).toHaveBeenCalled();
@@ -92,9 +95,11 @@ describe('lock utility', () => {
 
   it('rethrows unexpected errors from openSync', async () => {
     mockOpenSync.mockImplementation(() => {
-        throw new Error('Unexpected FS error');
+      throw new Error('Unexpected FS error');
     });
 
-    await expect(withGlobalLock('fail-test', async () => 'no')).rejects.toThrow('Unexpected FS error');
+    await expect(withGlobalLock('fail-test', async () => 'no')).rejects.toThrow(
+      'Unexpected FS error',
+    );
   });
 });
