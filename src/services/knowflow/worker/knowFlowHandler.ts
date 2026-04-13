@@ -1,5 +1,5 @@
 import { type LlmLogEvent, runLlmTask } from '../../../adapters/llm.js';
-import type { McpRetriever } from '../../../adapters/retriever/mcpRetriever.js';
+import type { Retriever } from '../../../adapters/retriever/mcpRetriever.js';
 import { type BudgetConfig, type LlmClientConfig, config } from '../../../config.js';
 import type { TopicTask } from '../domain/task';
 import { runCronFlow } from '../flows/cronFlow';
@@ -34,7 +34,7 @@ export type CreateKnowFlowTaskHandlerOptions = {
 };
 
 export const createMcpEvidenceProvider = (
-  retriever: McpRetriever,
+  retriever: Retriever,
   options?: {
     logger?: StructuredLogger;
     llmConfig?: Partial<LlmClientConfig>;

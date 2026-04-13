@@ -7,7 +7,17 @@
   },
   "files": {
     "ignoreUnknown": false,
-    "ignore": ["node_modules", "dist", ".bun"]
+    "ignore": [
+      "node_modules",
+      "dist",
+      ".bun",
+      "apps/monitor/build",
+      "apps/monitor/.svelte-kit",
+      ".svelte-kit",
+      "services/**/models",
+      "services/**/.venv",
+      "services/**/__pycache__"
+    ]
   },
   "formatter": {
     "enabled": true,

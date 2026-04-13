@@ -20,7 +20,8 @@
     "lint": "biome check .",
     "format": "biome format --write .",
     "smoke": "bun run scripts/smoke.ts",
-    "verify": "bun run scripts/verify.ts"
+    "verify": "bun run scripts/verify.ts",
+    "monorepo:setup": "./scripts/setup-services.sh"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

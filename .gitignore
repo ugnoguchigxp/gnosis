@@ -18,3 +18,9 @@ imports/
 test_guidance/
 # TypeScript
 *.tsbuildinfo
+ 
+# Services
+services/**/models/
+services/**/.venv/
+services/**/__pycache__/
+services/**/*.egg-info/

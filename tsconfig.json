@@ -15,5 +15,6 @@
     "forceConsistentCasingInFileNames": true,
     "allowJs": true,
     "types": ["bun-types"]
-  }
+  },
+  "exclude": ["node_modules", "dist", "apps/monitor/build", "apps/monitor/.svelte-kit", ".bun"]
 }

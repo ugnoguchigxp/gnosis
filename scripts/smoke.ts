@@ -18,10 +18,11 @@ const runCommand = (command: string, args: string[]): Promise<void> =>
 
 const run = async () => {
   const maxDegradedRate = process.env.KNOWFLOW_MAX_DEGRADED_RATE?.trim() || '0';
+  const bun = process.argv[0];
   const steps: Array<{ name: string; command: string; args: string[] }> = [
     {
       name: 'knowflow enqueue dry-run',
-      command: 'bun',
+      command: bun,
       args: [
         'src/services/knowflow/cli.ts',
         'enqueue',
@@ -33,7 +34,7 @@ const run = async () => {
     },
     {
       name: 'knowflow merge dry-run',
-      command: 'bun',
+      command: bun,
       args: [
         'src/services/knowflow/cli.ts',
         'merge-knowledge',
@@ -45,7 +46,7 @@ const run = async () => {
     },
     {
       name: 'knowflow eval local suite (mock)',
-      command: 'bun',
+      command: bun,
       args: [
         'src/services/knowflow/cli.ts',
         'eval-run',

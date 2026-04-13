@@ -1,4 +1,4 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { desc, eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
@@ -159,9 +159,7 @@ const run = async (): Promise<void> => {
   }
 
   const logsRootArg = readStringFlag(args, 'logs-root');
-  const logsRoot = logsRootArg
-    ? resolve(logsRootArg)
-    : resolve(process.cwd(), 'logs', 'runs');
+  const logsRoot = logsRootArg ? resolve(logsRootArg) : resolve(process.cwd(), 'logs', 'runs');
   const fileLimit = readNumberFlag(args, 'file-limit') ?? FALLBACK_FILE_LIMIT;
   const snippetLimit = readNumberFlag(args, 'snippet-limit') ?? FALLBACK_SNIPPET_LIMIT;
 

@@ -1,302 +1,302 @@
 <script lang="ts">
-	import { invoke } from '@tauri-apps/api/core';
-	import { onMount } from 'svelte';
-	import { MonitorWsClient } from '$lib/monitor/client';
-	import { createDetailRequestGuard } from '$lib/monitor/detailRequestGuard';
-	import type {
-		ConnectionStatus,
-		MonitorConfigResponse,
-		MonitorSnapshotData,
-		TaskDetailPayload,
-		TaskIndexEntry,
-		TimelineEvent
-	} from '$lib/monitor/types';
+import { MonitorWsClient } from '$lib/monitor/client';
+import { createDetailRequestGuard } from '$lib/monitor/detailRequestGuard';
+import type {
+  ConnectionStatus,
+  MonitorConfigResponse,
+  MonitorSnapshotData,
+  TaskDetailPayload,
+  TaskIndexEntry,
+  TimelineEvent,
+} from '$lib/monitor/types';
+import { invoke } from '@tauri-apps/api/core';
+import { onMount } from 'svelte';
 
-	type TimelineStatus = 'done' | 'failed' | 'deferred' | 'degraded' | 'unknown';
-	type EnrichedTimelineEvent = TimelineEvent & {
-		status: TimelineStatus;
-		source: string | null;
-		topic: string | null;
-	};
+type TimelineStatus = 'done' | 'failed' | 'deferred' | 'degraded' | 'unknown';
+type EnrichedTimelineEvent = TimelineEvent & {
+  status: TimelineStatus;
+  source: string | null;
+  topic: string | null;
+};
 
-	const TIMELINE_PAGE_SIZE = 20;
-	const TIMELINE_MAX_PAGES = 10;
-	const TIMELINE_BUFFER_LIMIT = TIMELINE_PAGE_SIZE * TIMELINE_MAX_PAGES;
-	const DETAIL_CACHE_LIMIT = 50;
+const TIMELINE_PAGE_SIZE = 20;
+const TIMELINE_MAX_PAGES = 10;
+const TIMELINE_BUFFER_LIMIT = TIMELINE_PAGE_SIZE * TIMELINE_MAX_PAGES;
+const DETAIL_CACHE_LIMIT = 50;
 
-	const createInitialSnapshot = (): MonitorSnapshotData => ({
-		queue: {
-			pending: 0,
-			running: 0,
-			deferred: 0,
-			failed: 0
-		},
-		worker: {
-			lastSuccessTs: null,
-			lastFailureTs: null,
-			consecutiveFailures: 0
-		},
-		eval: {
-			degradedRate: 0,
-			passed: 0,
-			failed: 0,
-			updatedAtTs: null
-		},
-		taskIndex: []
-	});
+const createInitialSnapshot = (): MonitorSnapshotData => ({
+  queue: {
+    pending: 0,
+    running: 0,
+    deferred: 0,
+    failed: 0,
+  },
+  worker: {
+    lastSuccessTs: null,
+    lastFailureTs: null,
+    consecutiveFailures: 0,
+  },
+  eval: {
+    degradedRate: 0,
+    passed: 0,
+    failed: 0,
+    updatedAtTs: null,
+  },
+  taskIndex: [],
+});
 
-	let snapshot = $state<MonitorSnapshotData>(createInitialSnapshot());
-	let timeline = $state<TimelineEvent[]>([]);
-	let connectionStatus = $state<ConnectionStatus>('offline');
-	let autoUpdate = $state(true);
-	let currentTimelinePage = $state(1);
-	let statusFilter = $state<'all' | TimelineStatus>('all');
-	let sourceFilter = $state<'all' | string>('all');
-	let topicFilter = $state('');
-	let lastSnapshotTs = $state<number | null>(null);
-	let errorMessage = $state<string | null>(null);
-	let wsUrl = $state<string>('');
+let snapshot = $state<MonitorSnapshotData>(createInitialSnapshot());
+let timeline = $state<TimelineEvent[]>([]);
+let connectionStatus = $state<ConnectionStatus>('offline');
+const autoUpdate = $state(true);
+let currentTimelinePage = $state(1);
+const statusFilter = $state<'all' | TimelineStatus>('all');
+const sourceFilter = $state<'all' | string>('all');
+const topicFilter = $state('');
+let lastSnapshotTs = $state<number | null>(null);
+let errorMessage = $state<string | null>(null);
+let wsUrl = $state<string>('');
 
-	let detailOpen = $state(false);
-	let selectedEvent = $state<EnrichedTimelineEvent | null>(null);
-	let selectedDetail = $state<TaskDetailPayload | null>(null);
-	let detailLoading = $state(false);
-	let detailError = $state<string | null>(null);
+let detailOpen = $state(false);
+let selectedEvent = $state<EnrichedTimelineEvent | null>(null);
+let selectedDetail = $state<TaskDetailPayload | null>(null);
+let detailLoading = $state(false);
+let detailError = $state<string | null>(null);
 
-	const detailCache = new Map<string, TaskDetailPayload>();
-	const detailCacheOrder: string[] = [];
-	const detailRequestGuard = createDetailRequestGuard();
+const detailCache = new Map<string, TaskDetailPayload>();
+const detailCacheOrder: string[] = [];
+const detailRequestGuard = createDetailRequestGuard();
 
-	const statusClass = $derived(connectionStatus);
-	const taskIndexMap = $derived.by(() => {
-		const map = new Map<string, TaskIndexEntry>();
-		for (const item of snapshot.taskIndex) {
-			map.set(item.taskId, item);
-		}
-		return map;
-	});
-	const sourceOptions = $derived.by(() => {
-		const sourceSet = new Set<string>();
-		for (const item of snapshot.taskIndex) {
-			if (item.source) {
-				sourceSet.add(item.source);
-			}
-		}
-		return [...sourceSet].sort();
-	});
+const statusClass = $derived(connectionStatus);
+const taskIndexMap = $derived.by(() => {
+  const map = new Map<string, TaskIndexEntry>();
+  for (const item of snapshot.taskIndex) {
+    map.set(item.taskId, item);
+  }
+  return map;
+});
+const sourceOptions = $derived.by(() => {
+  const sourceSet = new Set<string>();
+  for (const item of snapshot.taskIndex) {
+    if (item.source) {
+      sourceSet.add(item.source);
+    }
+  }
+  return [...sourceSet].sort();
+});
 
-	const normalizeStatus = (kind: string): TimelineStatus => {
-		if (kind === 'task.done') return 'done';
-		if (kind === 'task.failed') return 'failed';
-		if (kind === 'task.deferred') return 'deferred';
-		if (kind === 'llm.task.degraded') return 'degraded';
-		return 'unknown';
-	};
+const normalizeStatus = (kind: string): TimelineStatus => {
+  if (kind === 'task.done') return 'done';
+  if (kind === 'task.failed') return 'failed';
+  if (kind === 'task.deferred') return 'deferred';
+  if (kind === 'llm.task.degraded') return 'degraded';
+  return 'unknown';
+};
 
-	const filteredTimeline = $derived.by(() => {
-		const loweredTopic = topicFilter.trim().toLowerCase();
-		const result: EnrichedTimelineEvent[] = [];
+const filteredTimeline = $derived.by(() => {
+  const loweredTopic = topicFilter.trim().toLowerCase();
+  const result: EnrichedTimelineEvent[] = [];
 
-		for (let index = timeline.length - 1; index >= 0; index -= 1) {
-			const event = timeline[index];
-			const taskIndex = event.taskId ? taskIndexMap.get(event.taskId) : undefined;
-			const enrichedEvent: EnrichedTimelineEvent = {
-				...event,
-				status: normalizeStatus(event.kind),
-				source: taskIndex?.source ?? null,
-				topic: taskIndex?.topic ?? null
-			};
+  for (let index = timeline.length - 1; index >= 0; index -= 1) {
+    const event = timeline[index];
+    const taskIndex = event.taskId ? taskIndexMap.get(event.taskId) : undefined;
+    const enrichedEvent: EnrichedTimelineEvent = {
+      ...event,
+      status: normalizeStatus(event.kind),
+      source: taskIndex?.source ?? null,
+      topic: taskIndex?.topic ?? null,
+    };
 
-			if (statusFilter !== 'all' && enrichedEvent.status !== statusFilter) {
-				continue;
-			}
-			if (sourceFilter !== 'all' && enrichedEvent.source !== sourceFilter) {
-				continue;
-			}
-			if (loweredTopic.length > 0) {
-				const topic = enrichedEvent.topic?.toLowerCase() ?? '';
-				if (!topic.includes(loweredTopic)) {
-					continue;
-				}
-			}
+    if (statusFilter !== 'all' && enrichedEvent.status !== statusFilter) {
+      continue;
+    }
+    if (sourceFilter !== 'all' && enrichedEvent.source !== sourceFilter) {
+      continue;
+    }
+    if (loweredTopic.length > 0) {
+      const topic = enrichedEvent.topic?.toLowerCase() ?? '';
+      if (!topic.includes(loweredTopic)) {
+        continue;
+      }
+    }
 
-			result.push(enrichedEvent);
-		}
+    result.push(enrichedEvent);
+  }
 
-		return result;
-	});
-	const totalTimelinePages = $derived.by(() =>
-		Math.max(1, Math.ceil(filteredTimeline.length / TIMELINE_PAGE_SIZE))
-	);
-	const activeTimelinePage = $derived.by(() =>
-		Math.min(Math.max(currentTimelinePage, 1), totalTimelinePages)
-	);
-	const timelineDisplay = $derived.by(() => {
-		const startIndex = (activeTimelinePage - 1) * TIMELINE_PAGE_SIZE;
-		return filteredTimeline.slice(startIndex, startIndex + TIMELINE_PAGE_SIZE);
-	});
+  return result;
+});
+const totalTimelinePages = $derived.by(() =>
+  Math.max(1, Math.ceil(filteredTimeline.length / TIMELINE_PAGE_SIZE)),
+);
+const activeTimelinePage = $derived.by(() =>
+  Math.min(Math.max(currentTimelinePage, 1), totalTimelinePages),
+);
+const timelineDisplay = $derived.by(() => {
+  const startIndex = (activeTimelinePage - 1) * TIMELINE_PAGE_SIZE;
+  return filteredTimeline.slice(startIndex, startIndex + TIMELINE_PAGE_SIZE);
+});
 
-	let client: MonitorWsClient | null = null;
+let client: MonitorWsClient | null = null;
 
-	const formatTime = (ts: number | null | undefined): string => {
-		if (!ts) {
-			return '-';
-		}
-		return new Date(ts).toLocaleString('ja-JP', { hour12: false });
-	};
+const formatTime = (ts: number | null | undefined): string => {
+  if (!ts) {
+    return '-';
+  }
+  return new Date(ts).toLocaleString('ja-JP', { hour12: false });
+};
 
-	const eventDetail = (event: TimelineEvent): string => {
-		return event.errorReason ?? event.resultSummary ?? event.message ?? '-';
-	};
+const eventDetail = (event: TimelineEvent): string => {
+  return event.errorReason ?? event.resultSummary ?? event.message ?? '-';
+};
 
-	const applyTimelineEvent = (event: TimelineEvent): void => {
-		timeline = [...timeline, event].slice(-TIMELINE_BUFFER_LIMIT);
-	};
+const applyTimelineEvent = (event: TimelineEvent): void => {
+  timeline = [...timeline, event].slice(-TIMELINE_BUFFER_LIMIT);
+};
 
-	const cacheDetail = (taskId: string, detail: TaskDetailPayload): void => {
-		detailCache.set(taskId, detail);
-		const existingIndex = detailCacheOrder.indexOf(taskId);
-		if (existingIndex >= 0) {
-			detailCacheOrder.splice(existingIndex, 1);
-		}
-		detailCacheOrder.push(taskId);
+const cacheDetail = (taskId: string, detail: TaskDetailPayload): void => {
+  detailCache.set(taskId, detail);
+  const existingIndex = detailCacheOrder.indexOf(taskId);
+  if (existingIndex >= 0) {
+    detailCacheOrder.splice(existingIndex, 1);
+  }
+  detailCacheOrder.push(taskId);
 
-		while (detailCacheOrder.length > DETAIL_CACHE_LIMIT) {
-			const oldest = detailCacheOrder.shift();
-			if (oldest) {
-				detailCache.delete(oldest);
-			}
-		}
-	};
+  while (detailCacheOrder.length > DETAIL_CACHE_LIMIT) {
+    const oldest = detailCacheOrder.shift();
+    if (oldest) {
+      detailCache.delete(oldest);
+    }
+  }
+};
 
-	const loadTaskDetail = async (taskId: string, requestSeq: number): Promise<void> => {
-		detailLoading = true;
-		detailError = null;
+const loadTaskDetail = async (taskId: string, requestSeq: number): Promise<void> => {
+  detailLoading = true;
+  detailError = null;
 
-		try {
-			const cached = detailCache.get(taskId);
-			if (cached) {
-				if (detailRequestGuard.isCurrent(requestSeq)) {
-					selectedDetail = cached;
-				}
-				return;
-			}
+  try {
+    const cached = detailCache.get(taskId);
+    if (cached) {
+      if (detailRequestGuard.isCurrent(requestSeq)) {
+        selectedDetail = cached;
+      }
+      return;
+    }
 
-			const detail = await invoke<TaskDetailPayload>('monitor_task_detail', {
-				taskId,
-				task_id: taskId
-			});
-			if (detailRequestGuard.isCurrent(requestSeq)) {
-				cacheDetail(taskId, detail);
-				selectedDetail = detail;
-			}
-		} catch (error) {
-			if (detailRequestGuard.isCurrent(requestSeq)) {
-				detailError = error instanceof Error ? error.message : String(error);
-				selectedDetail = null;
-			}
-		} finally {
-			if (detailRequestGuard.isCurrent(requestSeq)) {
-				detailLoading = false;
-			}
-		}
-	};
+    const detail = await invoke<TaskDetailPayload>('monitor_task_detail', {
+      taskId,
+      task_id: taskId,
+    });
+    if (detailRequestGuard.isCurrent(requestSeq)) {
+      cacheDetail(taskId, detail);
+      selectedDetail = detail;
+    }
+  } catch (error) {
+    if (detailRequestGuard.isCurrent(requestSeq)) {
+      detailError = error instanceof Error ? error.message : String(error);
+      selectedDetail = null;
+    }
+  } finally {
+    if (detailRequestGuard.isCurrent(requestSeq)) {
+      detailLoading = false;
+    }
+  }
+};
 
-	const openDetail = async (event: EnrichedTimelineEvent): Promise<void> => {
-		const requestSeq = detailRequestGuard.next();
-		selectedEvent = event;
-		detailOpen = true;
-		detailError = null;
-		selectedDetail = null;
+const openDetail = async (event: EnrichedTimelineEvent): Promise<void> => {
+  const requestSeq = detailRequestGuard.next();
+  selectedEvent = event;
+  detailOpen = true;
+  detailError = null;
+  selectedDetail = null;
 
-		if (!event.taskId) {
-			return;
-		}
+  if (!event.taskId) {
+    return;
+  }
 
-		await loadTaskDetail(event.taskId, requestSeq);
-	};
+  await loadTaskDetail(event.taskId, requestSeq);
+};
 
-	const closeDetail = (): void => {
-		detailRequestGuard.invalidate();
-		detailOpen = false;
-		selectedEvent = null;
-		selectedDetail = null;
-		detailError = null;
-		detailLoading = false;
-	};
+const closeDetail = (): void => {
+  detailRequestGuard.invalidate();
+  detailOpen = false;
+  selectedEvent = null;
+  selectedDetail = null;
+  detailError = null;
+  detailLoading = false;
+};
 
-	const initialize = async (): Promise<void> => {
-		try {
-			const config = await invoke<MonitorConfigResponse>('monitor_config');
-			wsUrl = config.wsUrl;
-			errorMessage = null;
+const initialize = async (): Promise<void> => {
+  try {
+    const config = await invoke<MonitorConfigResponse>('monitor_config');
+    wsUrl = config.wsUrl;
+    errorMessage = null;
 
-			client = new MonitorWsClient({
-				callbacks: {
-					onSnapshot: (nextSnapshot, ts) => {
-						if (!autoUpdate) return;
-						snapshot = nextSnapshot;
-						lastSnapshotTs = ts;
-					},
-					onEvent: (event) => {
-						if (!autoUpdate) return;
-						applyTimelineEvent(event);
-					},
-					onStatus: (status) => {
-						connectionStatus = status;
-					},
-					onError: (message) => {
-						errorMessage = message;
-					},
-					shouldApplyUpdates: () => autoUpdate
-				}
-			});
+    client = new MonitorWsClient({
+      callbacks: {
+        onSnapshot: (nextSnapshot, ts) => {
+          if (!autoUpdate) return;
+          snapshot = nextSnapshot;
+          lastSnapshotTs = ts;
+        },
+        onEvent: (event) => {
+          if (!autoUpdate) return;
+          applyTimelineEvent(event);
+        },
+        onStatus: (status) => {
+          connectionStatus = status;
+        },
+        onError: (message) => {
+          errorMessage = message;
+        },
+        shouldApplyUpdates: () => autoUpdate,
+      },
+    });
 
-			client.start(config.wsUrl);
-		} catch (error) {
-			connectionStatus = 'offline';
-			errorMessage = error instanceof Error ? error.message : String(error);
-		}
-	};
+    client.start(config.wsUrl);
+  } catch (error) {
+    connectionStatus = 'offline';
+    errorMessage = error instanceof Error ? error.message : String(error);
+  }
+};
 
-	const onAutoUpdateChange = (): void => {
-		if (autoUpdate) {
-			client?.reconnectNow();
-		}
-	};
-	const goToNextTimelinePage = (): void => {
-		if (activeTimelinePage < totalTimelinePages) {
-			currentTimelinePage = activeTimelinePage + 1;
-		}
-	};
-	const goToPreviousTimelinePage = (): void => {
-		if (activeTimelinePage > 1) {
-			currentTimelinePage = activeTimelinePage - 1;
-		}
-	};
+const onAutoUpdateChange = (): void => {
+  if (autoUpdate) {
+    client?.reconnectNow();
+  }
+};
+const goToNextTimelinePage = (): void => {
+  if (activeTimelinePage < totalTimelinePages) {
+    currentTimelinePage = activeTimelinePage + 1;
+  }
+};
+const goToPreviousTimelinePage = (): void => {
+  if (activeTimelinePage > 1) {
+    currentTimelinePage = activeTimelinePage - 1;
+  }
+};
 
-	$effect(() => {
-		statusFilter;
-		sourceFilter;
-		topicFilter;
-		currentTimelinePage = 1;
-	});
+$effect(() => {
+  statusFilter;
+  sourceFilter;
+  topicFilter;
+  currentTimelinePage = 1;
+});
 
-	$effect(() => {
-		if (currentTimelinePage > totalTimelinePages) {
-			currentTimelinePage = totalTimelinePages;
-		}
-		if (currentTimelinePage < 1) {
-			currentTimelinePage = 1;
-		}
-	});
+$effect(() => {
+  if (currentTimelinePage > totalTimelinePages) {
+    currentTimelinePage = totalTimelinePages;
+  }
+  if (currentTimelinePage < 1) {
+    currentTimelinePage = 1;
+  }
+});
 
-	onMount(() => {
-		void initialize();
-		return () => {
-			client?.stop();
-		};
-	});
+onMount(() => {
+  void initialize();
+  return () => {
+    client?.stop();
+  };
+});
 </script>
 
 <main>

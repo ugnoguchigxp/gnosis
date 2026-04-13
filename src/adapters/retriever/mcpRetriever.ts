@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { config } from '../../config.js';
 
 export type McpRetrieverOptions = {
   pythonPath: string;
@@ -54,7 +55,21 @@ const extractTextContent = (result: unknown): string => {
   return text;
 };
 
-export class McpRetriever {
+export interface Retriever {
+  search(query: string): Promise<string>;
+  fetch(url: string): Promise<string>;
+}
+
+export class MockRetriever implements Retriever {
+  async search(query: string): Promise<string> {
+    return `Mock search result for: ${query}. (Mock mode active)`;
+  }
+  async fetch(url: string): Promise<string> {
+    return `Mock content for URL: ${url}. (Mock mode active)`;
+  }
+}
+
+export class McpRetriever implements Retriever {
   private client: Client | null = null;
   private transport: StdioClientTransport | null = null;
 
@@ -122,7 +137,10 @@ export class McpRetriever {
 /**
  * localLlmのMCPサーバーを起動するためのヘルパー
  */
-export const createLocalLlmRetriever = (baseDir: string): McpRetriever => {
+export const createLocalLlmRetriever = (baseDir: string): Retriever => {
+  if (config.mockRetriever) {
+    return new MockRetriever();
+  }
   const pythonPath = resolve(baseDir, '.venv/bin/python');
   const serverScriptPath = resolve(baseDir, 'mcp/tools_server.py');
   return new McpRetriever({

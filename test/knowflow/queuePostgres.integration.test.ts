@@ -6,6 +6,12 @@ import { Pool } from 'pg';
 const connectionString = process.env.QUEUE_POSTGRES_URL ?? process.env.DATABASE_URL;
 const shouldRunIntegration = process.env.KNOWFLOW_RUN_INTEGRATION === '1' && !!connectionString;
 
+if (!shouldRunIntegration) {
+  console.warn(
+    '\x1b[33m[skip] Skipping PostgreSQL integration tests. Set KNOWFLOW_RUN_INTEGRATION=1 and DATABASE_URL to run them.\x1b[0m',
+  );
+}
+
 const describeIntegration = shouldRunIntegration ? describe : describe.skip;
 
 describeIntegration('postgres queue integration', () => {

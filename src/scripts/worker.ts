@@ -21,9 +21,8 @@ async function main() {
   const queueRepository = new PgJsonbQueueRepository();
   const knowledgeRepository = new PgKnowledgeRepository();
 
-  // localLlm のパス解決（プロジェクトルートからの相対パスを想定）
-  const localLlmPath = resolve(process.cwd(), '../localLlm');
-  const retriever = createLocalLlmRetriever(localLlmPath);
+  // localLlm のパス解決 (config を使用)
+  const retriever = createLocalLlmRetriever(config.localLlmPath);
 
   const evidenceProvider = createMcpEvidenceProvider(retriever, {
     logger,

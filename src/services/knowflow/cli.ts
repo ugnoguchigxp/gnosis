@@ -126,7 +126,9 @@ const run = async () => {
     const profilePath = profileInfo?.path;
 
     const localLlmPath =
-      readStringFlag(args, 'local-llm-path') ?? profileInfo?.profile.localLlmPath;
+      readStringFlag(args, 'local-llm-path') ??
+      profileInfo?.profile.localLlmPath ??
+      config.localLlmPath;
     const llmConfig = mergeLlmConfig(config.knowflow.llm, profileInfo?.profile.knowflow?.llm);
     const budgetConfig = mergeBudgetConfig(
       config.knowflow.budget,

@@ -63,17 +63,33 @@ export type WorkerConfig = z.infer<typeof WorkerConfigSchema>;
  * プロジェクト全体の設定管理
  */
 export const config = {
-  // LLM スクリプトのパス (gemma4, bonsai 等に使用)
-  llmScript: process.env.GNOSIS_LLM_SCRIPT || 'gemma4',
-
   // localLlm プロジェクトのルートパス (MCP Retriever用)
-  localLlmPath: process.env.GNOSIS_LOCAL_LLM_PATH || '',
+  localLlmPath:
+    process.env.GNOSIS_LOCAL_LLM_PATH || path.resolve(process.cwd(), 'services/local-llm'),
+
+  // LLM スクリプトのフルパス (個別コマンド)
+  gemma4Script:
+    process.env.GNOSIS_GEMMA4_SCRIPT ||
+    path.resolve(process.cwd(), 'services/local-llm/scripts/gemma4'),
+  bonsaiScript:
+    process.env.GNOSIS_BONSAI_SCRIPT ||
+    path.resolve(process.cwd(), 'services/local-llm/scripts/bonsai'),
+
+  // 現在使用する LLM スクリプト (デフォルト: gemma4)
+  llmScript:
+    process.env.GNOSIS_LLM_SCRIPT ||
+    path.resolve(process.cwd(), 'services/local-llm/scripts/gemma4'),
+
+  // モックRetrieverを使用するかどうか
+  mockRetriever: envBoolean(process.env.GNOSIS_MOCK_RETRIEVER, false),
 
   // エンティティ抽出/マージ時のタイムアウト (ms)
   llmTimeoutMs: envNumber(process.env.GNOSIS_LLM_TIMEOUT_MS, 90_000),
 
-  // 埋め込みベクトルの生成コマンド
-  embedCommand: process.env.GNOSIS_EMBED_COMMAND || 'embed',
+  // 埋め込みベクトルの生成コマンド (フルパス)
+  embedCommand:
+    process.env.GNOSIS_EMBED_COMMAND ||
+    path.resolve(process.cwd(), 'services/embedding/.venv/bin/embed'),
   embedTimeoutMs: Math.max(1, envNumber(process.env.GNOSIS_EMBED_TIMEOUT_MS, 30_000)),
 
   // Bun バイナリのパス
