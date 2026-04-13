@@ -48,11 +48,11 @@ const createInitialSnapshot = (): MonitorSnapshotData => ({
 let snapshot = $state<MonitorSnapshotData>(createInitialSnapshot());
 let timeline = $state<TimelineEvent[]>([]);
 let connectionStatus = $state<ConnectionStatus>('offline');
-const autoUpdate = $state(true);
+let autoUpdate = $state(true);
 let currentTimelinePage = $state(1);
-const statusFilter = $state<'all' | TimelineStatus>('all');
-const sourceFilter = $state<'all' | string>('all');
-const topicFilter = $state('');
+let statusFilter = $state<'all' | TimelineStatus>('all');
+let sourceFilter = $state<'all' | string>('all');
+let topicFilter = $state('');
 let lastSnapshotTs = $state<number | null>(null);
 let errorMessage = $state<string | null>(null);
 let wsUrl = $state<string>('');
@@ -62,6 +62,14 @@ let selectedEvent = $state<EnrichedTimelineEvent | null>(null);
 let selectedDetail = $state<TaskDetailPayload | null>(null);
 let detailLoading = $state(false);
 let detailError = $state<string | null>(null);
+
+let enqueueOpen = $state(false);
+let enqueueTopic = $state('');
+let enqueueMode = $state<'directed' | 'expand' | 'explore'>('directed');
+let enqueuePriority = $state(50);
+let enqueueLoading = $state(false);
+let enqueueError = $state<string | null>(null);
+let enqueueSuccess = $state<string | null>(null);
 
 const detailCache = new Map<string, TaskDetailPayload>();
 const detailCacheOrder: string[] = [];
@@ -225,6 +233,49 @@ const closeDetail = (): void => {
   detailLoading = false;
 };
 
+const openEnqueueDialog = (): void => {
+  enqueueOpen = true;
+  enqueueTopic = '';
+  enqueueMode = 'directed';
+  enqueuePriority = 50;
+  enqueueError = null;
+  enqueueSuccess = null;
+};
+
+const closeEnqueueDialog = (): void => {
+  enqueueOpen = false;
+  enqueueTopic = '';
+  enqueueError = null;
+  enqueueSuccess = null;
+};
+
+const submitEnqueueTask = async (): Promise<void> => {
+  if (!enqueueTopic.trim()) {
+    enqueueError = 'Topic is required';
+    return;
+  }
+  enqueueLoading = true;
+  enqueueError = null;
+  enqueueSuccess = null;
+  try {
+    const result = await invoke<{ success: boolean; taskId: string }>('monitor_enqueue_task', {
+      topic: enqueueTopic.trim(),
+      mode: enqueueMode,
+      priority: enqueuePriority,
+    });
+    if (result.success) {
+      enqueueSuccess = `Task enqueued: ${result.taskId}`;
+      setTimeout(closeEnqueueDialog, 2000);
+    } else {
+      enqueueError = 'Failed to enqueue task';
+    }
+  } catch (error) {
+    enqueueError = error instanceof Error ? error.message : String(error);
+  } finally {
+    enqueueLoading = false;
+  }
+};
+
 const initialize = async (): Promise<void> => {
   try {
     const config = await invoke<MonitorConfigResponse>('monitor_config');
@@ -305,7 +356,10 @@ onMount(() => {
 			<h1>Gnosis Monitoring</h1>
 			<div style="margin-top: 4px; font-size: 0.82rem; color: #475569;">WS: {wsUrl || '-'}</div>
 		</div>
-		<div class={`badge ${statusClass}`}>{connectionStatus}</div>
+		<div style="display: flex; gap: 8px; align-items: center;">
+			<button type="button" class="enqueue-btn" onclick={openEnqueueDialog}>+ Enqueue Task</button>
+			<div class={`badge ${statusClass}`}>{connectionStatus}</div>
+		</div>
 	</div>
 
 	<div class="panel" style="margin-bottom: 12px;">
@@ -480,3 +534,83 @@ onMount(() => {
 		</aside>
 	</div>
 {/if}
+
+{#if enqueueOpen}
+	<div class="detail-overlay">
+		<button type="button" class="detail-backdrop" onclick={closeEnqueueDialog} aria-label="close enqueue dialog"></button>
+		<aside class="detail-sheet">
+			<div class="detail-header">
+				<h2>Enqueue KnowFlow Task</h2>
+				<button type="button" onclick={closeEnqueueDialog}>Close</button>
+			</div>
+			
+			<form onsubmit={(e) => { e.preventDefault(); void submitEnqueueTask(); }} style="display: flex; flex-direction: column; gap: 16px; margin-top: 16px;">
+				<label style="display: flex; flex-direction: column; gap: 4px;">
+					<span style="font-weight: 500;">Topic *</span>
+					<input 
+						type="text" 
+						bind:value={enqueueTopic} 
+						placeholder="e.g., PostgreSQL replication" 
+						required
+						style="padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px;"
+					/>
+				</label>
+
+				<label style="display: flex; flex-direction: column; gap: 4px;">
+					<span style="font-weight: 500;">Mode</span>
+					<select bind:value={enqueueMode} style="padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px;">
+						<option value="directed">Directed (focused research)</option>
+						<option value="expand">Expand (breadth exploration)</option>
+						<option value="explore">Explore (deep dive)</option>
+					</select>
+				</label>
+
+				<label style="display: flex; flex-direction: column; gap: 4px;">
+					<span style="font-weight: 500;">Priority</span>
+					<input 
+						type="number" 
+						bind:value={enqueuePriority} 
+						min="0" 
+						max="100" 
+						style="padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px;"
+					/>
+				</label>
+
+				{#if enqueueError}
+					<div class="error-text">{enqueueError}</div>
+				{/if}
+
+				{#if enqueueSuccess}
+					<div style="color: #059669; padding: 8px 12px; background: #d1fae5; border-radius: 4px;">
+						{enqueueSuccess}
+					</div>
+				{/if}
+
+				<button 
+					type="submit" 
+					disabled={enqueueLoading || !enqueueTopic.trim()}
+					style="padding: 10px 16px; background: #3b82f6; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 500;"
+				>
+					{enqueueLoading ? 'Enqueuing...' : 'Enqueue Task'}
+				</button>
+			</form>
+		</aside>
+	</div>
+{/if}
+
+<style>
+.enqueue-btn {
+padding: 8px 16px;
+background: #10b981;
+color: white;
+border: none;
+border-radius: 8px;
+cursor: pointer;
+font-size: 0.9rem;
+font-weight: 500;
+}
+
+.enqueue-btn:hover {
+background: #059669;
+}
+</style>

@@ -15,7 +15,9 @@ const runEmbedCommand = (
   timeoutMs: number,
 ): Promise<{ stdout: string; stderr: string }> =>
   new Promise((resolve, reject) => {
-    const child = spawn(command, [text], {
+    // Text may begin with '-' (e.g. YAML frontmatter '---'), which some CLIs interpret as options.
+    // Passing '--' ensures the text is treated as a positional argument.
+    const child = spawn(command, ['--', text], {
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: false,
     });

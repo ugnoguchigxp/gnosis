@@ -27,3 +27,29 @@ pub async fn monitor_task_detail(
         .await
         .map_err(|error| error.to_string())
 }
+
+#[tauri::command]
+pub async fn monitor_graph_snapshot(
+    state: State<'_, MonitorRuntime>,
+) -> Result<serde_json::Value, String> {
+    cli::fetch_graph_snapshot(&state.project_root)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_enqueue_task(
+    state: State<'_, MonitorRuntime>,
+    topic: String,
+    mode: Option<String>,
+    priority: Option<i32>,
+) -> Result<serde_json::Value, String> {
+    cli::enqueue_knowflow_task(
+        &state.project_root,
+        &topic,
+        mode.as_deref(),
+        priority,
+    )
+    .await
+    .map_err(|error| error.to_string())
+}

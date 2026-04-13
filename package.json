@@ -26,7 +26,7 @@
     "guidance:import": "bun run src/scripts/import-guidance.ts",
     "monitor:snapshot": "bun run src/scripts/monitor-snapshot.ts --json",
     "monitor:detail": "bun run src/scripts/monitor-detail.ts --json",
-    "monitor:dev": "bun --cwd apps/monitor run tauri:dev",
+    "monitor:dev": "bun run --cwd apps/monitor tauri:dev",
     "lint": "biome check .",
     "format": "biome format --write .",
     "smoke": "bun run scripts/smoke.ts",
