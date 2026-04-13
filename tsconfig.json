@@ -13,8 +13,14 @@
     "jsx": "preserve",
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,
-    "allowJs": true,
     "types": ["bun-types"]
   },
-  "exclude": ["node_modules", "dist", "apps/monitor/build", "apps/monitor/.svelte-kit", ".bun"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "apps/monitor/build",
+    "apps/monitor/.svelte-kit",
+    ".bun",
+    "setup_db.js"
+  ]
 }

@@ -28,9 +28,10 @@ const runCommand = (command: string, args: string[]): Promise<void> =>
 const run = async () => {
   const bun = process.argv[0];
   const steps: Array<{ name: string; command: string; args: string[] }> = [
+    { name: 'format-check', command: bun, args: ['x', 'biome', 'ci', '.'] },
     { name: 'lint', command: bun, args: ['run', 'lint'] },
     { name: 'typecheck', command: bun, args: ['x', 'tsc', '--noEmit'] },
-    { name: 'test', command: bun, args: ['test'] },
+    { name: 'test', command: bun, args: ['test', '--coverage'] },
     { name: 'smoke', command: bun, args: ['scripts/smoke.ts'] },
   ];
 

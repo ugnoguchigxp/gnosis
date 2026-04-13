@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { config } from '../config.js';
+import { filterSensitiveData } from '../utils/secretFilter.js';
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -162,38 +163,7 @@ async function readTextDelta(filePath: string, startOffset: number): Promise<str
   });
 }
 
-/**
- * 機密情報（APIキー、トークン、パスワード等）を検知し、
- * そのブロックを完全に排除します。
- */
-export function filterSensitiveData(text: string): string {
-  // 一般的な機密情報のパターン
-  const sensitivePatterns = [
-    /export\s+[A-Z_]*PASSWORD=.*$/gim,
-    /export\s+[A-Z_]*TOKEN=.*$/gim,
-    /export\s+[A-Z_]*KEY=.*$/gim,
-    /([a-zA-Z0-9]{32,})/g, // 長いランダム文字列(キーの可能性)
-    /xox[baprs]-.*$/gm, // Slackトークン
-    /ghp_.*$/gm, // GitHubトークン
-  ];
-
-  let filtered = text;
-  for (const pattern of sensitivePatterns) {
-    // マスキングではなく、空文字に置換して消去
-    filtered = filtered.replace(pattern, '[REMOVED SENSITIVE DATA]');
-  }
-
-  // ユーザーの要望に基づき、パスワード等の単語を含む行を物理的に削る
-  const lines = filtered.split('\n');
-  const cleanLines = lines.filter((line) => {
-    const lower = line.toLowerCase();
-    return (
-      !lower.includes('password') && !lower.includes('secret_key') && !lower.includes('auth_token')
-    );
-  });
-
-  return cleanLines.join('\n');
-}
+export { filterSensitiveData } from '../utils/secretFilter.js';
 
 /**
  * Claude Code の JSONL ログを解析します

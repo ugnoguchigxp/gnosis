@@ -18,6 +18,9 @@ imports/
 test_guidance/
 # TypeScript
 *.tsbuildinfo
+
+# Coverage
+coverage/
  
 # Services
 services/**/models/

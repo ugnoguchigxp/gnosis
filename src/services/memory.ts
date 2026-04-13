@@ -3,11 +3,11 @@ import { desc, eq, inArray, sql } from 'drizzle-orm';
 import { config } from '../config.js';
 import { db } from '../db/index.js';
 import { vibeMemories } from '../db/schema.js';
+import { GnosisError } from '../domain/errors.js';
 import { VibeMemoryInputSchema } from '../domain/schemas.js';
-
 import { sleep } from '../utils/time.js';
 
-type DbClient = Pick<typeof db, 'insert' | 'select'>;
+type DbClient = Pick<typeof db, 'insert' | 'select' | 'update' | 'delete'>;
 
 const runEmbedCommand = (
   command: string,
@@ -69,32 +69,37 @@ const runEmbedCommand = (
 const parseEmbeddingVector = (output: string): number[] => {
   const trimmed = output.trim();
   if (trimmed.length === 0) {
-    throw new Error('Embedding command returned empty output.');
+    throw new GnosisError('Embedding command returned empty output.', 'EMBED_EMPTY');
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(trimmed);
   } catch (error) {
-    throw new Error(
+    throw new GnosisError(
       `Failed to parse embedding JSON: ${error instanceof Error ? error.message : String(error)}`,
+      'EMBED_PARSE',
     );
   }
 
   if (!Array.isArray(parsed)) {
-    throw new Error('Embedding output must be a JSON array.');
+    throw new GnosisError('Embedding output must be a JSON array.', 'EMBED_FORMAT');
   }
 
   const vector = parsed.map((value, index) => {
     if (typeof value !== 'number' || !Number.isFinite(value)) {
-      throw new Error(`Embedding element at index ${index} is not a finite number.`);
+      throw new GnosisError(
+        `Embedding element at index ${index} is not a finite number.`,
+        'EMBED_FORMAT',
+      );
     }
     return value;
   });
 
   if (vector.length !== config.embeddingDimension) {
-    throw new Error(
+    throw new GnosisError(
       `Embedding dimension mismatch: expected=${config.embeddingDimension}, actual=${vector.length}`,
+      'EMBED_DIM',
     );
   }
 
@@ -119,7 +124,10 @@ export async function generateEmbedding(
       lastError = error;
       if (i === retries - 1) {
         const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`Embedding generation failed after ${retries} retries: ${message}`);
+        throw new GnosisError(
+          `Embedding generation failed after ${retries} retries: ${message}`,
+          'EMBED_FAILED',
+        );
       }
       await sleep(config.memory.retryWaitMultiplier * (i + 1));
     }
@@ -127,7 +135,7 @@ export async function generateEmbedding(
 
   const message =
     lastError instanceof Error ? lastError.message : `Unknown error: ${String(lastError)}`;
-  throw new Error(`Embedding generation failed: ${message}`);
+  throw new GnosisError(`Embedding generation failed: ${message}`, 'EMBED_FAILED');
 }
 /**
  * メモリを保存します
@@ -162,6 +170,7 @@ export async function searchMemory(
   query: string,
   limit = 5,
   filter?: Record<string, unknown>,
+  database: DbClient = db,
 ) {
   const embedding = await generateEmbedding(query);
   const embeddingStr = JSON.stringify(embedding);
@@ -177,7 +186,7 @@ export async function searchMemory(
         } @> ${JSON.stringify(filter)}::jsonb`
       : sql`${vibeMemories.sessionId} = ${sessionId}`;
 
-  const results = await db
+  const results = await database
     .select({
       id: vibeMemories.id,
       content: vibeMemories.content,
@@ -193,7 +202,7 @@ export async function searchMemory(
   if (results.length > 0) {
     const resultIds = results.map((r) => r.id);
     // 参照実績の更新 (バックグラウンドで実行しても良いが、一旦同期的に行う)
-    await db
+    await database
       .update(vibeMemories)
       .set({
         referenceCount: sql`${vibeMemories.referenceCount} + 1`,
@@ -215,6 +224,7 @@ export async function listMemoriesByMetadata(
   options: {
     sortByPriority?: boolean;
   } = {},
+  database: DbClient = db,
 ) {
   const safeLimit = Math.max(1, Math.trunc(limit));
   const whereClause =
@@ -231,7 +241,7 @@ export async function listMemoriesByMetadata(
       ]
     : [desc(vibeMemories.createdAt)];
 
-  const results = await db
+  const results = await database
     .select({
       id: vibeMemories.id,
       content: vibeMemories.content,
@@ -245,7 +255,7 @@ export async function listMemoriesByMetadata(
 
   if (results.length > 0) {
     const resultIds = results.map((r) => r.id);
-    await db
+    await database
       .update(vibeMemories)
       .set({
         referenceCount: sql`${vibeMemories.referenceCount} + 1`,

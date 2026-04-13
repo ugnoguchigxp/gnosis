@@ -3,6 +3,7 @@ import Graph from 'graphology';
 import { config } from '../config.js';
 import { db } from '../db/index.js';
 import { communities, entities, relations } from '../db/schema.js';
+import { NotFoundError } from '../domain/errors.js';
 import { EntityInputSchema, RelationInputSchema } from '../domain/schemas.js';
 import type { EntityInput, RelationInput } from '../domain/schemas.js';
 import { extractEntitiesFromText, judgeAndMergeEntities } from './llm.js';
@@ -335,15 +336,24 @@ export async function digestTextIntelligence(
 /**
  * 既存のエンティティ情報を部分更新します
  */
-export async function updateEntity(id: string, updates: Partial<Omit<EntityInput, 'id'>>) {
-  await db.update(entities).set(updates).where(eq(entities.id, id));
+export async function updateEntity(
+  id: string,
+  updates: Partial<Omit<EntityInput, 'id'>>,
+  database: DbClient = db,
+) {
+  await database.update(entities).set(updates).where(eq(entities.id, id));
 }
 
 /**
  * 古い・誤ったリレーションを削除します
  */
-export async function deleteRelation(sourceId: string, targetId: string, relationType: string) {
-  await db
+export async function deleteRelation(
+  sourceId: string,
+  targetId: string,
+  relationType: string,
+  database: DbClient = db,
+) {
+  await database
     .delete(relations)
     .where(
       and(
@@ -367,7 +377,7 @@ export async function findPathBetweenEntities(queryA: string, queryB: string) {
   );
 
   if (!idA || !idB) {
-    throw new Error('One or both entities could not be resolved.');
+    throw new NotFoundError('entity', `queryA="${queryA}" or queryB="${queryB}"`);
   }
 
   if (idA === idB) {

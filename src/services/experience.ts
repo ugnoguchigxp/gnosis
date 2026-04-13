@@ -3,6 +3,8 @@ import { db } from '../db/index.js';
 import { experienceLogs } from '../db/schema.js';
 import { generateEmbedding } from './memory.js';
 
+type DbClient = Pick<typeof db, 'insert' | 'select' | 'update' | 'delete'>;
+
 export interface ExperienceInput {
   sessionId: string;
   scenarioId: string;
@@ -37,10 +39,10 @@ export interface ExperienceLesson {
 /**
  * 経験（失敗または成功イベント）を保存します。
  */
-export async function saveExperience(input: ExperienceInput) {
+export async function saveExperience(input: ExperienceInput, database: DbClient = db) {
   const embedding = await generateEmbedding(input.content);
 
-  const [experience] = await db
+  const [experience] = await database
     .insert(experienceLogs)
     .values({
       sessionId: input.sessionId,
@@ -64,6 +66,7 @@ export async function recallExperienceLessons(
   sessionId: string,
   query: string,
   limit = 5,
+  database: DbClient = db,
 ): Promise<ExperienceLesson[]> {
   const normalizedLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 5;
   const embedding = await generateEmbedding(query);
@@ -72,7 +75,7 @@ export async function recallExperienceLessons(
   const similarity = sql<number>`1 - (${experienceLogs.embedding} <=> ${embeddingStr}::vector)`;
 
   // 1. クエリに類似する「失敗」イベントを検索
-  const similarFailures: FailureWithSimilarity[] = await db
+  const similarFailures: FailureWithSimilarity[] = await database
     .select({
       id: experienceLogs.id,
       scenarioId: experienceLogs.scenarioId,
@@ -93,7 +96,7 @@ export async function recallExperienceLessons(
     similarFailures.map(async (fail) => {
       // 同一シナリオ内での成功事例を探す
       // (将来的にはより明示的に linkedFailureIds メタデータなどで検索可能にする)
-      const solutions: Solution[] = await db
+      const solutions: Solution[] = await database
         .select({
           id: experienceLogs.id,
           content: experienceLogs.content,

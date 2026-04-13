@@ -1,0 +1,18 @@
+import type { ToolEntry } from '../registry.js';
+import { experienceTools } from './experience.js';
+import { graphTools } from './graph.js';
+import { guidanceTools } from './guidance.js';
+import { knowflowTools } from './knowflow.js';
+import { knowledgeTools } from './knowledge.js';
+import { memoryTools } from './memory.js';
+import { syncTools } from './sync.js';
+
+export const toolEntries: ToolEntry[] = [
+  ...memoryTools,
+  ...graphTools,
+  ...knowledgeTools,
+  ...knowflowTools,
+  ...experienceTools,
+  ...syncTools,
+  ...guidanceTools,
+];

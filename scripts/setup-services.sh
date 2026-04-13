@@ -29,7 +29,11 @@ setup_embedding() {
     
     echo "Installing embedding dependencies and CLI tools..."
     ./.venv/bin/pip install --upgrade pip setuptools wheel
-    ./.venv/bin/pip install -r requirements.txt
+    if [ -f requirements.lock ]; then
+        ./.venv/bin/pip install -r requirements.lock
+    else
+        ./.venv/bin/pip install -r requirements.txt
+    fi
     ./.venv/bin/pip install -e . # This creates the 'embed' and 'e5embed' commands
     
     if [ -f "./.venv/bin/embed" ]; then
@@ -53,7 +57,11 @@ setup_local_llm() {
 
     echo "Installing local-llm dependencies..."
     ./.venv/bin/pip install --upgrade pip setuptools wheel
-    ./.venv/bin/pip install -r requirements.txt
+    if [ -f requirements.lock ]; then
+        ./.venv/bin/pip install -r requirements.lock
+    else
+        ./.venv/bin/pip install -r requirements.txt
+    fi
     
     # Ensure scripts are executable
     chmod +x scripts/*

@@ -801,6 +801,12 @@ export async function getGuidanceContext(query: string): Promise<string> {
 /**
  * 単独のガイダンス（ルールやスキル）をレジストリに直接登録します。
  */
+type SaveGuidanceDependencies = {
+  generateEmbedding: (text: string) => Promise<number[]>;
+  now: () => Date;
+  database: Pick<typeof db, 'transaction'>;
+};
+
 export async function saveGuidance(
   input: {
     title: string;
@@ -812,11 +818,12 @@ export async function saveGuidance(
     archiveKey?: string;
     sessionId?: string;
   },
-  deps: Partial<GuidanceImportDependencies> = {},
+  deps: Partial<SaveGuidanceDependencies> = {},
 ): Promise<{ id: string; archiveKey: string }> {
   const resolvedDeps = {
     generateEmbedding: deps.generateEmbedding ?? generateEmbedding,
     now: deps.now ?? (() => new Date()),
+    database: deps.database ?? db,
   };
 
   const sessionId = input.sessionId ?? config.guidance.sessionId;
@@ -848,7 +855,7 @@ export async function saveGuidance(
   };
 
   // 同一アーカイブキーの既存エントリーを削除して更新（簡易的な実装）
-  await db.transaction(async (tx) => {
+  await resolvedDeps.database.transaction(async (tx) => {
     await tx
       .delete(vibeMemories)
       .where(
