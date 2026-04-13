@@ -7,14 +7,30 @@ import type { CommunityRebuildResult } from '../domain/schemas.js';
 import { buildGraph } from './graph.js';
 import { summarizeCommunity } from './llm.js';
 
+type DbClient = Pick<typeof db, 'delete' | 'insert' | 'update'>;
+
+export type BuildCommunitiesDeps = {
+  database?: DbClient;
+  graphBuilder?: () => ReturnType<typeof buildGraph>;
+  summarize?: (context: string) => Promise<{ name: string; summary: string }>;
+  logger?: (message: string) => void;
+};
+
 /**
  * グラフ全体をスキャンし、コミュニティ（知識の塊）を再構築します。
  */
-export async function buildCommunities() {
-  console.log('Starting community detection...');
+export async function buildCommunities(
+  deps: BuildCommunitiesDeps = {},
+): Promise<CommunityRebuildResult | { message: string }> {
+  const database = deps.database ?? db;
+  const graphBuilder = deps.graphBuilder ?? buildGraph;
+  const summarize = deps.summarize ?? summarizeCommunity;
+  const logger = deps.logger ?? ((msg: string) => console.log(msg));
+
+  logger('Starting community detection...');
 
   // 1. グラフの構築 (共通関数を使用)
-  const graph = await buildGraph();
+  const graph = await graphBuilder();
   const allEntities = graph
     .nodes()
     .map((id) => graph.getNodeAttributes(id) as typeof entities.$inferSelect);
@@ -37,14 +53,14 @@ export async function buildCommunities() {
     groups[cId].push(entityId);
   }
 
-  console.log(`Detected ${Object.keys(groups).length} communities.`);
+  logger(`Detected ${Object.keys(groups).length} communities.`);
 
   // 4. 旧コミュニティ情報のクリア (シンプルな実装として全削除)
   // 実運用では差分更新が望ましいが、第1版は一括再構築とする
-  await db.delete(communities);
+  await database.delete(communities);
 
   // 5. 各グループに対して要約を生成し、保存
-  for (const [idx, entityIds] of Object.entries(groups)) {
+  for (const [, entityIds] of Object.entries(groups)) {
     // このコミュニティに含まれるエンティティとリレーションの情報を抽出
     const groupEntities = allEntities.filter((e) => entityIds.includes(e.id));
     const groupRelations = allRelations.filter(
@@ -60,10 +76,10 @@ ${groupRelations.map((r) => `- ${r.sourceId} --[${r.relationType}]--> ${r.target
 `.trim();
 
     // LLM で要約
-    const { name, summary } = await summarizeCommunity(contextText);
+    const { name, summary } = await summarize(contextText);
 
     // コミュニティの保存
-    const [newCommunity] = await db
+    const [newCommunity] = await database
       .insert(communities)
       .values({
         name,
@@ -73,12 +89,12 @@ ${groupRelations.map((r) => `- ${r.sourceId} --[${r.relationType}]--> ${r.target
       .returning();
 
     // エンティティに communityId を紐付け
-    await db
+    await database
       .update(entities)
       .set({ communityId: newCommunity.id })
       .where(inArray(entities.id, entityIds));
 
-    console.log(`Community "${name}" built with ${entityIds.length} entities.`);
+    logger(`Community "${name}" built with ${entityIds.length} entities.`);
   }
 
   const result = {

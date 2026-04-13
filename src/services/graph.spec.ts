@@ -1,4 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+
+const shouldRunIntegration =
+  process.env.GNOSIS_RUN_INTEGRATION === '1' && !!process.env.DATABASE_URL;
+const describeIntegration = shouldRunIntegration ? describe : describe.skip;
 import { createHash } from 'node:crypto';
 import { eq, inArray, or, sql } from 'drizzle-orm';
 import { config } from '../config.js';
@@ -28,7 +32,7 @@ async function mockEmbeddingGenerator(text: string): Promise<number[]> {
   return vector;
 }
 
-describe('Graph Engine Services', () => {
+describeIntegration('Graph Engine Services', () => {
   async function ensureEntityExists() {
     await db
       .insert(entities)

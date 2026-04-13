@@ -32,6 +32,11 @@ export async function buildGraph() {
 
 type DbClient = Pick<typeof db, 'insert' | 'select' | 'update' | 'delete' | 'execute'>;
 type EmbeddingGenerator = (text: string) => Promise<number[]>;
+type EntityMergeJudge = typeof judgeAndMergeEntities;
+
+type SaveEntitiesDeps = {
+  judgeAndMerge?: EntityMergeJudge;
+};
 
 /**
  * エンティティ群を保存または更新します。
@@ -42,6 +47,7 @@ export async function saveEntities(
   rawInputs: EntityInput[],
   database: DbClient = db,
   embeddingGenerator: EmbeddingGenerator = generateEmbedding,
+  deps: SaveEntitiesDeps = {},
 ) {
   const inputs = rawInputs.map((i) => EntityInputSchema.parse(i));
   if (inputs.length === 0) return;
@@ -77,8 +83,9 @@ export async function saveEntities(
         }" (${similar.similarity.toFixed(3)})`,
       );
 
+      const mergeJudge = deps.judgeAndMerge ?? judgeAndMergeEntities;
       // LLM による同一性判定とマージ
-      const decision = await judgeAndMergeEntities(
+      const decision = await mergeJudge(
         { name: input.name, type: input.type, description: input.description || '' },
         { name: similar.name, type: similar.type, description: similar.description || '' },
       );

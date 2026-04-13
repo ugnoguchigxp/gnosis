@@ -1,4 +1,8 @@
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test';
+
+const shouldRunIntegration =
+  process.env.GNOSIS_RUN_INTEGRATION === '1' && !!process.env.DATABASE_URL;
+const describeIntegration = shouldRunIntegration ? describe : describe.skip;
 import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { config } from '../config.js';
@@ -34,7 +38,7 @@ mock.module('./memory.js', () => {
   };
 });
 
-describe('Vibe Memory Services', () => {
+describeIntegration('Vibe Memory Services', () => {
   const testSessionId = 'TEST_MEM_SESSION';
 
   beforeAll(async () => {

@@ -1,10 +1,10 @@
-import { spawnSync } from 'node:child_process';
+import {
+  type SpawnSyncOptionsWithStringEncoding,
+  spawnSync as nodeSpawnSync,
+} from 'node:child_process';
 import { z } from 'zod';
 import { config } from '../config.js';
 import { withGlobalLock } from '../utils/lock.js';
-
-const LLM_SCRIPT = config.llmScript;
-const LLM_TIMEOUT_MS = config.llmTimeoutMs;
 
 import {
   DistilledKnowledgeSchema,
@@ -13,10 +13,40 @@ import {
 } from '../domain/schemas.js';
 import type { DistilledKnowledge, ExtractedEntity, MergedEntityResult } from '../domain/schemas.js';
 
+export type SpawnSyncResult = {
+  stdout: string;
+  stderr: string;
+  status: number | null;
+  error?: Error;
+};
+
+export type SpawnSyncFn = (
+  command: string,
+  args: ReadonlyArray<string>,
+  options: { encoding: 'utf-8'; env?: NodeJS.ProcessEnv; timeout?: number },
+) => SpawnSyncResult;
+
+export type LlmServiceDeps = {
+  spawnSync?: SpawnSyncFn;
+  llmScript?: string;
+  llmTimeoutMs?: number;
+  withLock?: <T>(name: string, fn: () => Promise<T>) => Promise<T>;
+};
+
+const defaultSpawnSync: SpawnSyncFn = (command, args, options) =>
+  nodeSpawnSync(command, args, options as SpawnSyncOptionsWithStringEncoding);
+
 /**
  * ローカル LLM を使用してテキストからエンティティ情報を抽出します。
  */
-export async function extractEntitiesFromText(text: string): Promise<ExtractedEntity[]> {
+export async function extractEntitiesFromText(
+  text: string,
+  deps: LlmServiceDeps = {},
+): Promise<ExtractedEntity[]> {
+  const spawnSync = deps.spawnSync ?? defaultSpawnSync;
+  const llmScript = deps.llmScript ?? config.llmScript;
+  const llmTimeoutMs = deps.llmTimeoutMs ?? config.llmTimeoutMs;
+  const lockFn = deps.withLock ?? withGlobalLock;
   const prompt = `
 以下のテキストから、主要なエンティティ（実体）を抽出してください。
 出力は必ず以下のJSON配列形式のみで返してください。余計な解説は不要です。
@@ -30,13 +60,13 @@ export async function extractEntitiesFromText(text: string): Promise<ExtractedEn
 `.trim();
 
   try {
-    const result = await withGlobalLock('local-llm', async () =>
-      spawnSync(LLM_SCRIPT, ['--output', 'text', '--prompt', prompt], {
+    const result = await lockFn('local-llm', async () =>
+      spawnSync(llmScript, ['--output', 'text', '--prompt', prompt], {
         encoding: 'utf-8',
         env: { ...process.env },
         timeout:
-          Number.isFinite(LLM_TIMEOUT_MS) && LLM_TIMEOUT_MS > 0
-            ? LLM_TIMEOUT_MS
+          Number.isFinite(llmTimeoutMs) && llmTimeoutMs > 0
+            ? llmTimeoutMs
             : config.llm.defaultTimeoutMs,
       }),
     );
@@ -77,7 +107,12 @@ export async function extractEntitiesFromText(text: string): Promise<ExtractedEn
  */
 export async function summarizeCommunity(
   context: string,
+  deps: LlmServiceDeps = {},
 ): Promise<{ name: string; summary: string }> {
+  const spawnSync = deps.spawnSync ?? defaultSpawnSync;
+  const llmScript = deps.llmScript ?? config.llmScript;
+  const llmTimeoutMs = deps.llmTimeoutMs ?? config.llmTimeoutMs;
+  const lockFn = deps.withLock ?? withGlobalLock;
   const prompt = `
 以下のナレッジグラフ断片（エンティティと関係性）を読み取り、この知識の塊が「何に関するものか」を要約してください。
 出力は必ず以下のJSON形式のみで返してください。
@@ -91,13 +126,13 @@ ${context}
 `.trim();
 
   try {
-    const result = await withGlobalLock('local-llm', async () =>
-      spawnSync(LLM_SCRIPT, ['--output', 'text', '--max-tokens', '512', '--prompt', prompt], {
+    const result = await lockFn('local-llm', async () =>
+      spawnSync(llmScript, ['--output', 'text', '--max-tokens', '512', '--prompt', prompt], {
         encoding: 'utf-8',
         env: { ...process.env },
         timeout:
-          Number.isFinite(LLM_TIMEOUT_MS) && LLM_TIMEOUT_MS > 0
-            ? LLM_TIMEOUT_MS
+          Number.isFinite(llmTimeoutMs) && llmTimeoutMs > 0
+            ? llmTimeoutMs
             : config.llm.defaultTimeoutMs,
       }),
     );
@@ -132,7 +167,12 @@ function normalizeDistilledKnowledge(raw: unknown): DistilledKnowledge {
  */
 export async function distillKnowledgeFromTranscript(
   transcript: string,
+  deps: LlmServiceDeps = {},
 ): Promise<DistilledKnowledge> {
+  const spawnSync = deps.spawnSync ?? defaultSpawnSync;
+  const llmScript = deps.llmScript ?? config.llmScript;
+  const llmTimeoutMs = deps.llmTimeoutMs ?? config.llmTimeoutMs;
+  const lockFn = deps.withLock ?? withGlobalLock;
   const prompt = `
 以下のAIエージェントとの会話記録（JSONLパース済みテキスト）を分析し、
 将来の参照に役立つ「重要な事実」「技術的決定」「プロジェクト構造」などを抽出してください。
@@ -154,13 +194,13 @@ ${transcript}
 """
 `.trim();
 
-  const result = await withGlobalLock('local-llm', async () =>
-    spawnSync(LLM_SCRIPT, ['--output', 'text', '--max-tokens', '1500', '--prompt', prompt], {
+  const result = await lockFn('local-llm', async () =>
+    spawnSync(llmScript, ['--output', 'text', '--max-tokens', '1500', '--prompt', prompt], {
       encoding: 'utf-8',
       env: { ...process.env },
       timeout:
-        Number.isFinite(LLM_TIMEOUT_MS) && LLM_TIMEOUT_MS > 0
-          ? LLM_TIMEOUT_MS
+        Number.isFinite(llmTimeoutMs) && llmTimeoutMs > 0
+          ? llmTimeoutMs
           : config.llm.defaultTimeoutMs * 2,
     }),
   );
@@ -206,7 +246,12 @@ ${transcript}
 export async function judgeAndMergeEntities(
   entityA: { name: string; type: string; description: string },
   entityB: { name: string; type: string; description: string },
+  deps: LlmServiceDeps = {},
 ): Promise<MergedEntityResult> {
+  const spawnSync = deps.spawnSync ?? defaultSpawnSync;
+  const llmScript = deps.llmScript ?? config.llmScript;
+  const llmTimeoutMs = deps.llmTimeoutMs ?? config.llmTimeoutMs;
+  const lockFn = deps.withLock ?? withGlobalLock;
   const prompt = `
 以下の2つのエンティティ（実体）が、同じ対象を指しているか判定してください。
 名前の揺らぎ（別名、略称、英語表記とカタカナ表記等）があっても、文脈上同じであれば「同一」とみなしてください。
@@ -233,11 +278,11 @@ export async function judgeAndMergeEntities(
 `.trim();
 
   try {
-    const result = await withGlobalLock('local-llm', async () =>
-      spawnSync(LLM_SCRIPT, ['--output', 'text', '--max-tokens', '800', '--prompt', prompt], {
+    const result = await lockFn('local-llm', async () =>
+      spawnSync(llmScript, ['--output', 'text', '--max-tokens', '800', '--prompt', prompt], {
         encoding: 'utf-8',
         env: { ...process.env },
-        timeout: LLM_TIMEOUT_MS,
+        timeout: llmTimeoutMs,
       }),
     );
 

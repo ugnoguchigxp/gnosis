@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { withGlobalLock } from '../src/utils/lock';
 
 // mock 化したい関数を個別に定義
@@ -22,11 +22,18 @@ mock.module('node:timers/promises', () => ({
 
 describe('lock utility', () => {
   beforeEach(() => {
-    mockOpenSync.mockClear();
-    mockCloseSync.mockClear();
-    mockUnlinkSync.mockClear();
-    mockExistsSync.mockClear();
+    mockOpenSync.mockReset();
+    mockCloseSync.mockReset();
+    mockUnlinkSync.mockReset();
+    mockExistsSync.mockReset();
     mockExistsSync.mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    mockOpenSync.mockReset();
+    mockCloseSync.mockReset();
+    mockUnlinkSync.mockReset();
+    mockExistsSync.mockReset();
   });
 
   it('acquires and releases a lock successfully', async () => {

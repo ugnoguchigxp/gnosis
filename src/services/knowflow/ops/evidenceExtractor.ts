@@ -13,10 +13,16 @@ export type EvidenceExtractionInput = {
   llmLogger?: (event: LlmLogEvent) => void;
 };
 
+export type EvidenceExtractorDeps = {
+  runLlmTask?: typeof runLlmTask;
+};
+
 export const extractEvidenceFromText = async (
   input: EvidenceExtractionInput,
+  deps: EvidenceExtractorDeps = {},
 ): Promise<FlowEvidence> => {
-  const result = await runLlmTask(
+  const runTask = deps.runLlmTask ?? runLlmTask;
+  const result = await runTask(
     {
       task: 'extract_evidence',
       context: {

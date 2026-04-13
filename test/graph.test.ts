@@ -40,12 +40,65 @@ mock.module('../src/config.js', () => ({
     embedCommand: 'mock-embed',
     embedTimeoutMs: 1000,
     embeddingDimension: 3,
+    dedupeThreshold: 0.9,
+    llmTimeoutMs: 90_000,
+    claudeLogDir: '/tmp/claude',
+    antigravityLogDir: '/tmp/antigravity',
     memory: {
       retries: 1,
       retryWaitMultiplier: 0.01,
     },
     graph: {
       similarityThreshold: 0.8,
+      maxPathHops: 5,
+    },
+    knowflow: {
+      llm: {
+        apiBaseUrl: 'http://localhost:44448',
+        apiPath: '/v1/chat/completions',
+        apiKeyEnv: 'LOCAL_LLM_API_KEY',
+        model: 'test-model',
+        temperature: 0,
+        timeoutMs: 5000,
+        maxRetries: 1,
+        retryDelayMs: 0,
+        enableCliFallback: true,
+        cliCommand: 'echo',
+        cliPromptMode: 'arg',
+        cliPromptPlaceholder: '{{prompt}}',
+      },
+      worker: {
+        taskTimeoutMs: 5000,
+        pollIntervalMs: 1000,
+        postTaskDelayMs: 0,
+        maxConsecutiveErrors: 3,
+        maxQueriesPerTask: 3,
+        cronRunWindowMs: 3_600_000,
+      },
+      budget: { userBudget: 12, cronBudget: 6, cronRunBudget: 30 },
+      healthCheck: { timeoutMs: 5000 },
+    },
+    guidance: {
+      inboxDir: '/tmp/guidance-inbox',
+      sessionId: 'test-guidance',
+      maxFilesPerZip: 500,
+      maxZipSizeBytes: 50_000_000,
+      maxChunkChars: 2000,
+      maxFileChars: 120_000,
+      priorityHigh: 100,
+      priorityMid: 80,
+      priorityLow: 50,
+      maxZips: 1000,
+      alwaysLimit: 4,
+      onDemandLimit: 5,
+      maxPromptChars: 3000,
+      minSimilarity: 0.72,
+      enabled: true,
+      project: undefined,
+    },
+    llm: {
+      maxBuffer: 10 * 1024 * 1024,
+      defaultTimeoutMs: 45_000,
     },
   },
 }));
@@ -57,9 +110,6 @@ mock.module('node:child_process', () => ({
 }));
 
 const mockJudgeAndMerge = mock();
-mock.module('../src/services/llm.js', () => ({
-  judgeAndMergeEntities: mockJudgeAndMerge,
-}));
 
 import {
   buildGraph,
@@ -114,7 +164,7 @@ describe('graph service', () => {
       } as any;
 
       const input = [{ id: 'e1', name: 'entity1', type: 'person', description: 'desc' }];
-      await saveEntities(input, db);
+      await saveEntities(input, db, undefined, { judgeAndMerge: mockJudgeAndMerge });
 
       expect(db.insert).toHaveBeenCalled();
       expect(mockJudgeAndMerge).not.toHaveBeenCalled();
@@ -148,7 +198,7 @@ describe('graph service', () => {
       });
 
       const input = [{ id: 'e_new', name: 'new', type: 'person', description: 'new desc' }];
-      await saveEntities(input, db);
+      await saveEntities(input, db, undefined, { judgeAndMerge: mockJudgeAndMerge });
 
       expect(mockJudgeAndMerge).toHaveBeenCalled();
       // マージによって既存の ID ('e_old') が使われるはず
