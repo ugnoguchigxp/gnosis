@@ -6,14 +6,29 @@ const noopLogger = () => {
 };
 
 describe('llm adapter', () => {
-  it('extracts JSON from fenced response', () => {
-    const raw = '```json\n{"summary":"ok","findings":["a"]}\n```';
-    const candidate = extractJsonCandidate(raw);
-    expect(candidate).toBe('{"summary":"ok","findings":["a"]}');
+  it('extracts JSON from complex responses', () => {
+    // Fenced with json tag
+    expect(extractJsonCandidate('```json\n{"a":1}\n```')).toBe('{"a":1}');
+    // Fenced without tag
+    expect(extractJsonCandidate('```\n{"b":2}\n```')).toBe('{"b":2}');
+    // No fences
+    expect(extractJsonCandidate('Sure, here is your JSON: {"c":3} and some more text.')).toBe('{"c":3}');
+    // Multiple blocks (should take first one found by regex which is non-greedy)
+    expect(extractJsonCandidate('First: ```{"d":4}``` Second: ```{"e":5}```')).toBe('{"d":4}');
+    // Empty/None
+    expect(extractJsonCandidate('')).toBeUndefined();
+    expect(extractJsonCandidate('No JSON here')).toBeUndefined();
+  });
 
-    const parsed = parseLlmTaskOutputText('summarize', raw);
-    expect(parsed.summary).toBe('ok');
-    expect(parsed.findings).toEqual(['a']);
+  it('throws on schema violations in parseLlmTaskOutputText', () => {
+    const raw = '{"gaps":[{"type":"uncertain"}]}';
+    // description と priority が足りないので throw するはず
+    expect(() => parseLlmTaskOutputText('gap_detection', raw)).toThrow();
+  });
+
+  it('throws on malformed JSON in parseLlmTaskOutputText', () => {
+    const raw = '{"bad": json}';
+    expect(() => parseLlmTaskOutputText('summarize', raw)).toThrow(/JSON parse failed/);
   });
 
   it('returns API output when schema-valid', async () => {
@@ -96,5 +111,26 @@ describe('llm adapter', () => {
     expect(result.degraded).toBe(true);
     expect(result.output.gaps[0]?.type).toBe('uncertain');
     expect(result.warnings.length).toBeGreaterThan(0);
+  });
+
+  it('respects maxRetries=1 (no retries)', async () => {
+    let apiCalls = 0;
+    const result = await runLlmTask(
+      { task: 'summarize', context: {} },
+      {
+        config: { maxRetries: 1 },
+        deps: {
+          loadPromptTemplate: async () => 'template',
+          invokeApi: async () => {
+            apiCalls++;
+            throw new Error('fail');
+          },
+          logger: noopLogger,
+        },
+      },
+    );
+
+    expect(apiCalls).toBe(1); // 試行1回のみでリトライなし
+    expect(result.degraded).toBe(true);
   });
 });
