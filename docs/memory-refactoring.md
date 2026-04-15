@@ -115,12 +115,15 @@
 | 現在の概念 | 新モデルでの位置づけ | 変更方針 |
 |---|---|---|
 | `vibe_memories` | エピソード記憶の主テーブル | `memory_type` フィールドを追加し種別を明確化 |
-| `experience_logs` | エピソード記憶（失敗/成功サブタイプ） | エピソード記憶に統合、または `subtype: 'experience'` で識別 |
+| `experience_logs` | エピソード記憶（失敗/成功サブタイプ） | 当面は `memory_type` による参照関係の明示にとどめる（`scenarioId` / `attempt` / `failureType` などハーネス密結合フィールドを持つため、統合は将来フェーズで別途検討） |
 | `entities` | 意味記憶のノード | `confidence` / `provenance` / `freshness` フィールドを追加 |
-| `relations` | 意味記憶のエッジ | `confidence` / `timestamp` / `source_task` を追加 |
+| `relations` | 意味記憶のエッジ | `confidence` / `recordedAt` / `source_task` を追加 |
 | `communities` | 意味記憶のクラスター（中間抽象化層） | コミュニティ検出を手続き記憶のパターン発見にも再利用 |
 | `Guidance Registry` | 手続き記憶の保存先 | `procedural_type` でサブタイプを分類 |
-| `KnowFlow` | 意味記憶の自動充填パイプライン | 変更なし。取得先をエピソード/意味に振り分け |
+| `knowledge_topics` | 意味記憶の調査トピック管理（KnowFlow） | 変更なし。KnowFlow タスクの調査対象を表す |
+| `knowledge_claims` | 意味記憶の主張・事実（KnowFlow 自動充填） | 変更なし。`entities` / `relations` への昇格候補 |
+| `knowledge_relations` | 意味記憶の主張間関係（KnowFlow） | 変更なし。`relations` への昇格候補 |
+| `knowledge_sources` | 意味記憶の情報源（KnowFlow） | 変更なし。`provenance` の参照元として活用 |
 | `sync` | エピソード記憶の投入経路 | 変更なし。投入後のルーティングを追加 |
 | `synthesis` (reflect) | エピソード → 意味記憶への昇格操作 | 昇格ロジックを明示的な変換パイプラインとして整理 |
 
@@ -184,7 +187,7 @@ export const proceduralPatterns = pgTable('procedural_patterns', {
   embedding: vector('embedding', { dimensions: config.embeddingDimension }),
 
   // 構造化コンテンツ (JSONB)
-  when: jsonb('when').default([]),           // 適用条件
+  applicability: jsonb('applicability').default([]),  // 適用条件（旧 `when`; SQL予約語回避のため改名）
   goal: jsonb('goal').default([]),           // 目的
   steps: jsonb('steps').default([]),         // 手順
   constraints: jsonb('constraints').default([]), // 制約
@@ -210,7 +213,7 @@ export const proceduralPatterns = pgTable('procedural_patterns', {
 ### 4-4. 手続き記憶のグラフ関係
 
 手続き記憶同士の関係（前提・派生・補完など）は既存の Knowledge Graph の仕組みを活用する。  
-`entities` に `type: 'procedural_pattern'` のノードを作り、`relations` で `goal → how_to → episode` のような関係を表現する。
+`procedural_patterns.id` から `entities` への外部キーリンクを設け、`relations` で `goal → how_to → episode` のような関係を表現する。`entities` に `type: 'procedural_pattern'` のノードを別途作成すると二重管理になるため、外部キー参照にとどめる。
 
 ```text
 [goal: エラー調査]
@@ -236,7 +239,7 @@ export const proceduralPatterns = pgTable('procedural_patterns', {
 
 - [ ] `vibe_memories` に `memory_type`, `episode_at`, `importance`, `source_task`, `compressed` フィールドを追加するマイグレーション
 - [ ] `store_memory` ツールの入力スキーマに `memoryType` / `episodeAt` / `importance` を追加
-- [ ] `experience_logs` を `memory_type: 'experience_success' | 'experience_failure'` として統合する方針を検討（破壊的変更のため慎重に）
+- [ ] `experience_logs` については当面統合せず、`memory_type` による参照関係の明示にとどめる（`scenarioId` / `attempt` / `failureType` などハーネス密結合フィールドを持つため、統合は将来フェーズで別途検討）
 - [ ] 圧縮・要約パイプラインの設計（古いエピソードを LLM で要約し `compressed: true` でフラグ）
 
 ### Phase 2: 意味記憶の品質向上
@@ -256,12 +259,14 @@ export const proceduralPatterns = pgTable('procedural_patterns', {
 - [ ] ベクトルインデックス（HNSW）の追加
 - [ ] `store_procedure` / `search_procedure` / `apply_procedure` MCP ツールの実装
 - [ ] 既存 Guidance Registry との統合方針を決定（段階的移行 or 並行運用）
-- [ ] `entities` へのリンク（`type: 'procedural_pattern'` ノード）によるグラフ関係の実現
+- [ ] 並行運用期間中の使い分けルールを明記（例：新規は `store_procedure` へ登録、既存エントリは `register_guidance` で継続管理）し、LLM がどちらを使うべきかが明確になるようプロンプト・ドキュメントに反映
+- [ ] `procedural_patterns.id` と `entities` の外部キーリンクによるグラフ関係の実現
 
 ### Phase 4: コミュニティ検出の活用拡大
 
 **目標**: コミュニティ検出をエピソード・手続き記憶のパターン発見にも適用する。
 
+- [ ] `vibe_memories` のベクトルからコサイン類似度に基づく k-NN グラフを構築するステップの実装（`entities`/`relations` のような明示的エッジが存在しないため、Louvain 適用の前提として必要）
 - [ ] エピソード記憶のクラスタリング（類似エピソードのグループ化）
 - [ ] 手続きパターンのクラスタリング（似たパターンのコミュニティ化）
 - [ ] 「繰り返し出現するパターン」を自動的に `procedural_patterns` へ昇格するパイプライン
@@ -300,6 +305,7 @@ const communityMapping = louvain(graph);
 
 #### 6-2. エピソード記憶への適用（新規拡張）
 
+- `vibe_memories` には `entities`/`relations` のような明示的エッジが存在しないため、まずベクトル間のコサイン類似度から **k-NN グラフ**を構築した上で Louvain を実行する
 - `vibe_memories` のベクトルを使って Louvain を実行し、類似エピソードをクラスタリング
 - クラスタを `communities` テーブルに `communityType: 'episodic'` として区別して保存
 - クラスタ単位での要約・圧縮に活用
