@@ -115,14 +115,17 @@ function parseStaticFindings(
 
   const normalized: StaticAnalysisFinding[] = [];
   for (const finding of findings) {
-    const line = finding.line;
-    if (
-      finding.file_path.length > 0 &&
-      typeof line === 'number' &&
-      Number.isFinite(line) &&
-      line > 0
-    ) {
-      normalized.push(finding);
+    const line = typeof finding.line === 'number' ? finding.line : 0;
+    if (finding.file_path.length > 0 && line > 0 && Number.isFinite(line)) {
+      normalized.push({
+        id: finding.id,
+        file_path: finding.file_path,
+        line,
+        message: finding.message,
+        severity: finding.severity,
+        rule_id: finding.rule_id,
+        source: finding.source,
+      });
     }
   }
 

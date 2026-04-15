@@ -210,7 +210,7 @@ export interface StaticAnalysisFinding {
   message: string;
   severity: FindingSeverity;
   rule_id?: string;
-  source: 'eslint' | 'tsc' | 'biome' | 'custom';
+  source: 'eslint' | 'tsc' | 'biome' | 'custom' | 'rule_engine';
 }
 
 export interface AstmendImpactSummary {

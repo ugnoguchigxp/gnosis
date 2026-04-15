@@ -22,14 +22,18 @@ export async function analyzeDiffWithDiffGuard(
 
   if (!result) return null;
 
-  const analysis = Array.isArray(result.analysis?.files) ? result.analysis.files : [];
+  const files: DiffGuardAnalysis['files'] = [];
+  const rawFiles = Array.isArray(result?.analysis?.files) ? (result.analysis.files as any[]) : [];
+  for (const file of rawFiles) {
+    files.push({
+      filePath: String(file?.filePath ?? file?.path ?? file?.file ?? ''),
+      changeTypes: Array.isArray(file?.changeTypes) ? file.changeTypes.map(String) : [],
+    });
+  }
 
   return {
-    files: analysis.map((file: any) => ({
-      filePath: String(file.filePath ?? file.path ?? file.file ?? ''),
-      changeTypes: Array.isArray(file.changeTypes) ? file.changeTypes.map(String) : [],
-    })),
-    inferredFiles: Array.isArray(result.inferredFiles) ? result.inferredFiles.map(String) : [],
+    files,
+    inferredFiles: Array.isArray(result?.inferredFiles) ? result.inferredFiles.map(String) : [],
   };
 }
 
@@ -45,31 +49,29 @@ export async function runDiffGuard(
     format: 'json',
   });
 
-  const findings = Array.isArray(result?.findings) ? result.findings : [];
-
+  const rawFindings = Array.isArray(result?.findings) ? (result.findings as any[]) : [];
   const normalizedFindings: StaticAnalysisFinding[] = [];
 
-  for (const [index, finding] of findings.entries()) {
-    const raw = finding as Record<string, unknown>;
-    const filePath = String(raw.file ?? raw.path ?? raw.file_path ?? '');
+  for (let index = 0; index < rawFindings.length; index++) {
+    const finding = rawFindings[index] as Record<string, unknown>;
+    const filePath = String(finding.file ?? finding.path ?? finding.file_path ?? '');
     if (!filePath) continue;
 
-    const normalized: StaticAnalysisFinding = {
-      id: typeof raw.id === 'string' && raw.id.trim() ? raw.id : `diffguard-${index + 1}`,
+    normalizedFindings.push({
+      id:
+        typeof finding.id === 'string' && finding.id.trim() ? finding.id : `diffguard-${index + 1}`,
       file_path: filePath,
-      line: typeof raw.line === 'number' ? raw.line : Number(raw.line ?? 0),
-      severity: mapDiffGuardSeverity(String(raw.level ?? raw.severity ?? 'info')),
-      message: String(raw.message ?? ''),
+      line: typeof finding.line === 'number' ? finding.line : Number(finding.line ?? 0),
+      severity: mapDiffGuardSeverity(String(finding.level ?? finding.severity ?? 'info')),
+      message: String(finding.message ?? ''),
       rule_id:
-        typeof raw.ruleId === 'string'
-          ? raw.ruleId
-          : typeof raw.rule === 'string'
-            ? raw.rule
+        typeof finding.ruleId === 'string'
+          ? finding.ruleId
+          : typeof finding.rule === 'string'
+            ? finding.rule
             : undefined,
-      source: 'custom',
-    };
-
-    normalizedFindings.push(normalized);
+      source: 'rule_engine',
+    });
   }
 
   return normalizedFindings;

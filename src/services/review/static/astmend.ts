@@ -61,15 +61,20 @@ function normalizeReferences(result: any, fallbackFile: string): AstmendSymbolIm
     filePath?: string;
     line?: number;
     isDefinition?: boolean;
-  }> = Array.isArray(result?.references) ? result.references : [];
+  }> = [];
+
+  const rawReferences = Array.isArray(result?.references) ? (result.references as any[]) : [];
+  for (const reference of rawReferences as Array<Record<string, unknown>>) {
+    references.push({
+      file: String(reference.file ?? fallbackFile),
+      filePath: typeof reference.filePath === 'string' ? reference.filePath : undefined,
+      line: typeof reference.line === 'number' ? reference.line : Number(reference.line ?? 0),
+      isDefinition: Boolean(reference.isDefinition),
+    });
+  }
   const normalizedReferences: Array<{ file: string; line: number; isDefinition: boolean }> = [];
 
-  for (const reference of references as Array<{
-    file?: string;
-    filePath?: string;
-    line?: number;
-    isDefinition?: boolean;
-  }>) {
+  for (const reference of references) {
     const normalized = {
       file: String(reference.file ?? reference.filePath ?? fallbackFile),
       line: typeof reference.line === 'number' ? reference.line : Number(reference.line ?? 0),
@@ -89,20 +94,26 @@ function normalizeImpactedDeclarations(
   fallbackFile: string,
 ): AstmendSymbolImpact['impactedDeclarations'] {
   const declarations: Array<{ name?: string; kind?: string; file?: string; filePath?: string }> =
-    Array.isArray(result?.result)
-      ? result.result
-      : Array.isArray(result?.impactedDeclarations)
-        ? result.impactedDeclarations
-        : [];
+    [];
+
+  const rawDeclarations = Array.isArray(result?.result)
+    ? (result.result as any[])
+    : Array.isArray(result?.impactedDeclarations)
+      ? (result.impactedDeclarations as any[])
+      : [];
+
+  for (const declaration of rawDeclarations as Array<Record<string, unknown>>) {
+    declarations.push({
+      name: typeof declaration.name === 'string' ? declaration.name : undefined,
+      kind: typeof declaration.kind === 'string' ? declaration.kind : undefined,
+      file: typeof declaration.file === 'string' ? declaration.file : undefined,
+      filePath: typeof declaration.filePath === 'string' ? declaration.filePath : undefined,
+    });
+  }
 
   const normalizedDeclarations: Array<{ name: string; kind: string; file: string }> = [];
 
-  for (const declaration of declarations as Array<{
-    name?: string;
-    kind?: string;
-    file?: string;
-    filePath?: string;
-  }>) {
+  for (const declaration of declarations) {
     const normalized = {
       name: String(declaration.name ?? ''),
       kind: String(declaration.kind ?? 'variable'),
