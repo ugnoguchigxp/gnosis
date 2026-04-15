@@ -48,11 +48,11 @@ const createInitialSnapshot = (): MonitorSnapshotData => ({
 let snapshot = $state<MonitorSnapshotData>(createInitialSnapshot());
 let timeline = $state<TimelineEvent[]>([]);
 let connectionStatus = $state<ConnectionStatus>('offline');
-let autoUpdate = $state(true);
+const autoUpdate = $state(true);
 let currentTimelinePage = $state(1);
-let statusFilter = $state<'all' | TimelineStatus>('all');
-let sourceFilter = $state<'all' | string>('all');
-let topicFilter = $state('');
+const statusFilter = $state<'all' | TimelineStatus>('all');
+const sourceFilter = $state<'all' | string>('all');
+const topicFilter = $state('');
 let lastSnapshotTs = $state<number | null>(null);
 let errorMessage = $state<string | null>(null);
 let wsUrl = $state<string>('');

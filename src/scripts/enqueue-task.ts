@@ -1,6 +1,6 @@
+import { z } from 'zod';
 import type { TaskMode, TaskSource } from '../services/knowflow/domain/task.js';
 import { PgJsonbQueueRepository } from '../services/knowflow/queue/pgJsonbRepository.js';
-import { z } from 'zod';
 
 // 入力バリデーションスキーマ
 const topicSchema = z

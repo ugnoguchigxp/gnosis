@@ -22,7 +22,7 @@ type GraphSnapshotPayload = {
     sourceId: string;
     targetId: string;
     relationType: string;
-    weight: number;
+    weight: number | null;
   }>;
   communities: Array<{
     id: string;
@@ -61,6 +61,19 @@ async function fetchGraphSnapshot(): Promise<GraphSnapshotPayload> {
     db.select().from(communities).limit(MAX_COMMUNITIES),
   ]);
 
+  const communityMemberCounts = await db
+    .select({
+      communityId: entities.communityId,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(entities)
+    .where(sql`${entities.communityId} is not null`)
+    .groupBy(entities.communityId);
+
+  const memberCountByCommunityId = new Map(
+    communityMemberCounts.map((row) => [row.communityId, row.count]),
+  );
+
   const limitApplied =
     totalEntitiesInDb > MAX_ENTITIES ||
     totalRelationsInDb > MAX_RELATIONS ||
@@ -85,7 +98,7 @@ async function fetchGraphSnapshot(): Promise<GraphSnapshotPayload> {
     communities: allCommunities.map((c) => ({
       id: c.id,
       summary: c.summary,
-      memberCount: c.memberCount,
+      memberCount: memberCountByCommunityId.get(c.id) ?? 0,
     })),
     stats: {
       totalEntities: allEntities.length,
