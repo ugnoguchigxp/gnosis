@@ -27,6 +27,7 @@
     "monitor:snapshot": "bun run src/scripts/monitor-snapshot.ts --json",
     "monitor:detail": "bun run src/scripts/monitor-detail.ts --json",
     "monitor:dev": "bun run --cwd apps/monitor tauri:dev",
+    "review": "bun run src/scripts/review.ts",
     "lint": "biome check .",
     "format": "biome format --write .",
     "smoke": "bun run scripts/smoke.ts",
