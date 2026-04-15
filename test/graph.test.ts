@@ -301,13 +301,11 @@ describe('graph service', () => {
 
   describe('searchEntitiesByText', () => {
     it('returns empty results when db returns nothing', async () => {
-      // biome-ignore lint/suspicious/noExplicitAny: mock
       const db = {
         select: mock(() => ({
           from: mock(() => createMockQuery([])),
         })),
         update: mock(() => ({ set: mock(() => ({ where: mock(async () => {}) })) })),
-        // biome-ignore lint/suspicious/noExplicitAny: mock
       } as any;
 
       const results = await searchEntitiesByText('TypeScript', 5, db);
@@ -325,13 +323,11 @@ describe('graph service', () => {
       const mockUpdateWhere = mock(async () => {});
       const mockUpdateSet = mock(() => ({ where: mockUpdateWhere }));
       const mockUpdate = mock(() => ({ set: mockUpdateSet }));
-      // biome-ignore lint/suspicious/noExplicitAny: mock
       const db = {
         select: mock(() => ({
           from: mock(() => createMockQuery([mockEntityRow])),
         })),
         update: mockUpdate,
-        // biome-ignore lint/suspicious/noExplicitAny: mock
       } as any;
 
       const results = await searchEntitiesByText('TypeScript', 5, db);

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { getReviewLLMService } from './llm/reviewer.js';
-import { runReviewStageA, runReviewStageB } from './orchestrator.js';
+import { runReviewStageA, runReviewStageB, runReviewStageC } from './orchestrator.js';
 import { ReviewModeSchema, ReviewRequestSchema } from './types.js';
 
 type CliArgs = {
@@ -15,7 +15,7 @@ type CliArgs = {
   goal?: string;
   llmPreference?: 'local' | 'cloud';
   json: boolean;
-  stage: 'a' | 'b';
+  stage: 'a' | 'b' | 'c';
   enableStaticAnalysis: boolean;
 };
 
@@ -36,7 +36,7 @@ function parseArgs(argv: string[]): CliArgs {
   const llmPreference = llmFlag === 'local' ? 'local' : llmFlag === 'cloud' ? 'cloud' : undefined;
   const json = argv.includes('--json');
   const stageArg = getArg(argv, '--stage');
-  const stage = stageArg === 'a' ? 'a' : 'b';
+  const stage = stageArg === 'a' || stageArg === 'c' ? stageArg : 'b';
   const enableStaticAnalysis = argv.includes('--enable-static-analysis');
 
   return {
@@ -83,7 +83,9 @@ export async function runReviewCli(argv = process.argv.slice(2)): Promise<void> 
   const result =
     args.stage === 'a'
       ? await runReviewStageA(request, { llmService })
-      : await runReviewStageB(request, { llmService });
+      : args.stage === 'b'
+        ? await runReviewStageB(request, { llmService })
+        : await runReviewStageC(request, { llmService });
 
   if (args.json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

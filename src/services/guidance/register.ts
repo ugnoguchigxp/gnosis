@@ -22,6 +22,13 @@ export async function saveGuidance(
     scope: GuidanceScope;
     priority: number;
     tags?: string[];
+    applicability?: {
+      signals?: string[];
+      fileTypes?: string[];
+      languages?: string[];
+      frameworks?: string[];
+      excludedFrameworks?: string[];
+    };
     archiveKey?: string;
     sessionId?: string;
   },
@@ -49,6 +56,7 @@ export async function saveGuidance(
     priority: input.priority,
     title: input.title,
     tags,
+    applicability: input.applicability,
     archiveKey,
     importedAt: now.toISOString(),
   };

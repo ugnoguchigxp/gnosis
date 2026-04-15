@@ -22,6 +22,16 @@ const registerGuidanceSchema = z.object({
     .default(config.guidance.priorityLow)
     .describe('優先度 (0-100)'),
   tags: z.array(z.string()).optional().describe('関連タグ'),
+  applicability: z
+    .object({
+      signals: z.array(z.string()).optional(),
+      fileTypes: z.array(z.string()).optional(),
+      languages: z.array(z.string()).optional(),
+      frameworks: z.array(z.string()).optional(),
+      excludedFrameworks: z.array(z.string()).optional(),
+    })
+    .optional()
+    .describe('構造化された適用条件'),
   archiveKey: z.string().optional().describe('管理用キー (省略時はタイトルから自動生成)'),
   sessionId: z.string().optional().describe('セッションID (デフォルト: config.guidance.sessionId)'),
 });

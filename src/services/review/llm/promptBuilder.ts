@@ -1,5 +1,5 @@
 import { buildImpactSection } from '../static/astmend.js';
-import type { ReviewContextV1, ReviewContextV2 } from '../types.js';
+import type { ReviewContextV1, ReviewContextV2, ReviewContextV3 } from '../types.js';
 
 export interface ReviewProjectInfo {
   language: string;
@@ -20,6 +20,24 @@ function buildStaticSection(context: ReviewContextV2): string {
     );
   }
   lines.push('');
+  return lines.join('\n');
+}
+
+function buildGuidanceSection(
+  title: string,
+  items: Array<{ title: string; content: string }>,
+): string {
+  if (items.length === 0) {
+    return '';
+  }
+
+  const lines = [`## ${title}`, ''];
+  for (const [index, item] of items.entries()) {
+    lines.push(`### ${index + 1}. ${item.title}`);
+    lines.push(item.content.trim());
+    lines.push('');
+  }
+
   return lines.join('\n');
 }
 
@@ -171,7 +189,78 @@ export function buildReviewPromptV2(context: ReviewContextV2): string {
   return parts.join('\n');
 }
 
+export function buildReviewPromptV3(context: ReviewContextV3): string {
+  const parts: string[] = [
+    '# Code Review Instructions',
+    '',
+    'あなたは経験豊富なコードレビュアーです。静的解析、影響範囲解析、過去の類似指摘、Guidance を優先順位通りに参照してください。',
+    '',
+    '## プロジェクト情報',
+    `- Language: ${context.projectInfo.language}`,
+  ];
+
+  if (context.projectInfo.framework) {
+    parts.push(`- Framework: ${context.projectInfo.framework}`);
+  }
+
+  parts.push('');
+  parts.push(buildDiffSummarySection(context));
+  parts.push(buildStaticSection(context));
+  parts.push(
+    context.impactAnalysis
+      ? buildImpactSection(context.impactAnalysis)
+      : '## 影響範囲解析\n\n（Astmend MCP 未利用）\n',
+  );
+
+  parts.push(buildGuidanceSection('適用すべき原則 (Principles)', context.recalledPrinciples));
+  parts.push(buildGuidanceSection('経験則 (Heuristics)', context.recalledHeuristics));
+  parts.push(buildGuidanceSection('再発パターン (Patterns)', context.recalledPatterns));
+
+  if (context.optionalSkills.length > 0) {
+    parts.push(buildGuidanceSection('補助スキル (Optional Skills)', context.optionalSkills));
+  }
+
+  if (context.pastSimilarFindings.length > 0) {
+    parts.push('## 過去の類似指摘');
+    parts.push('');
+    parts.push(...context.pastSimilarFindings.map((entry) => `- ${entry}`));
+    parts.push('');
+  }
+
+  if (context.instruction.trim()) {
+    parts.push('## レビュー目的');
+    parts.push('');
+    parts.push(context.instruction.trim());
+    parts.push('');
+  }
+
+  parts.push('## レビュー優先順位');
+  parts.push('');
+  parts.push('1. 静的解析結果を最重視する（linter/type checker の指摘は必ず言及）');
+  parts.push('2. Guidance の内容は diff と突き合わせて根拠ベースで適用する');
+  parts.push('3. 過去の類似指摘は再発防止の観点で参照する');
+  parts.push('4. 影響範囲解析で外部参照が指摘されたシンボルは追従漏れを重点チェック');
+  parts.push('5. 事実ベースで差分を見る（推測・仮定を避ける）');
+  parts.push('6. 根拠がある指摘だけ返す（diff 本文を引用すること）');
+  parts.push('7. 新行番号 line_new が必須（削除行のみへの指摘は不可）');
+  parts.push('8. 不確実なものは severity: "info" に下げる');
+  parts.push('');
+  parts.push('## Git Diff');
+  parts.push('');
+  parts.push('```diff');
+  parts.push(context.rawDiff);
+  parts.push('```');
+  parts.push('');
+  parts.push('[出力は共通基盤の ReviewOutput JSON スキーマに従うこと]');
+
+  return parts.join('\n');
+}
+
 export function buildReviewPrompt(context: ReviewContextV1 | ReviewContextV2): string {
+  if ('recalledPrinciples' in context) {
+    return buildReviewPromptV3(context as ReviewContextV3);
+  }
+
   return 'diffSummary' in context
     ? buildReviewPromptV2(context)
     : buildV1Instruction(context.rawDiff, context.projectInfo, context.instruction);

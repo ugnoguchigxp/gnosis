@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { simpleGit } from 'simple-git';
-import { mergeFindings, validateFindingsFull } from './diff/merge.js';
+import { deduplicateFindings, mergeFindings, validateFindingsFull } from './diff/merge.js';
 import { countAddedLines, countRemovedLines, normalizeDiff } from './diff/normalizer.js';
 import { ReviewError } from './errors.js';
 import { validateAllowedRoot } from './foundation/allowedRoots.js';
@@ -10,6 +10,12 @@ import { getDiff } from './foundation/gitDiff.js';
 import { enforceHardLimit } from './foundation/hardLimit.js';
 import { maskOrThrow } from './foundation/secretMask.js';
 import { validateSessionId } from './foundation/sessionId.js';
+import {
+  getProjectKey,
+  persistReviewCase,
+  retrieveGuidance,
+  searchSimilarFindings,
+} from './knowledge/index.js';
 import { getReviewLLMService, reviewWithLLM } from './llm/reviewer.js';
 import type { ReviewLLMService } from './llm/types.js';
 import type { ReviewMcpToolCaller } from './mcp/caller.js';
@@ -21,6 +27,7 @@ import { runStaticAnalysisOnChangedDetailed } from './static/runner.js';
 import {
   type DegradedMode,
   type Finding,
+  type GuidanceItem,
   type NormalizedDiff,
   type ReviewMetadata,
   type ReviewOutput,
@@ -51,6 +58,25 @@ function determineRiskLevel(findings: Finding[]): ReviewMetadata['risk_level'] {
   if (findings.some((finding) => finding.severity === 'error')) return 'high';
   if (findings.length > 0) return 'medium';
   return 'low';
+}
+
+function detectPrimaryLanguage(diffs: NormalizedDiff[]): string {
+  const counts = new Map<string, number>();
+
+  for (const diff of diffs) {
+    counts.set(diff.language, (counts.get(diff.language) ?? 0) + 1);
+  }
+
+  let winner = 'unknown';
+  let winnerCount = -1;
+  for (const [language, count] of counts.entries()) {
+    if (count > winnerCount) {
+      winner = language;
+      winnerCount = count;
+    }
+  }
+
+  return winner;
 }
 
 function enrichRiskSignalsWithDiffGuard(
@@ -446,6 +472,157 @@ export async function runReviewStageB(
   });
 
   return buildResult(result);
+}
+
+function buildKnowledgeApplied(findings: Finding[]): string[] {
+  return [...new Set(findings.flatMap((finding) => finding.knowledge_refs ?? []))];
+}
+
+function buildKnowledgeContext(
+  principles: GuidanceItem[],
+  heuristics: GuidanceItem[],
+  patterns: GuidanceItem[],
+  skills: GuidanceItem[],
+  pastSimilarFindings: string[],
+): {
+  recalledPrinciples: GuidanceItem[];
+  recalledHeuristics: GuidanceItem[];
+  recalledPatterns: GuidanceItem[];
+  optionalSkills: GuidanceItem[];
+  pastSimilarFindings: string[];
+} {
+  return {
+    recalledPrinciples: principles,
+    recalledHeuristics: heuristics,
+    recalledPatterns: patterns,
+    optionalSkills: skills,
+    pastSimilarFindings,
+  };
+}
+
+export async function runReviewStageC(
+  req: ReviewRequest,
+  deps: RunReviewDeps = {},
+): Promise<ReviewOutput> {
+  const startTime = deps.now?.() ?? Date.now();
+  const now = deps.now ?? Date.now;
+
+  validateAllowedRoot(req.repoPath);
+  validateSessionId(req.sessionId);
+
+  let rawDiff: string;
+  try {
+    rawDiff = await (deps.diffProvider ?? getDiff)(req.repoPath, req.mode);
+  } catch (error) {
+    throw new ReviewError('E005', `Git diff failed: ${error}`);
+  }
+
+  if (!rawDiff.trim()) {
+    return buildNoChangesResult(startTime, now);
+  }
+
+  enforceHardLimit(rawDiff);
+
+  const state = await buildReviewDiffState(
+    req.repoPath,
+    req.enableStaticAnalysis,
+    deps.mcpCaller,
+    rawDiff,
+  );
+
+  const plan = planReview(state.riskSignals);
+  const llmService =
+    deps.llmService ?? (await getReviewLLMService(plan.useHeavyLLM ? 'cloud' : 'local'));
+  const maskedDiff = maskOrThrow(rawDiff, true);
+  const projectKey = getProjectKey(req.repoPath);
+  const language = detectPrimaryLanguage(state.diffs);
+  const framework = state.diffs.find((diff) => diff.classification.framework)?.classification
+    .framework;
+
+  let knowledge = {
+    principles: [] as GuidanceItem[],
+    heuristics: [] as GuidanceItem[],
+    patterns: [] as GuidanceItem[],
+    skills: [] as GuidanceItem[],
+  };
+  let pastSimilarFindings: string[] = [];
+
+  if (req.enableKnowledgeRetrieval !== false) {
+    try {
+      knowledge = await retrieveGuidance(projectKey, state.riskSignals, language, framework);
+      pastSimilarFindings = await searchSimilarFindings(projectKey, state.riskSignals, language);
+    } catch (error) {
+      console.warn(`Knowledge retrieval failed: ${error}`);
+      state.degradedModes.push('knowledge_retrieval_failed');
+    }
+  }
+
+  const {
+    findings: llmFindings,
+    summary,
+    next_actions,
+  } = await reviewWithLLM(
+    {
+      instruction: req.taskGoal ?? '',
+      projectInfo: {
+        language,
+        framework,
+      },
+      rawDiff: maskedDiff,
+      diffSummary: {
+        filesChanged: state.diffs.length,
+        linesAdded: countAddedLines(state.diffs),
+        linesRemoved: countRemovedLines(state.diffs),
+        riskSignals: state.riskSignals,
+      },
+      selectedHunks: state.diffs,
+      staticAnalysisFindings: state.staticAnalysisFindings,
+      impactAnalysis: state.impactAnalysis,
+      ...buildKnowledgeContext(
+        knowledge.principles,
+        knowledge.heuristics,
+        knowledge.patterns,
+        knowledge.skills,
+        pastSimilarFindings,
+      ),
+      outputSchema: {},
+    },
+    llmService,
+  );
+
+  const mergedFindings = deduplicateFindings(
+    mergeFindings(state.staticAnalysisFindings, validateFindingsFull(llmFindings, state.diffs)),
+  );
+
+  const result = ReviewOutputSchema.parse({
+    review_id: randomUUID(),
+    task_id: req.taskId,
+    review_status: deriveReviewStatus(mergedFindings),
+    findings: mergedFindings,
+    summary,
+    next_actions,
+    rerun_review: mergedFindings.some((finding) => finding.severity === 'error'),
+    metadata: {
+      reviewed_files: state.diffs.length,
+      risk_level: plan.riskLevel,
+      static_analysis_used: state.staticAnalysisFindings.length > 0,
+      knowledge_applied: buildKnowledgeApplied(mergedFindings),
+      degraded_mode: state.degradedModes.length > 0,
+      degraded_reasons: state.degradedModes,
+      local_llm_used: llmService.provider === 'local',
+      heavy_llm_used: llmService.provider === 'cloud',
+      review_duration_ms: now() - startTime,
+    },
+    markdown: '',
+  });
+
+  const withMarkdown = buildResult(result);
+
+  await persistReviewCase(req, withMarkdown).catch((error) => {
+    console.warn(`Stage C persistence failed (non-fatal): ${error}`);
+  });
+
+  return withMarkdown;
 }
 
 export async function runReviewStageBFromRepo(

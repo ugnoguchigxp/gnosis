@@ -11,4 +11,5 @@ export * from './static/runner.js';
 export * from './static/signals.js';
 export * from './types.js';
 export * from './render/markdown.js';
+export * from './knowledge/index.js';
 export * from './orchestrator.js';

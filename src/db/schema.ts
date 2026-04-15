@@ -259,3 +259,58 @@ export const knowledgeSources = pgTable(
     topicIdx: index('knowledge_sources_topic_idx').on(table.topicId),
   }),
 );
+
+export const reviewCases = pgTable(
+  'review_cases',
+  {
+    id: text('id').primaryKey(),
+    taskId: text('task_id').notNull(),
+    repoPath: text('repo_path').notNull(),
+    baseRef: text('base_ref'),
+    headRef: text('head_ref'),
+    taskGoal: text('task_goal'),
+    trigger: text('trigger').notNull(),
+    status: text('status').notNull().default('running'),
+    riskLevel: text('risk_level'),
+    reviewStatus: text('review_status'),
+    summary: text('summary'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+  },
+  (table) => ({
+    taskIdx: index('idx_review_cases_task').on(table.taskId),
+    statusIdx: index('idx_review_cases_status').on(table.status),
+    repoCreatedAtIdx: index('idx_review_cases_repo').on(table.repoPath, table.createdAt),
+  }),
+);
+
+export const reviewOutcomes = pgTable(
+  'review_outcomes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    reviewCaseId: text('review_case_id')
+      .references(() => reviewCases.id, { onDelete: 'cascade' })
+      .notNull(),
+    findingId: text('finding_id').notNull(),
+    outcomeType: text('outcome_type').notNull(),
+    followupCommitHash: text('followup_commit_hash'),
+    resolutionTimestamp: timestamp('resolution_timestamp', { withTimezone: true }),
+    guidanceIds: jsonb('guidance_ids').default([]),
+    falsePositive: boolean('false_positive').default(false),
+    notes: text('notes'),
+    autoDetected: boolean('auto_detected').default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }),
+  },
+  (table) => ({
+    caseIdx: index('idx_review_outcomes_case').on(table.reviewCaseId),
+    outcomeIdx: index('idx_review_outcomes_outcome').on(table.outcomeType),
+    falsePositiveIdx: index('idx_review_outcomes_fp')
+      .on(table.falsePositive)
+      .where(sql`${table.falsePositive} = true`),
+    uniqueReviewFinding: unique('review_outcomes_case_finding_unique').on(
+      table.reviewCaseId,
+      table.findingId,
+    ),
+  }),
+);

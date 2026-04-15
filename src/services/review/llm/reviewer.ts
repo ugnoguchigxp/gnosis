@@ -7,7 +7,7 @@ import {
   validateFindingsBasic,
 } from './hallucinator.js';
 import { createLocalReviewLLMService } from './localProvider.js';
-import { buildReviewPrompt, buildReviewPromptV1 } from './promptBuilder.js';
+import { buildReviewPrompt, buildReviewPromptV1, buildReviewPromptV3 } from './promptBuilder.js';
 import type { ReviewLLMPreference, ReviewLLMService } from './types.js';
 
 function extractJsonPayload(rawOutput: string): string {
@@ -139,9 +139,11 @@ export async function reviewWithLLM(
   llmService: ReviewLLMService,
 ): Promise<{ findings: Finding[]; summary: string; next_actions: string[] }> {
   const prompt =
-    'diffSummary' in context
-      ? buildReviewPrompt(context)
-      : buildReviewPromptV1(context.rawDiff, context.projectInfo, context.instruction);
+    'recalledPrinciples' in context
+      ? buildReviewPromptV3(context)
+      : 'diffSummary' in context
+        ? buildReviewPrompt(context)
+        : buildReviewPromptV1(context.rawDiff, context.projectInfo, context.instruction);
 
   let rawOutput: string;
   try {
