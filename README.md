@@ -536,6 +536,7 @@ bun run release
 
 ## ロードマップ
 
+- **記憶モデルのリファクタリング**: エピソード記憶・意味記憶・手続き記憶への再整理 → [`docs/memory-refactoring.md`](docs/memory-refactoring.md) 参照
 - ドキュメント群の拡充: `docs/mcp-tools.md`, `docs/architecture.md`, `docs/configuration.md`, `docs/knowflow-guide.md`
 - `guidance.ts` の分割
 - `config.ts` の専用テスト追加
@@ -561,6 +562,7 @@ bun run release
 ## ドキュメント
 
 - [アーキテクチャ](docs/architecture.md) — 全体構成、主要コンポーネント、設計判断の整理
+- [記憶リファクタリング設計](docs/memory-refactoring.md) — エピソード記憶・意味記憶・手続き記憶への再設計方針
 - [MCP ツールリファレンス](docs/mcp-tools.md) — ツール一覧、用途、入出力の整理
 - [設定リファレンス](docs/configuration.md) — 環境変数、プロファイル、主要設定の説明
 - [KnowFlow ガイド](docs/knowflow-guide.md) — CLI、評価、運用フローのガイド
