@@ -41,6 +41,7 @@ export type ReviewStatus = z.infer<typeof ReviewStatusSchema>;
 export const DegradedModeSchema = z.enum([
   'static_analysis_unavailable',
   'knowledge_retrieval_failed',
+  'astmend_unavailable',
   'diff_size_limited',
   'llm_timeout',
 ]);

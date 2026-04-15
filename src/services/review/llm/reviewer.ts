@@ -1,9 +1,13 @@
 import { ReviewError } from '../errors.js';
-import type { Finding, ReviewContextV1 } from '../types.js';
+import type { Finding, ReviewContextV1, ReviewContextV2, ReviewContextV3 } from '../types.js';
 import { createCloudReviewLLMService } from './cloudProvider.js';
-import { generateFingerprint, validateFindingsBasic } from './hallucinator.js';
+import {
+  generateFingerprint,
+  softenLocalLLMFindings,
+  validateFindingsBasic,
+} from './hallucinator.js';
 import { createLocalReviewLLMService } from './localProvider.js';
-import { buildReviewPromptV1 } from './promptBuilder.js';
+import { buildReviewPrompt, buildReviewPromptV1 } from './promptBuilder.js';
 import type { ReviewLLMPreference, ReviewLLMService } from './types.js';
 
 function extractJsonPayload(rawOutput: string): string {
@@ -85,9 +89,23 @@ export async function getReviewLLMService(
   preference: ReviewLLMPreference = 'cloud',
 ): Promise<ReviewLLMService> {
   const local = createLocalReviewLLMService();
+  const cloudFallback = () => createCloudReviewLLMService();
 
   if (preference === 'local') {
-    return local;
+    return {
+      provider: 'local',
+      async generate(prompt: string, options?: { format?: 'json' | 'text' }): Promise<string> {
+        try {
+          return await local.generate(prompt, options);
+        } catch (error) {
+          if (error instanceof ReviewError && (error.code === 'E006' || error.code === 'E007')) {
+            return cloudFallback().generate(prompt, options);
+          }
+
+          throw error;
+        }
+      },
+    };
   }
 
   try {
@@ -117,10 +135,13 @@ export async function getReviewLLMService(
 }
 
 export async function reviewWithLLM(
-  context: ReviewContextV1,
+  context: ReviewContextV1 | ReviewContextV2 | ReviewContextV3,
   llmService: ReviewLLMService,
 ): Promise<{ findings: Finding[]; summary: string; next_actions: string[] }> {
-  const prompt = buildReviewPromptV1(context.rawDiff, context.projectInfo, context.instruction);
+  const prompt =
+    'diffSummary' in context
+      ? buildReviewPrompt(context)
+      : buildReviewPromptV1(context.rawDiff, context.projectInfo, context.instruction);
 
   let rawOutput: string;
   try {
@@ -158,12 +179,15 @@ export async function reviewWithLLM(
     fingerprint: generateFingerprint(finding),
   }));
 
+  const softenedFindings =
+    llmService.provider === 'local' ? softenLocalLLMFindings(findings) : findings;
+
   const summaryCandidate = (parsed as { summary?: unknown }).summary;
   const summary =
     typeof summaryCandidate === 'string' && summaryCandidate.trim() ? summaryCandidate.trim() : '';
 
   return {
-    findings,
+    findings: softenedFindings,
     summary,
     next_actions: toTextList((parsed as { next_actions?: unknown }).next_actions),
   };

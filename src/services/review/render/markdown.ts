@@ -92,6 +92,7 @@ export function renderReviewMarkdown(result: ReviewOutput): string {
             finding.needsHumanConfirmation ? ' | ⚠️ 要確認' : ''
           }`,
         );
+        lines.push(`**Source**: ${finding.source}`);
         lines.push('');
         lines.push(finding.rationale);
         lines.push('');

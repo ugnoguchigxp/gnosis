@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { simpleGit } from 'simple-git';
+import { mergeFindings, validateFindingsFull } from './diff/merge.js';
+import { countAddedLines, countRemovedLines, normalizeDiff } from './diff/normalizer.js';
 import { ReviewError } from './errors.js';
 import { validateAllowedRoot } from './foundation/allowedRoots.js';
 import { getDiff } from './foundation/gitDiff.js';
@@ -10,21 +12,29 @@ import { maskOrThrow } from './foundation/secretMask.js';
 import { validateSessionId } from './foundation/sessionId.js';
 import { getReviewLLMService, reviewWithLLM } from './llm/reviewer.js';
 import type { ReviewLLMService } from './llm/types.js';
+import type { ReviewMcpToolCaller } from './mcp/caller.js';
+import { enrichRiskSignalsWithImpact, planReview } from './planner/riskScorer.js';
 import { renderReviewMarkdown } from './render/markdown.js';
+import { analyzeImpactWithAstmend, extractChangedSymbols } from './static/astmend.js';
+import { analyzeDiffWithDiffGuard, runDiffGuard } from './static/diffguard.js';
+import { runStaticAnalysisOnChangedDetailed } from './static/runner.js';
 import {
   type DegradedMode,
   type Finding,
+  type NormalizedDiff,
   type ReviewMetadata,
   type ReviewOutput,
   ReviewOutputSchema,
   type ReviewRequest,
   type ReviewStatus,
+  type StaticAnalysisFinding,
 } from './types.js';
 
 type RunReviewDeps = {
   llmService?: ReviewLLMService;
   now?: () => number;
   diffProvider?: (repoPath: string, mode: ReviewRequest['mode']) => Promise<string>;
+  mcpCaller?: ReviewMcpToolCaller;
 };
 
 function countChangedFiles(rawDiff: string): number {
@@ -41,6 +51,23 @@ function determineRiskLevel(findings: Finding[]): ReviewMetadata['risk_level'] {
   if (findings.some((finding) => finding.severity === 'error')) return 'high';
   if (findings.length > 0) return 'medium';
   return 'low';
+}
+
+function enrichRiskSignalsWithDiffGuard(
+  signals: string[],
+  analysis: Awaited<ReturnType<typeof analyzeDiffWithDiffGuard>>,
+): string[] {
+  if (!analysis) return signals;
+
+  const enriched = [...signals];
+  for (const file of analysis.files) {
+    const joined = file.changeTypes.join(' ').toLowerCase();
+    if (joined.includes('rename')) enriched.push('rename_only');
+    if (joined.includes('doc')) enriched.push('docs_only');
+    if (joined.includes('comment')) enriched.push('comment_only');
+  }
+
+  return [...new Set(enriched)];
 }
 
 function extractFilePathsFromDiff(rawDiff: string): string[] {
@@ -254,6 +281,179 @@ export async function runReviewStageA(
 
     throw error;
   }
+}
+
+async function buildReviewDiffState(
+  repoPath: string,
+  enableStaticAnalysis: boolean | undefined,
+  mcpCaller: ReviewMcpToolCaller | undefined,
+  rawDiff: string,
+): Promise<{
+  diffs: NormalizedDiff[];
+  staticAnalysisFindings: StaticAnalysisFinding[];
+  degradedModes: DegradedMode[];
+  impactAnalysis: Awaited<ReturnType<typeof analyzeImpactWithAstmend>>;
+  riskSignals: string[];
+}> {
+  const diffs = normalizeDiff(rawDiff);
+  const degradedModes: DegradedMode[] = [];
+
+  const diffGuardAnalysis = await analyzeDiffWithDiffGuard(rawDiff, mcpCaller);
+  const riskSignalsBase = enrichRiskSignalsWithDiffGuard(
+    extractRiskSignalsFromDiffs(diffs),
+    diffGuardAnalysis,
+  );
+
+  const changedSymbols = extractChangedSymbols(diffs);
+  const impactAnalysis = await analyzeImpactWithAstmend(changedSymbols, repoPath, mcpCaller);
+  if (impactAnalysis.degraded) degradedModes.push('astmend_unavailable');
+
+  const staticAnalysisResult = enableStaticAnalysis
+    ? await runStaticAnalysisOnChangedDetailed(diffs, repoPath)
+    : { findings: [], degraded: false };
+  if (enableStaticAnalysis && staticAnalysisResult.degraded) {
+    degradedModes.push('static_analysis_unavailable');
+  }
+
+  const diffGuardFindings = await runDiffGuard(rawDiff, repoPath, mcpCaller);
+  const allStaticFindings = [...diffGuardFindings, ...staticAnalysisResult.findings];
+
+  return {
+    diffs,
+    staticAnalysisFindings: allStaticFindings,
+    degradedModes,
+    impactAnalysis,
+    riskSignals: enrichRiskSignalsWithImpact(riskSignalsBase, impactAnalysis),
+  };
+}
+
+function extractRiskSignalsFromDiffs(diffs: NormalizedDiff[]): string[] {
+  const contentSignals = new Set<string>();
+  for (const diff of diffs) {
+    const content = diff.hunks.flatMap((hunk) => hunk.lines.map((line) => line.content)).join('\n');
+
+    if (/auth[_-]?(?:middleware|guard|token|jwt)/i.test(content) || /requiresAuth/i.test(content))
+      contentSignals.add('auth');
+    if (/(?:can|has)[A-Z][a-z]+Permission/.test(content)) contentSignals.add('permission');
+    if (/stripe|payment|billing|charge/i.test(content)) contentSignals.add('payment');
+    if (/delete|remove|drop|truncate/i.test(content)) contentSignals.add('deletion');
+    if (/migration|migrate|ALTER TABLE|CREATE TABLE/i.test(content))
+      contentSignals.add('migration');
+    if (/transaction|BEGIN|COMMIT|ROLLBACK/i.test(content)) contentSignals.add('transaction');
+    if (/mutex|lock|semaphore|atomic|race/i.test(content)) contentSignals.add('concurrency');
+    if (/invalidate|evict|flush.*cache/i.test(content)) contentSignals.add('cache_invalidation');
+    if (/validate|sanitize|escape/i.test(content)) contentSignals.add('input_validation');
+    if (/fetch|axios|got|http\.(?:get|post)/i.test(content))
+      contentSignals.add('external_api_error');
+    if (/schema\.ts|\.sql|migration/i.test(content)) contentSignals.add('db_schema_change');
+    if (/\.env|config\.|settings\./i.test(content)) contentSignals.add('config_changed');
+    if (/TODO.*test|FIXME.*test/i.test(content)) contentSignals.add('tests_absent');
+
+    if (diff.classification.isMigration) contentSignals.add('migration');
+    if (diff.classification.isConfig) contentSignals.add('config_changed');
+    if (diff.classification.isInfra) contentSignals.add('infra_change');
+    if (diff.changeType === 'renamed') contentSignals.add('rename_only');
+  }
+
+  return [...contentSignals];
+}
+
+export async function runReviewStageB(
+  req: ReviewRequest,
+  deps: RunReviewDeps = {},
+): Promise<ReviewOutput> {
+  const startTime = deps.now?.() ?? Date.now();
+  const now = deps.now ?? Date.now;
+
+  validateAllowedRoot(req.repoPath);
+  validateSessionId(req.sessionId);
+
+  let rawDiff: string;
+  try {
+    rawDiff = await (deps.diffProvider ?? getDiff)(req.repoPath, req.mode);
+  } catch (error) {
+    throw new ReviewError('E005', `Git diff failed: ${error}`);
+  }
+
+  if (!rawDiff.trim()) {
+    return buildNoChangesResult(startTime, now);
+  }
+
+  enforceHardLimit(rawDiff);
+
+  const state = await buildReviewDiffState(
+    req.repoPath,
+    req.enableStaticAnalysis,
+    deps.mcpCaller,
+    rawDiff,
+  );
+
+  const plan = planReview(state.riskSignals);
+  const llmService =
+    deps.llmService ?? (await getReviewLLMService(plan.useHeavyLLM ? 'cloud' : 'local'));
+  const maskedDiff = maskOrThrow(rawDiff, true);
+
+  const {
+    findings: llmFindings,
+    summary,
+    next_actions,
+  } = await reviewWithLLM(
+    {
+      instruction: req.taskGoal ?? '',
+      projectInfo: {
+        language: state.diffs[0]?.language ?? 'unknown',
+        framework: state.diffs[0]?.classification.framework,
+      },
+      rawDiff: maskedDiff,
+      diffSummary: {
+        filesChanged: state.diffs.length,
+        linesAdded: countAddedLines(state.diffs),
+        linesRemoved: countRemovedLines(state.diffs),
+        riskSignals: state.riskSignals,
+      },
+      selectedHunks: state.diffs,
+      staticAnalysisFindings: state.staticAnalysisFindings,
+      impactAnalysis: state.impactAnalysis,
+      outputSchema: {},
+    },
+    llmService,
+  );
+
+  const mergedFindings = validateFindingsFull(
+    mergeFindings(state.staticAnalysisFindings, llmFindings),
+    state.diffs,
+  );
+  const result = ReviewOutputSchema.parse({
+    review_id: randomUUID(),
+    task_id: req.taskId,
+    review_status: deriveReviewStatus(mergedFindings),
+    findings: mergedFindings,
+    summary,
+    next_actions,
+    rerun_review: mergedFindings.some((finding) => finding.severity === 'error'),
+    metadata: {
+      reviewed_files: state.diffs.length,
+      risk_level: plan.riskLevel,
+      static_analysis_used: state.staticAnalysisFindings.length > 0,
+      knowledge_applied: [],
+      degraded_mode: state.degradedModes.length > 0,
+      degraded_reasons: state.degradedModes,
+      local_llm_used: llmService.provider === 'local',
+      heavy_llm_used: llmService.provider === 'cloud',
+      review_duration_ms: now() - startTime,
+    },
+    markdown: '',
+  });
+
+  return buildResult(result);
+}
+
+export async function runReviewStageBFromRepo(
+  repoPath: string,
+  options: Omit<ReviewRequest, 'repoPath'>,
+  deps: RunReviewDeps = {},
+): Promise<ReviewOutput> {
+  return runReviewStageB({ ...options, repoPath }, deps);
 }
 
 export async function runReviewStageAFromRepo(

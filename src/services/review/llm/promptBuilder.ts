@@ -1,9 +1,46 @@
+import { buildImpactSection } from '../static/astmend.js';
+import type { ReviewContextV1, ReviewContextV2 } from '../types.js';
+
 export interface ReviewProjectInfo {
   language: string;
   framework?: string;
 }
 
-export function buildReviewPromptV1(
+function buildStaticSection(context: ReviewContextV2): string {
+  if (context.staticAnalysisFindings.length === 0) {
+    return '## 静的解析結果\n\n（実行されませんでした）\n';
+  }
+
+  const lines = ['## 静的解析結果（最優先で参照すること）', ''];
+  for (const finding of context.staticAnalysisFindings) {
+    lines.push(
+      `- [${finding.source}] ${finding.file_path}:${finding.line ?? 0} — ${finding.message}${
+        finding.rule_id ? ` (${finding.rule_id})` : ''
+      }`,
+    );
+  }
+  lines.push('');
+  return lines.join('\n');
+}
+
+function buildDiffSummarySection(context: ReviewContextV2): string {
+  const riskLabel =
+    context.diffSummary.riskSignals.length > 0
+      ? `HIGH (${context.diffSummary.riskSignals.join(', ')})`
+      : 'MEDIUM';
+
+  return [
+    '## Diff Summary',
+    '',
+    `- Files changed: ${context.diffSummary.filesChanged}`,
+    `- Lines added: ${context.diffSummary.linesAdded}`,
+    `- Lines removed: ${context.diffSummary.linesRemoved}`,
+    `- Risk level hint: ${riskLabel}`,
+    '',
+  ].join('\n');
+}
+
+function buildV1Instruction(
   maskedDiff: string,
   projectInfo: ReviewProjectInfo,
   instruction = '',
@@ -32,11 +69,11 @@ export function buildReviewPromptV1(
 
   lines.push('## レビュー方針');
   lines.push('');
-  lines.push('1. **事実ベースで差分を見る** — 推測や仮定を避ける');
-  lines.push('2. **根拠がある指摘だけ返す** — 具体的な証拠（diff 本文の引用）を示す');
-  lines.push('3. **新行番号に紐づかない指摘は返さない** — 必ず `line_new` を指定する');
-  lines.push('4. **不確実なものは severity: "info" に下げる** — 断定的な表現を避ける');
-  lines.push('5. **「問題なし」とは絶対に言わない** — 指摘がない場合は findings を空にする');
+  lines.push('1. 事実ベースで差分を見る — 推測や仮定を避ける');
+  lines.push('2. 根拠がある指摘だけ返す — 具体的な証拠（diff 本文の引用）を示す');
+  lines.push('3. 新行番号に紐づかない指摘は返さない — 必ず line_new を指定する');
+  lines.push('4. 不確実なものは severity: "info" に下げる — 断定的な表現を避ける');
+  lines.push('5. 「問題なし」とは絶対に言わない — 指摘がない場合は findings を空にする');
   lines.push('');
   lines.push('## 出力形式（JSON）');
   lines.push('');
@@ -74,4 +111,68 @@ export function buildReviewPromptV1(
   lines.push('```');
 
   return lines.join('\n');
+}
+
+export function buildReviewPromptV1(
+  maskedDiff: string,
+  projectInfo: ReviewProjectInfo,
+  instruction = '',
+): string {
+  return buildV1Instruction(maskedDiff, projectInfo, instruction);
+}
+
+export function buildReviewPromptV2(context: ReviewContextV2): string {
+  const parts: string[] = [
+    '# Code Review Instructions',
+    '',
+    'あなたは経験豊富なコードレビュアーです。静的解析と影響範囲解析を最優先で参照してください。',
+    '',
+    '## プロジェクト情報',
+    `- Language: ${context.projectInfo.language}`,
+  ];
+
+  if (context.projectInfo.framework) {
+    parts.push(`- Framework: ${context.projectInfo.framework}`);
+  }
+
+  parts.push('');
+  parts.push(buildDiffSummarySection(context));
+  parts.push(buildStaticSection(context));
+  parts.push(
+    context.impactAnalysis
+      ? buildImpactSection(context.impactAnalysis)
+      : '## 影響範囲解析\n\n（Astmend MCP 未利用）\n',
+  );
+
+  if (context.instruction.trim()) {
+    parts.push('## レビュー目的');
+    parts.push('');
+    parts.push(context.instruction.trim());
+    parts.push('');
+  }
+
+  parts.push('## レビュー優先順位');
+  parts.push('');
+  parts.push('1. 静的解析結果を最重視する（linter/type checker の指摘は必ず言及）');
+  parts.push('2. 影響範囲解析で外部参照が指摘されたシンボルは追従漏れを重点チェック');
+  parts.push('3. 事実ベースで差分を見る（推測・仮定を避ける）');
+  parts.push('4. 根拠がある指摘だけ返す（diff 本文を引用すること）');
+  parts.push('5. 新行番号 line_new が必須（削除行のみへの指摘は不可）');
+  parts.push('6. 不確実なものは severity: "info" に下げる');
+  parts.push('');
+  parts.push('## Git Diff');
+  parts.push('');
+  parts.push('```diff');
+  parts.push(context.rawDiff);
+  parts.push('```');
+  parts.push('');
+  parts.push('[出力は共通基盤の ReviewOutput JSON スキーマに従うこと]');
+
+  return parts.join('\n');
+}
+
+export function buildReviewPrompt(context: ReviewContextV1 | ReviewContextV2): string {
+  return 'diffSummary' in context
+    ? buildReviewPromptV2(context)
+    : buildV1Instruction(context.rawDiff, context.projectInfo, context.instruction);
 }

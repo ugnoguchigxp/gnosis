@@ -49,3 +49,15 @@ export function generateFingerprint(finding: Omit<Finding, 'fingerprint'>): stri
   const key = `${finding.file_path}:${finding.category}:${finding.evidence.slice(0, 100)}`;
   return createHash('sha256').update(key).digest('hex').slice(0, 16);
 }
+
+export function softenLocalLLMFindings(findings: Finding[]): Finding[] {
+  return findings.map((finding) =>
+    finding.source === 'local_llm'
+      ? {
+          ...finding,
+          confidence: 'low',
+          needsHumanConfirmation: true,
+        }
+      : finding,
+  );
+}

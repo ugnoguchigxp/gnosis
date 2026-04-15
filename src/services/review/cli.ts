@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { getReviewLLMService } from './llm/reviewer.js';
-import { runReviewStageA } from './orchestrator.js';
+import { runReviewStageA, runReviewStageB } from './orchestrator.js';
 import { ReviewModeSchema, ReviewRequestSchema } from './types.js';
 
 type CliArgs = {
@@ -15,6 +15,8 @@ type CliArgs = {
   goal?: string;
   llmPreference?: 'local' | 'cloud';
   json: boolean;
+  stage: 'a' | 'b';
+  enableStaticAnalysis: boolean;
 };
 
 function getArg(argv: string[], key: string): string | undefined {
@@ -33,6 +35,9 @@ function parseArgs(argv: string[]): CliArgs {
   const llmFlag = getArg(argv, '--llm');
   const llmPreference = llmFlag === 'local' ? 'local' : llmFlag === 'cloud' ? 'cloud' : undefined;
   const json = argv.includes('--json');
+  const stageArg = getArg(argv, '--stage');
+  const stage = stageArg === 'a' ? 'a' : 'b';
+  const enableStaticAnalysis = argv.includes('--enable-static-analysis');
 
   return {
     repoPath,
@@ -45,6 +50,8 @@ function parseArgs(argv: string[]): CliArgs {
     goal,
     llmPreference,
     json,
+    stage,
+    enableStaticAnalysis,
   };
 }
 
@@ -67,12 +74,16 @@ export async function runReviewCli(argv = process.argv.slice(2)): Promise<void> 
     sessionId,
     mode: args.mode,
     taskGoal: args.goal,
+    enableStaticAnalysis: args.enableStaticAnalysis,
   });
 
   const envPreference = process.env.GNOSIS_REVIEW_LLM_PREFERENCE === 'local' ? 'local' : 'cloud';
   const llmService = await getReviewLLMService(args.llmPreference ?? envPreference);
 
-  const result = await runReviewStageA(request, { llmService });
+  const result =
+    args.stage === 'a'
+      ? await runReviewStageA(request, { llmService })
+      : await runReviewStageB(request, { llmService });
 
   if (args.json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
