@@ -82,4 +82,4 @@ setup_local_llm
 echo -e "\n${GREEN}✨ All services have been successfully refreshed!${NC}"
 echo -e "You can now run:"
 echo -e "  - ${BLUE}bun run verify${NC} to check the integration."
-echo -e "  - ${BLUE}scripts/gemma4${NC}, ${BLUE}scripts/bonsai${NC}, or ${BLUE}scripts/bedrock${NC} to start the LLM."
+echo -e "  - ${BLUE}scripts/gemma4${NC}, ${BLUE}scripts/bonsai${NC}, ${BLUE}scripts/bedrock${NC}, or ${BLUE}scripts/openai${NC} to start the LLM."

@@ -23,22 +23,22 @@ describe('Bedrock live integration', () => {
   test(
     'invokes Bedrock through gnosis cloud provider',
     async () => {
-    const service = createCloudReviewLLMService({
-      provider: 'bedrock',
-      awsRegion: env.region,
-      awsAccessKeyId: env.accessKeyId,
-      awsSecretAccessKey: env.secretAccessKey,
-      awsSessionToken: env.sessionToken,
-      bedrockModelId: env.modelId,
-      bedrockInferenceProfileId: env.inferenceProfileId,
-    });
+      const service = createCloudReviewLLMService({
+        provider: 'bedrock',
+        awsRegion: env.region,
+        awsAccessKeyId: env.accessKeyId,
+        awsSecretAccessKey: env.secretAccessKey,
+        awsSessionToken: env.sessionToken,
+        bedrockModelId: env.modelId,
+        bedrockInferenceProfileId: env.inferenceProfileId,
+      });
 
-    const prompt = 'openAI ChatGPTについてどう思っていますか？';
-    const result = await service.generate(prompt, { format: 'text' });
+      const prompt = 'openAI ChatGPTについてどう思っていますか？';
+      const result = await service.generate(prompt, { format: 'text' });
 
-    console.log(result);
-    expect(result.length).toBeGreaterThan(0);
-    expect(result).toMatch(/ChatGPT|OpenAI|AI/i);
+      console.log(result);
+      expect(result.length).toBeGreaterThan(0);
+      expect(result).toMatch(/ChatGPT|OpenAI|AI/i);
     },
     { timeout: 15_000 },
   );

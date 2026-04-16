@@ -31,6 +31,7 @@
     "gemma4": "./scripts/gemma4",
     "bonsai": "./scripts/bonsai",
     "bedrock": "./scripts/bedrock",
+    "openai": "./scripts/openai",
     "lint": "biome check .",
     "format": "biome format --write .",
     "smoke": "bun run scripts/smoke.ts",

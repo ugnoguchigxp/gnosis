@@ -6,6 +6,17 @@ export interface DiffGuardAnalysis {
   inferredFiles: string[];
 }
 
+type DiffGuardAnalyzeResponse = {
+  analysis?: {
+    files?: Array<Record<string, unknown>>;
+  };
+  inferredFiles?: unknown[];
+};
+
+type DiffGuardReviewResponse = {
+  findings?: Array<Record<string, unknown>>;
+};
+
 function mapDiffGuardSeverity(level: string): StaticAnalysisFinding['severity'] {
   if (level === 'error') return 'error';
   if (level === 'warn' || level === 'warning') return 'warning';
@@ -16,14 +27,18 @@ export async function analyzeDiffWithDiffGuard(
   unifiedDiff: string,
   caller?: ReviewMcpToolCaller,
 ): Promise<DiffGuardAnalysis | null> {
-  const result = await callReviewMcpTool<any>(caller, 'mcp_diffguard_analyze_diff', {
-    diff: unifiedDiff,
-  });
+  const result = await callReviewMcpTool<DiffGuardAnalyzeResponse>(
+    caller,
+    'mcp_diffguard_analyze_diff',
+    {
+      diff: unifiedDiff,
+    },
+  );
 
   if (!result) return null;
 
   const files: DiffGuardAnalysis['files'] = [];
-  const rawFiles = Array.isArray(result?.analysis?.files) ? (result.analysis.files as any[]) : [];
+  const rawFiles = result.analysis?.files ?? [];
   for (const file of rawFiles) {
     files.push({
       filePath: String(file?.filePath ?? file?.path ?? file?.file ?? ''),
@@ -42,14 +57,18 @@ export async function runDiffGuard(
   projectRoot: string,
   caller?: ReviewMcpToolCaller,
 ): Promise<StaticAnalysisFinding[]> {
-  const result = await callReviewMcpTool<any>(caller, 'mcp_diffguard_review_diff', {
-    diff: unifiedDiff,
-    workspaceRoot: projectRoot,
-    enableLlm: false,
-    format: 'json',
-  });
+  const result = await callReviewMcpTool<DiffGuardReviewResponse>(
+    caller,
+    'mcp_diffguard_review_diff',
+    {
+      diff: unifiedDiff,
+      workspaceRoot: projectRoot,
+      enableLlm: false,
+      format: 'json',
+    },
+  );
 
-  const rawFindings = Array.isArray(result?.findings) ? (result.findings as any[]) : [];
+  const rawFindings = result?.findings ?? [];
   const normalizedFindings: StaticAnalysisFinding[] = [];
 
   for (let index = 0; index < rawFindings.length; index++) {

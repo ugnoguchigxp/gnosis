@@ -1,15 +1,29 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 
-// 簡易的な Drizzle モック作成関数
-// biome-ignore lint/suspicious/noExplicitAny: mock
-const createMockQuery = (data: any = []) => {
-  const mockObj = {
+type MockFn = ReturnType<typeof mock>;
+
+type MockQuery<T> = {
+  where: MockFn;
+  orderBy: MockFn;
+  limit: MockFn;
+  then: <R>(resolve: (value: T) => R) => R;
+};
+
+type MockDbClient = {
+  select: MockFn;
+  insert: MockFn;
+  execute: MockFn;
+  update: MockFn;
+  delete: MockFn;
+};
+
+const createMockQuery = <T>(data: T[] = []): MockQuery<T[]> => {
+  const mockObj: MockQuery<T[]> = {
     where: mock(() => mockObj),
     orderBy: mock(() => mockObj),
     limit: mock(() => mockObj),
     // biome-ignore lint/suspicious/noThenProperty: mock
-    // biome-ignore lint/suspicious/noExplicitAny: mock
-    then: (resolve: any) => resolve(data),
+    then: (resolve) => resolve(data),
   };
   return mockObj;
 };
@@ -33,7 +47,7 @@ const mockDbDeleteWhere = {
   where: mock(async () => {}),
 };
 
-const mockDb = {
+const mockDb: MockDbClient = {
   select: mock(() => mockDbSelect),
   insert: mock(() => mockDbInsert),
   execute: mock(async () => {}),
@@ -133,6 +147,12 @@ import {
   updateEntity,
 } from '../src/services/graph';
 
+type SaveEntitiesDb = NonNullable<Parameters<typeof saveEntities>[1]>;
+type SaveRelationsDb = NonNullable<Parameters<typeof saveRelations>[1]>;
+type SearchEntitiesDb = NonNullable<Parameters<typeof searchEntitiesByText>[2]>;
+type UpdateEntityDb = NonNullable<Parameters<typeof updateEntity>[2]>;
+type DeleteRelationDb = NonNullable<Parameters<typeof deleteRelation>[3]>;
+
 describe('graph service', () => {
   beforeEach(() => {
     mockJudgeAndMerge.mockClear();
@@ -140,12 +160,12 @@ describe('graph service', () => {
     // 埋め込み生成を常に成功させるようにモック (Memory サービス経由で呼ばれる)
     mockSpawn.mockImplementation(() => ({
       stdout: {
-        // biome-ignore lint/suspicious/noExplicitAny: mock
-        on: (event: string, cb: any) => event === 'data' && cb(Buffer.from('[0.1, 0.2, 0.3]')),
+        on: (event: string, cb: (chunk: Buffer) => void) => {
+          if (event === 'data') cb(Buffer.from('[0.1, 0.2, 0.3]'));
+        },
       },
       stderr: { on: () => {} },
-      // biome-ignore lint/suspicious/noExplicitAny: mock
-      on: (event: string, cb: any) => {
+      on: (event: string, cb: (code: number) => void) => {
         if (event === 'close') setTimeout(() => cb(0), 1);
       },
       kill: () => {},
@@ -174,8 +194,7 @@ describe('graph service', () => {
           from: mock(() => createMockQuery([])),
         })),
         insert: mockInsert,
-        // biome-ignore lint/suspicious/noExplicitAny: mock
-      } as any;
+      } as unknown as SaveEntitiesDb;
 
       const input = [{ id: 'e1', name: 'entity1', type: 'person', description: 'desc' }];
       await saveEntities(input, db, undefined, { judgeAndMerge: mockJudgeAndMerge });
@@ -203,8 +222,7 @@ describe('graph service', () => {
           from: mock(() => createMockQuery([existing])),
         })),
         insert: mockInsert,
-        // biome-ignore lint/suspicious/noExplicitAny: mock
-      } as any;
+      } as unknown as SaveEntitiesDb;
 
       mockJudgeAndMerge.mockResolvedValue({
         shouldMerge: true,
@@ -216,8 +234,10 @@ describe('graph service', () => {
 
       expect(mockJudgeAndMerge).toHaveBeenCalled();
       // マージによって既存の ID ('e_old') が使われるはず
-      // biome-ignore lint/suspicious/noExplicitAny: mock
-      const insertArgs = (mockValues.mock.calls as any)[0][0][0];
+      const insertArgs = (
+        mockValues.mock.calls as unknown as Array<[Array<Record<string, unknown>>]>
+      ).at(0)?.[0]?.[0];
+      if (!insertArgs) throw new Error('expected insert arguments to exist');
       expect(insertArgs.id).toBe('e_old');
       expect(insertArgs.name).toBe('merged');
     });
@@ -226,13 +246,12 @@ describe('graph service', () => {
   describe('saveRelations', () => {
     it('inserts relations with weight handling', async () => {
       const mockExecute = mock(async () => {});
-      const mockDb = {
+      const mockDbLocal = {
         execute: mockExecute,
-        // biome-ignore lint/suspicious/noExplicitAny: mock
-      } as any;
+      } as unknown as SaveRelationsDb;
 
       const relations = [{ sourceId: 'a', targetId: 'b', relationType: 'related', weight: 0.8 }];
-      await saveRelations(relations, mockDb);
+      await saveRelations(relations, mockDbLocal);
 
       expect(mockExecute).toHaveBeenCalled();
     });
@@ -268,8 +287,7 @@ describe('graph service', () => {
       const mockCommunity = { id: 'c1', name: 'Community1', summary: 'A test community' };
 
       let selectCallCount = 0;
-      // biome-ignore lint/suspicious/noExplicitAny: mock override
-      (mockDb as any).select = mock(() => {
+      mockDb.select = mock(() => {
         selectCallCount += 1;
         if (selectCallCount === 1) {
           // startEntity lookup
@@ -290,8 +308,7 @@ describe('graph service', () => {
       const result = await queryGraphContext('e1');
 
       // restore
-      // biome-ignore lint/suspicious/noExplicitAny: mock restore
-      (mockDb as any).select = mock(() => mockDbSelect);
+      mockDb.select = mock(() => mockDbSelect);
 
       expect(result.entities.length).toBeGreaterThan(0);
       expect(result.communities.length).toBeGreaterThan(0);
@@ -306,7 +323,7 @@ describe('graph service', () => {
           from: mock(() => createMockQuery([])),
         })),
         update: mock(() => ({ set: mock(() => ({ where: mock(async () => {}) })) })),
-      } as any;
+      } as unknown as SearchEntitiesDb;
 
       const results = await searchEntitiesByText('TypeScript', 5, db);
       expect(results).toEqual([]);
@@ -328,7 +345,7 @@ describe('graph service', () => {
           from: mock(() => createMockQuery([mockEntityRow])),
         })),
         update: mockUpdate,
-      } as any;
+      } as unknown as SearchEntitiesDb;
 
       const results = await searchEntitiesByText('TypeScript', 5, db);
       expect(results).toHaveLength(1);
@@ -342,8 +359,7 @@ describe('graph service', () => {
       const mockUpdateWhere = mock(async () => {});
       const mockUpdateSet = mock(() => ({ where: mockUpdateWhere }));
       const mockUpdateFn = mock(() => ({ set: mockUpdateSet }));
-      // biome-ignore lint/suspicious/noExplicitAny: mock
-      const db = { update: mockUpdateFn } as any;
+      const db = { update: mockUpdateFn } as unknown as UpdateEntityDb;
 
       await updateEntity('e1', { name: 'Updated Name' }, db);
 
@@ -357,8 +373,7 @@ describe('graph service', () => {
     it('calls db.delete with correct conditions', async () => {
       const mockDeleteWhere = mock(async () => {});
       const mockDeleteFn = mock(() => ({ where: mockDeleteWhere }));
-      // biome-ignore lint/suspicious/noExplicitAny: mock
-      const db = { delete: mockDeleteFn } as any;
+      const db = { delete: mockDeleteFn } as unknown as DeleteRelationDb;
 
       await deleteRelation('src', 'tgt', 'related_to', db);
 

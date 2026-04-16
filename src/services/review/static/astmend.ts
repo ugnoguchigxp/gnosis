@@ -8,6 +8,15 @@ export interface ChangedSymbol {
   file: string;
 }
 
+type AstmendReferencesResponse = {
+  references?: Array<Record<string, unknown>>;
+};
+
+type AstmendImpactResponse = {
+  result?: Array<Record<string, unknown>>;
+  impactedDeclarations?: Array<Record<string, unknown>>;
+};
+
 function uniqueSymbols(symbols: ChangedSymbol[]): ChangedSymbol[] {
   const seen = new Set<string>();
   return symbols.filter((symbol) => {
@@ -55,26 +64,14 @@ export function extractChangedSymbols(diffs: NormalizedDiff[]): ChangedSymbol[] 
   return uniqueSymbols(symbols);
 }
 
-function normalizeReferences(result: any, fallbackFile: string): AstmendSymbolImpact['references'] {
-  const references: Array<{
-    file?: string;
-    filePath?: string;
-    line?: number;
-    isDefinition?: boolean;
-  }> = [];
-
-  const rawReferences = Array.isArray(result?.references) ? (result.references as any[]) : [];
-  for (const reference of rawReferences as Array<Record<string, unknown>>) {
-    references.push({
-      file: String(reference.file ?? fallbackFile),
-      filePath: typeof reference.filePath === 'string' ? reference.filePath : undefined,
-      line: typeof reference.line === 'number' ? reference.line : Number(reference.line ?? 0),
-      isDefinition: Boolean(reference.isDefinition),
-    });
-  }
+function normalizeReferences(
+  result: AstmendReferencesResponse | null,
+  fallbackFile: string,
+): AstmendSymbolImpact['references'] {
+  const rawReferences = result?.references ?? [];
   const normalizedReferences: Array<{ file: string; line: number; isDefinition: boolean }> = [];
 
-  for (const reference of references) {
+  for (const reference of rawReferences) {
     const normalized = {
       file: String(reference.file ?? reference.filePath ?? fallbackFile),
       line: typeof reference.line === 'number' ? reference.line : Number(reference.line ?? 0),
@@ -90,30 +87,14 @@ function normalizeReferences(result: any, fallbackFile: string): AstmendSymbolIm
 }
 
 function normalizeImpactedDeclarations(
-  result: any,
+  result: AstmendImpactResponse | null,
   fallbackFile: string,
 ): AstmendSymbolImpact['impactedDeclarations'] {
-  const declarations: Array<{ name?: string; kind?: string; file?: string; filePath?: string }> =
-    [];
-
-  const rawDeclarations = Array.isArray(result?.result)
-    ? (result.result as any[])
-    : Array.isArray(result?.impactedDeclarations)
-      ? (result.impactedDeclarations as any[])
-      : [];
-
-  for (const declaration of rawDeclarations as Array<Record<string, unknown>>) {
-    declarations.push({
-      name: typeof declaration.name === 'string' ? declaration.name : undefined,
-      kind: typeof declaration.kind === 'string' ? declaration.kind : undefined,
-      file: typeof declaration.file === 'string' ? declaration.file : undefined,
-      filePath: typeof declaration.filePath === 'string' ? declaration.filePath : undefined,
-    });
-  }
+  const rawDeclarations = result?.result ?? result?.impactedDeclarations ?? [];
 
   const normalizedDeclarations: Array<{ name: string; kind: string; file: string }> = [];
 
-  for (const declaration of declarations) {
+  for (const declaration of rawDeclarations) {
     const normalized = {
       name: String(declaration.name ?? ''),
       kind: String(declaration.kind ?? 'variable'),
@@ -143,11 +124,15 @@ export async function analyzeImpactWithAstmend(
     const filePath = path.join(projectRoot, symbol.file);
 
     const [referencesResult, impactResult] = await Promise.all([
-      callReviewMcpTool<any>(caller, 'mcp_astmend_analyze_references_from_file', {
-        filePath,
-        target: { kind: symbol.kind, name: symbol.name },
-      }),
-      callReviewMcpTool<any>(caller, 'mcp_astmend_detect_impact_from_file', {
+      callReviewMcpTool<AstmendReferencesResponse>(
+        caller,
+        'mcp_astmend_analyze_references_from_file',
+        {
+          filePath,
+          target: { kind: symbol.kind, name: symbol.name },
+        },
+      ),
+      callReviewMcpTool<AstmendImpactResponse>(caller, 'mcp_astmend_detect_impact_from_file', {
         filePath,
         target: { kind: symbol.kind, name: symbol.name },
       }),

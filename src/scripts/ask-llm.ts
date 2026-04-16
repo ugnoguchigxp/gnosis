@@ -26,7 +26,7 @@ type SessionRecord = {
   messages: ChatMessage[];
 };
 
-type BedrockCliArgs = {
+type CloudCliArgs = {
   provider: ReviewCloudProvider;
   prompt?: string;
   output: 'text' | 'json';
@@ -39,6 +39,8 @@ type BedrockCliArgs = {
   region?: string;
   apiBaseUrl?: string;
   apiVersion?: string;
+  apiKey?: string;
+  model?: string;
 };
 
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{6,64}$/;
@@ -96,7 +98,10 @@ function loadSession(sessionDir: string, sessionId: string): SessionRecord | nul
       typeof parsed.created_at === 'string' ? parsed.created_at : new Date().toISOString(),
     updated_at:
       typeof parsed.updated_at === 'string' ? parsed.updated_at : new Date().toISOString(),
-    provider: parsed.provider === 'openai' ? 'openai' : 'bedrock',
+    provider:
+      parsed.provider === 'openai' || parsed.provider === 'azure-openai'
+        ? parsed.provider
+        : 'bedrock',
     model: typeof parsed.model === 'string' ? parsed.model : '',
     messages: parsed.messages.filter((item): item is ChatMessage =>
       Boolean(
@@ -135,7 +140,7 @@ function buildConversationPrompt(history: ChatMessage[], userText: string): stri
   ].join('\n');
 }
 
-function parseArgs(argv: string[]): BedrockCliArgs {
+function parseArgs(argv: string[]): CloudCliArgs {
   const providerArg = (getArg(argv, '--provider') ?? 'bedrock') as ReviewCloudProvider;
   const promptArg = getArg(argv, '--prompt') ?? getArg(argv, '--input');
   const output = getArg(argv, '--output') === 'json' ? 'json' : 'text';
@@ -157,12 +162,29 @@ function parseArgs(argv: string[]): BedrockCliArgs {
     region: getArg(argv, '--region'),
     apiBaseUrl: getArg(argv, '--api-base-url'),
     apiVersion: getArg(argv, '--api-version'),
+    apiKey: getArg(argv, '--api-key'),
+    model: getArg(argv, '--model'),
   };
 }
 
-function buildService(args: BedrockCliArgs) {
+function buildService(args: CloudCliArgs) {
+  const apiKey =
+    args.apiKey ??
+    (args.provider === 'azure-openai'
+      ? process.env.AZURE_OPENAI_API_KEY ?? process.env.GNOSIS_REVIEW_LLM_API_KEY
+      : process.env.OPENAI_API_KEY ?? process.env.GNOSIS_REVIEW_LLM_API_KEY);
+
+  const model =
+    args.model ??
+    args.modelId ??
+    (args.provider === 'azure-openai'
+      ? process.env.AZURE_OPENAI_MODEL ?? process.env.GNOSIS_REVIEW_LLM_MODEL
+      : process.env.OPENAI_MODEL ?? process.env.GNOSIS_REVIEW_LLM_MODEL ?? 'gpt-5.4-mini');
+
   return createCloudReviewLLMService({
     provider: args.provider,
+    apiKey,
+    model,
     bedrockModelId: args.modelId,
     bedrockInferenceProfileId: args.inferenceProfileId,
     awsRegion: args.region,
@@ -181,7 +203,14 @@ async function readStdinPrompt(): Promise<string> {
   return buffer.trim();
 }
 
-async function runSingleTurn(args: BedrockCliArgs, prompt: string): Promise<void> {
+function getCliLabel(provider: ReviewCloudProvider): string {
+  if (provider === 'azure-openai') return 'Azure OpenAI';
+  if (provider === 'openai') return 'OpenAI';
+  if (provider === 'bedrock') return 'Bedrock';
+  return provider;
+}
+
+async function runSingleTurn(args: CloudCliArgs, prompt: string): Promise<void> {
   const service = buildService(args);
   const wantsSession = !args.noSession;
   const sessionDir = path.resolve(args.sessionDir ?? DEFAULT_SESSION_DIR);
@@ -241,7 +270,7 @@ async function runSingleTurn(args: BedrockCliArgs, prompt: string): Promise<void
   process.stdout.write(`${response.trim()}\n`);
 }
 
-async function runInteractive(args: BedrockCliArgs): Promise<void> {
+async function runInteractive(args: CloudCliArgs): Promise<void> {
   const service = buildService(args);
   const rl = createInterface({ input, output });
   const wantsSession = !args.noSession;
@@ -255,7 +284,7 @@ async function runInteractive(args: BedrockCliArgs): Promise<void> {
   const sessionCreated = Boolean(sessionId && wantsSession && !loaded);
 
   output.write(
-    `Bedrock interactive mode. Commands: /exit, /reset${
+    `${getCliLabel(args.provider)} interactive mode. Commands: /exit, /reset${
       sessionId ? `, session: ${sessionId}` : ''
     }\n`,
   );
@@ -334,6 +363,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
-  console.error('Bedrock CLI failed:', error);
+  console.error('Cloud CLI failed:', error);
   process.exit(1);
 });
