@@ -28,6 +28,7 @@
     "monitor:detail": "bun run src/scripts/monitor-detail.ts --json",
     "monitor:dev": "bun run --cwd apps/monitor tauri:dev",
     "review": "bun run src/scripts/review.ts",
+    "bedrock": "./services/local-llm/scripts/bedrock",
     "lint": "biome check .",
     "format": "biome format --write .",
     "smoke": "bun run scripts/smoke.ts",

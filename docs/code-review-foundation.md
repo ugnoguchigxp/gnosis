@@ -432,7 +432,7 @@ interface ReviewLLMService {
 | ファイル | 役割 |
 |---------|------|
 | `llm/localProvider.ts` | 既存 `llm.ts` の shell script 呼び出しを `ReviewLLMService` でラップ。`Bun.spawn` で非同期化。 |
-| `llm/cloudProvider.ts` | 環境変数 `GNOSIS_REVIEW_LLM_PROVIDER` で OpenAI / Anthropic / Google を切り替え。 |
+| `llm/cloudProvider.ts` | 環境変数 `GNOSIS_REVIEW_LLM_PROVIDER` で OpenAI / Azure OpenAI / Anthropic / Google を切り替え。 |
 | `llm/reviewer.ts` | `getReviewLLMService(preference)` でプロバイダーを取得。cloud 不可時は local にフォールバック。両方不可なら `ReviewError('E007')`。 |
 
 ### ローカル LLM の制限事項

@@ -174,6 +174,20 @@ bun run monitor:dev
 
 `verify` が通れば、最低限のフォーマット・lint・型チェック・テスト・スモークは完了しています。
 
+### Bedrock CLI
+
+Bedrock を使った対話・単発実行は次のコマンドで行えます。`.env` は自動で読み込みます。
+
+```bash
+# 単発実行
+bun run bedrock --prompt "openAI ChatGPTについてどう思っていますか？"
+
+# 対話モード
+./scripts/bedrock
+```
+
+必要に応じて `--model-id`、`--inference-profile-id`、`--region` で上書きできます。
+
 ## MCP ツール一覧
 
 Gnosis は 18 の MCP ツールを提供します。

@@ -11,6 +11,7 @@ echo "--- Local LLM Agent PATH Setting Helper ---"
 chmod +x "${SCRIPT_DIR}/gemma4"
 chmod +x "${SCRIPT_DIR}/ollama-v4"
 chmod +x "${SCRIPT_DIR}/bonsai"
+chmod +x "${SCRIPT_DIR}/bedrock"
 chmod +x "${SCRIPT_DIR}/run_openai_api.sh"
 
 # 使用中のシェルを特定
@@ -47,7 +48,7 @@ if grep -q "${SCRIPT_DIR}" "${PROFILE_FILE}" 2>/dev/null; then
   echo "Success: ${SCRIPT_DIR} is already in ${PROFILE_FILE}."
 else
   echo ""
-  echo "To use 'gemma4', 'ollama-v4', and 'bonsai' commands from anywhere,"
+  echo "To use 'gemma4', 'ollama-v4', 'bonsai', and 'bedrock' commands from anywhere,"
   echo "add the following line to your ${PROFILE_FILE}:"
   echo ""
   echo "  ${PATH_LINE}"
