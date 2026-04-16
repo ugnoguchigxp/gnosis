@@ -20,6 +20,10 @@ export const FindingCategorySchema = z.enum([
   'maintainability',
   'test',
   'validation',
+  'unused-import',
+  'missing-import',
+  'missing-parameter',
+  'interface-property',
 ]);
 export type FindingCategory = z.infer<typeof FindingCategorySchema>;
 
@@ -93,6 +97,7 @@ export interface Finding {
   fingerprint: string;
   needsHumanConfirmation: boolean;
   source: FindingSource;
+  metadata?: Record<string, unknown>;
 }
 
 export const FindingSchema = z
@@ -112,6 +117,51 @@ export const FindingSchema = z
     fingerprint: z.string().min(1),
     needsHumanConfirmation: z.boolean(),
     source: FindingSourceSchema,
+    metadata: z.record(z.unknown()).optional(),
+  })
+  .strict();
+
+export interface FixSuggestion {
+  findingId: string;
+  operation: Record<string, unknown>;
+  diff: string;
+  updatedText: string;
+  confidence: 'high' | 'medium';
+}
+
+export const FixSuggestionSchema = z
+  .object({
+    findingId: z.string().min(1),
+    operation: z.record(z.unknown()),
+    diff: z.string(),
+    updatedText: z.string(),
+    confidence: z.enum(['high', 'medium']),
+  })
+  .strict();
+
+export interface ReviewKPIs {
+  totalReviews: number;
+  totalFindings: number;
+  avgFindingsPerReview: number;
+  precisionRate: number;
+  falsePositiveRate: number;
+  knowledgeContributionRate: number;
+  zeroFpDays: number;
+  avgReviewDurationMs: number;
+  precisionByCategory: Record<string, number>;
+}
+
+export const ReviewKPISchema = z
+  .object({
+    totalReviews: z.number().int().nonnegative(),
+    totalFindings: z.number().int().nonnegative(),
+    avgFindingsPerReview: z.number(),
+    precisionRate: z.number(),
+    falsePositiveRate: z.number(),
+    knowledgeContributionRate: z.number(),
+    zeroFpDays: z.number().int().nonnegative(),
+    avgReviewDurationMs: z.number(),
+    precisionByCategory: z.record(z.number()),
   })
   .strict();
 
@@ -151,6 +201,8 @@ export interface ReviewOutput {
   rerun_review: boolean;
   metadata: ReviewMetadata;
   markdown: string;
+  fix_suggestions?: FixSuggestion[];
+  review_kpis?: ReviewKPIs;
 }
 
 export const ReviewOutputSchema = z
@@ -164,6 +216,8 @@ export const ReviewOutputSchema = z
     rerun_review: z.boolean(),
     metadata: ReviewMetadataSchema,
     markdown: z.string(),
+    fix_suggestions: z.array(FixSuggestionSchema).optional(),
+    review_kpis: ReviewKPISchema.optional(),
   })
   .strict();
 

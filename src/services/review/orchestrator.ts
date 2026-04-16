@@ -10,6 +10,7 @@ import { getDiff } from './foundation/gitDiff.js';
 import { enforceHardLimit } from './foundation/hardLimit.js';
 import { maskOrThrow } from './foundation/secretMask.js';
 import { validateSessionId } from './foundation/sessionId.js';
+import { generateFixSuggestion } from './knowledge/fixSuggester.js';
 import {
   getProjectKey,
   persistReviewCase,
@@ -19,6 +20,7 @@ import {
 import { getReviewLLMService, reviewWithLLM } from './llm/reviewer.js';
 import type { ReviewLLMService } from './llm/types.js';
 import type { ReviewMcpToolCaller } from './mcp/caller.js';
+import { calculateMetrics } from './metrics/calculator.js';
 import { enrichRiskSignalsWithImpact, planReview } from './planner/riskScorer.js';
 import { renderReviewMarkdown } from './render/markdown.js';
 import { analyzeImpactWithAstmend, extractChangedSymbols } from './static/astmend.js';
@@ -27,6 +29,7 @@ import { runStaticAnalysisOnChangedDetailed } from './static/runner.js';
 import {
   type DegradedMode,
   type Finding,
+  type FixSuggestion,
   type GuidanceItem,
   type NormalizedDiff,
   type ReviewMetadata,
@@ -182,13 +185,28 @@ function detectProjectInfo(
   return framework ? { language, framework } : { language };
 }
 
-function buildResult(input: Omit<ReviewOutput, 'markdown'>): ReviewOutput {
+function buildResult(input: Omit<ReviewOutput, 'markdown'> & { markdown?: string }): ReviewOutput {
   const withMarkdown = {
     ...input,
     markdown: '',
   } satisfies ReviewOutput;
   const markdown = renderReviewMarkdown(withMarkdown);
   return { ...input, markdown };
+}
+
+async function buildFixSuggestions(
+  findings: Finding[],
+  repoPath: string,
+  mcpCaller: ReviewMcpToolCaller | undefined,
+): Promise<FixSuggestion[]> {
+  const suggestions: FixSuggestion[] = [];
+
+  for (const finding of findings) {
+    const suggestion = await generateFixSuggestion(finding, repoPath, mcpCaller);
+    if (suggestion) suggestions.push(suggestion);
+  }
+
+  return suggestions;
 }
 
 function buildNoChangesResult(startTime: number, now: () => number): ReviewOutput {
@@ -623,6 +641,28 @@ export async function runReviewStageC(
   });
 
   return withMarkdown;
+}
+
+export async function runReviewStageD(
+  req: ReviewRequest,
+  deps: RunReviewDeps = {},
+): Promise<ReviewOutput> {
+  const now = deps.now ?? Date.now;
+  const result = await runReviewStageC(req, deps);
+  const fixSuggestions = await buildFixSuggestions(result.findings, req.repoPath, deps.mcpCaller);
+  const reviewKpis = await calculateMetrics(
+    {
+      start: new Date(now() - 7 * 24 * 60 * 60 * 1000),
+      end: new Date(now()),
+    },
+    getProjectKey(req.repoPath),
+  );
+
+  return buildResult({
+    ...result,
+    fix_suggestions: fixSuggestions,
+    review_kpis: reviewKpis,
+  });
 }
 
 export async function runReviewStageBFromRepo(

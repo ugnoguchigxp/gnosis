@@ -109,12 +109,13 @@ function buildV1Instruction(
   lines.push('      "file_path": "相対パス",');
   lines.push('      "line_new": 42,');
   lines.push(
-    '      "category": "bug" | "security" | "performance" | "design" | "maintainability" | "test" | "validation",',
+    '      "category": "bug" | "security" | "performance" | "design" | "maintainability" | "test" | "validation" | "unused-import" | "missing-import" | "missing-parameter" | "interface-property",',
   );
   lines.push('      "rationale": "指摘理由（根拠明示）",');
   lines.push('      "suggested_fix": "修正案（省略可）",');
   lines.push('      "evidence": "diff本文からの引用",');
-  lines.push('      "needsHumanConfirmation": false');
+  lines.push('      "needsHumanConfirmation": false,');
+  lines.push('      "metadata": { "module": "任意" }');
   lines.push('    }');
   lines.push('  ],');
   lines.push('  "summary": "変更の概要と主要な指摘の要約",');
