@@ -5,6 +5,8 @@ import { guidanceTools } from './guidance.js';
 import { knowflowTools } from './knowflow.js';
 import { knowledgeTools } from './knowledge.js';
 import { memoryTools } from './memory.js';
+import { queryProcedureTools } from './queryProcedure.js';
+import { recordOutcomeTools } from './recordOutcome.js';
 import { syncTools } from './sync.js';
 
 export const toolEntries: ToolEntry[] = [
@@ -15,4 +17,6 @@ export const toolEntries: ToolEntry[] = [
   ...experienceTools,
   ...syncTools,
   ...guidanceTools,
+  ...queryProcedureTools,
+  ...recordOutcomeTools,
 ];

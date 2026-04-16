@@ -8,8 +8,8 @@ const registerGuidanceSchema = z.object({
   title: z.string().describe('ガイダンスのタイトル'),
   content: z.string().describe('内容（マークダウン形式推奨）'),
   guidanceType: z
-    .enum(['rule', 'skill'])
-    .describe('種別 (rule: 規約・禁止事項, skill: 手順・ノウハウ)'),
+    .enum(['rule', 'skill', 'goal'])
+    .describe('種別 (rule: 規約・禁止事項, skill: 手順・ノウハウ, goal: 達成目標)'),
   scope: z
     .enum(['always', 'on_demand'])
     .describe('適用範囲 (always: 常に参照, on_demand: 必要時のみ検索)'),

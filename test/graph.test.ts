@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { generateEntityId } from '../src/utils/entityId';
+import { EntityInputSchema, LlmEntityDraftSchema, LlmRelationDraftSchema, RelationInputSchema } from '../src/domain/schemas';
 
 type MockFn = ReturnType<typeof mock>;
 
@@ -255,6 +257,32 @@ describe('graph service', () => {
 
       expect(mockExecute).toHaveBeenCalled();
     });
+
+    it('resolves name-based draft relations to entity IDs', async () => {
+      const mockExecute = mock(async () => {});
+      const mockDbLocal = {
+        execute: mockExecute,
+      } as unknown as SaveRelationsDb;
+
+      await saveRelations(
+        [
+          {
+            sourceType: 'library',
+            sourceName: 'Drizzle ORM',
+            targetType: 'service',
+            targetName: 'PostgreSQL',
+            relationType: 'depends_on',
+          },
+        ],
+        mockDbLocal,
+      );
+
+      // name ベース形式が ID に解決されて execute が 1 回呼ばれる
+      expect(mockExecute).toHaveBeenCalledTimes(1);
+      // 生成される ID を generateEntityId 単体テストで検証済み
+      expect(generateEntityId('library', 'Drizzle ORM')).toBe('library/drizzle-orm');
+      expect(generateEntityId('service', 'PostgreSQL')).toBe('service/postgresql');
+    });
   });
 
   describe('findPathBetweenEntities', () => {
@@ -436,5 +464,117 @@ describe('graph service', () => {
       expect(results).toHaveLength(0);
       expect(mockSearcher).not.toHaveBeenCalled();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ユニットテスト: generateEntityId
+// ---------------------------------------------------------------------------
+describe('generateEntityId', () => {
+  it('generates slug from type and name', () => {
+    expect(generateEntityId('library', 'Drizzle ORM')).toBe('library/drizzle-orm');
+    expect(generateEntityId('tool', 'biome')).toBe('tool/biome');
+    expect(generateEntityId('task', '差分の安全性を確認する')).toBe('task/差分の安全性を確認する');
+  });
+
+  it('normalizes multiple spaces to single hyphen', () => {
+    // \s+ は 1 以上の連続スペースを 1 つのハイフンに置換する
+    expect(generateEntityId('library', 'My  Library')).toBe('library/my-library');
+  });
+
+  it('trims whitespace from name', () => {
+    expect(generateEntityId('tool', '  biome  ')).toBe('tool/biome');
+  });
+
+  it('is deterministic for the same input', () => {
+    const a = generateEntityId('project', 'gnosis');
+    const b = generateEntityId('project', 'gnosis');
+    expect(a).toBe(b);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ユニットテスト: スキーマバリデーション (制御語彙)
+// ---------------------------------------------------------------------------
+describe('制御語彙バリデーション', () => {
+  it('LlmEntityDraftSchema: 有効な type を受け入れる', () => {
+    const result = LlmEntityDraftSchema.safeParse({
+      type: 'library',
+      name: 'drizzle-orm',
+      description: 'PostgreSQL 向けの TypeScript ORM。スキーマ定義と型安全なクエリを提供する',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('LlmEntityDraftSchema: 制御語彙外の type を拒否する', () => {
+    const result = LlmEntityDraftSchema.safeParse({
+      type: 'technology', // 語彙外
+      name: 'TypeScript',
+      description: '型付き JavaScript',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('LlmRelationDraftSchema: 有効な relationType を受け入れる', () => {
+    const result = LlmRelationDraftSchema.safeParse({
+      sourceType: 'goal',
+      sourceName: 'PR レビュー完了',
+      targetType: 'task',
+      targetName: '差分の安全性確認',
+      relationType: 'has_step',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('LlmRelationDraftSchema: 制御語彙外の relationType を拒否する', () => {
+    const result = LlmRelationDraftSchema.safeParse({
+      sourceType: 'task',
+      sourceName: 'A',
+      targetType: 'task',
+      targetName: 'B',
+      relationType: 'related_to', // 語彙外
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('EntityInputSchema: id あり入力を受け入れる (後方互換)', () => {
+    const result = EntityInputSchema.safeParse({
+      id: 'manual-id',
+      type: 'project',
+      name: 'gnosis',
+      description: 'メモリ管理システム',
+    });
+    expect(result.success).toBe(true);
+    expect(result.data?.id).toBe('manual-id');
+  });
+
+  it('EntityInputSchema: id なし入力を受け入れる (LLM ドラフト互換)', () => {
+    const result = EntityInputSchema.safeParse({
+      type: 'library',
+      name: 'drizzle-orm',
+      description: 'TypeScript ORM',
+    });
+    expect(result.success).toBe(true);
+    expect(result.data?.id).toBeUndefined();
+  });
+
+  it('RelationInputSchema: id ベース形式を受け入れる (後方互換)', () => {
+    const result = RelationInputSchema.safeParse({
+      sourceId: 'library/ts',
+      targetId: 'tool/bun',
+      relationType: 'depends_on',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('RelationInputSchema: name ベース形式を受け入れる (新形式)', () => {
+    const result = RelationInputSchema.safeParse({
+      sourceType: 'library',
+      sourceName: 'TypeScript',
+      targetType: 'tool',
+      targetName: 'Bun',
+      relationType: 'depends_on',
+    });
+    expect(result.success).toBe(true);
   });
 });

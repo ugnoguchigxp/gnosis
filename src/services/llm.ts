@@ -52,7 +52,11 @@ export async function extractEntitiesFromText(
 出力は必ず以下のJSON配列形式のみで返してください。余計な解説は不要です。
 
 [
-  { "name": "実体名", "type": "種別(Person/City/Concept等)", "description": "短い説明" }
+  {
+    "name": "実体名（公式名稱、日本語可）",
+    "type": "以下から1つ選択: task|goal|constraint|context|project|library|service|tool|concept|person|pattern|config",
+    "description": "50文字以上の説明。何であるか、なぜ重要かを含む。短すぎる説明は不可"
+  }
 ]
 
 テキスト:
@@ -184,8 +188,23 @@ export async function distillKnowledgeFromTranscript(
 
 {
   "memories": ["短い文章形式の記憶1", "記憶2"],
-  "entities": [{ "id": "唯一のID", "type": "種別", "name": "名前", "description": "説明" }],
-  "relations": [{ "sourceId": "ID1", "targetId": "ID2", "relationType": "関係名", "weight": 1.0 }]
+  "entities": [
+    {
+      "type": "以下から1つ選択: task|goal|constraint|context|project|library|service|tool|concept|person|pattern|config|episode",
+      "name": "正規化された名前（公式名称、日本語可）",
+      "description": "50文字以上の説明。何であるか、なぜ重要かを含む。短すぎる説明は不可"
+    }
+  ],
+  "relations": [
+    {
+      "sourceType": "source の type",
+      "sourceName": "source の name",
+      "targetType": "target の type",
+      "targetName": "target の name",
+      "relationType": "以下から1つ選択: has_step|precondition|follows|when|prohibits|learned_from|alternative_to|depends_on|uses|implements|extends|part_of|caused_by|resolved_by",
+      "weight": 0.0−1.0の数値
+    }
+  ]
 }
 
 会話記録:

@@ -71,12 +71,12 @@ function dedupeEntities(entities: DistilledKnowledge['entities']) {
       entities
         .filter(
           (entity: DistilledKnowledge['entities'][number]) =>
-            entity &&
-            typeof entity.id === 'string' &&
-            typeof entity.type === 'string' &&
-            typeof entity.name === 'string',
+            entity && typeof entity.type === 'string' && typeof entity.name === 'string',
         )
-        .map((entity: DistilledKnowledge['entities'][number]) => [entity.id, entity]),
+        .map((entity: DistilledKnowledge['entities'][number]) => [
+          `${entity.type}:${entity.name}`,
+          entity,
+        ]),
     ).values(),
   );
 }
@@ -88,14 +88,18 @@ function dedupeRelations(relations: DistilledKnowledge['relations']) {
         .filter(
           (relation: DistilledKnowledge['relations'][number]) =>
             relation &&
-            typeof relation.sourceId === 'string' &&
-            typeof relation.targetId === 'string' &&
-            typeof relation.relationType === 'string',
+            typeof relation.relationType === 'string' &&
+            (('sourceId' in relation && typeof relation.sourceId === 'string') ||
+              ('sourceName' in relation && typeof relation.sourceName === 'string')),
         )
-        .map((relation: DistilledKnowledge['relations'][number]) => [
-          `${relation.sourceId}::${relation.targetId}::${relation.relationType}`,
-          relation,
-        ]),
+        .map((relation: DistilledKnowledge['relations'][number]) => {
+          const r = relation as Record<string, unknown>;
+          const key =
+            'sourceId' in relation
+              ? `${r.sourceId}::${r.targetId}::${relation.relationType}`
+              : `${r.sourceName}::${r.targetName}::${relation.relationType}`;
+          return [key, relation];
+        }),
     ).values(),
   );
 }

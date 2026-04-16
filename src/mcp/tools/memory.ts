@@ -1,14 +1,22 @@
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { db } from '../../db/index.js';
+import { consolidateEpisodes } from '../../services/consolidation.js';
 import { saveEntities, saveRelations } from '../../services/graph.js';
-import { deleteMemory, saveMemory, searchMemory } from '../../services/memory.js';
+import { deleteMemory, saveEpisodeMemory, searchMemory } from '../../services/memory.js';
 import type { ToolEntry } from '../registry.js';
 
 const storeMemorySchema = z.object({
   sessionId: z.string().describe('セッションID (プロジェクトやコンテキストを分離する識別子)'),
   content: z.string().describe('記憶するテキスト内容'),
   metadata: z.record(z.unknown()).optional().describe('その他のメタデータ'),
+  memoryType: z
+    .enum(['raw', 'episode'])
+    .optional()
+    .default('raw')
+    .describe('記憶の種別 (raw: 生メモ, episode: ストーリー化済み)'),
+  episodeAt: z.string().optional().describe('出来事が起きた時刻（ISO 8601）'),
+  importance: z.number().min(0).max(1).optional().describe('重要度 0.0-1.0'),
   entities: z
     .array(
       z.object({
@@ -44,6 +52,17 @@ const deleteMemorySchema = z.object({
   memoryId: z.string().describe('削除する Vibe Memory の ID'),
 });
 
+const consolidateEpisodesSchema = z.object({
+  sessionId: z.string().describe('ストーリー化対象のセッション ID'),
+  minRawCount: z
+    .number()
+    .int()
+    .min(1)
+    .optional()
+    .default(5)
+    .describe('ストーリー化するのに必要な最低 raw メモ件数'),
+});
+
 export const memoryTools: ToolEntry[] = [
   {
     name: 'store_memory',
@@ -56,7 +75,17 @@ export const memoryTools: ToolEntry[] = [
     handler: async (args) => {
       const input = storeMemorySchema.parse(args);
       const memory = await db.transaction(async (tx) => {
-        const savedMemory = await saveMemory(input.sessionId, input.content, input.metadata, tx);
+        const savedMemory = await saveEpisodeMemory(
+          {
+            sessionId: input.sessionId,
+            content: input.content,
+            metadata: input.metadata,
+            memoryType: input.memoryType,
+            episodeAt: input.episodeAt ? new Date(input.episodeAt) : undefined,
+            importance: input.importance,
+          },
+          tx,
+        );
         if (input.entities?.length) await saveEntities(input.entities, tx);
         if (input.relations?.length) await saveRelations(input.relations, tx);
         return savedMemory;
@@ -88,6 +117,34 @@ export const memoryTools: ToolEntry[] = [
       await deleteMemory(memoryId);
       return {
         content: [{ type: 'text', text: `Memory ${memoryId} has been deleted successfully` }],
+      };
+    },
+  },
+  {
+    name: 'consolidate_episodes',
+    description: `同一セッションの raw メモを LLM でストーリー化し、エピソード記憶として統合します。
+- 断片的なメモを因果関係のあるナラティブに変換
+- ベクトル検索精度の向上
+- トークン効率の改善（複数断片 → 1エピソード）
+- 同一セッションの raw メモが5件以上蓄積されたタイミングで呼び出すのが推奨`,
+    inputSchema: zodToJsonSchema(consolidateEpisodesSchema) as Record<string, unknown>,
+    handler: async (args) => {
+      const { sessionId, minRawCount } = consolidateEpisodesSchema.parse(args);
+      const result = await consolidateEpisodes(sessionId, { minRawCount });
+      if (!result) {
+        return {
+          content: [
+            { type: 'text', text: `Not enough raw memories to consolidate (min: ${minRawCount})` },
+          ],
+        };
+      }
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Episode consolidated: memoryId=${result.episodeId}, entityId=${result.episodeEntityId}`,
+          },
+        ],
       };
     },
   },

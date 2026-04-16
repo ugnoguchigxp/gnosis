@@ -1,7 +1,8 @@
 # Gnosis 記憶リファクタリング設計書
 
-> **ステータス**: 提案中 (Draft)  
+> **ステータス**: 承認済み (Approved)  
 > **作成日**: 2026-04-15  
+> **承認日**: 2026-04-16  
 > **対象ブランチ**: `main`
 
 ---
@@ -10,12 +11,15 @@
 
 1. [問題提起と動機](#1-問題提起と動機)
 2. [目標とする記憶モデル](#2-目標とする記憶モデル)
-3. [現在のリポジトリ概念との対応](#3-現在のリポジトリ概念との対応)
-4. [提案データモデル / スキーマ方針](#4-提案データモデル--スキーマ方針)
-5. [実装フェーズ計画](#5-実装フェーズ計画)
-6. [既存コミュニティ検出の再利用・適応](#6-既存コミュニティ検出の再利用適応)
-7. [リスク・トレードオフ・非ゴール](#7-リスクトレードオフ非ゴール)
-8. [将来の拡張について](#8-将来の拡張について)
+3. [設計原則](#3-設計原則)
+4. [エピソード記憶: ストーリー化](#4-エピソード記憶-ストーリー化)
+5. [手続き記憶: 小タスク × Graph](#5-手続き記憶-小タスク--graph)
+6. [フィードバックループ: confidence スコアリング](#6-フィードバックループ-confidence-スコアリング)
+7. [マイグレーション判定](#7-マイグレーション判定)
+8. [現在のリポジトリ概念との対応](#8-現在のリポジトリ概念との対応)
+9. [実装フェーズ計画](#9-実装フェーズ計画)
+10. [リスク・トレードオフ・非ゴール](#10-リスクトレードオフ非ゴール)
+11. [将来の拡張について](#11-将来の拡張について)
 
 ---
 
@@ -23,370 +27,844 @@
 
 ### 現状の課題
 
-現在の Gnosis は「Vibe Memory」「Knowledge Graph」「Experience」「Guidance Registry」「KnowFlow」という複数の機能を提供しているが、それぞれの**記憶としての役割**が明示的に定義されていない。その結果、以下の問題が生じやすい。
+| 課題 | 影響箇所 | 具体例 |
+|------|---------|--------|
+| `vibe_memories` に何でも保存される | `src/services/guidance/register.ts` | Guidance Registry が `metadata.kind: 'guidance'` で vibe_memories に同居 |
+| `type` / `relationType` が自由記述 | `src/services/llm.ts` L176 | LLM が `"Tool"` / `"tool"` / `"Library"` をバラバラに生成 |
+| `description` がスカスカ | `src/services/graph.ts` | 2語程度の description ではベクトル検索の精度が出ない |
+| エンティティ ID を LLM が生成 | `src/services/llm.ts` | 同じ概念が `"bun"` / `"bun-runtime"` で重複 |
+| 忘却・圧縮の仕組みがない | — | 長期運用でデータが肥大化 |
 
-- `vibe_memories` に何でも保存されやすく、検索品質が下がる
-- `entities` / `relations` / `communities` がエピソードとしての記憶なのか意味的な知識なのかが曖昧
-- `register_guidance` で登録されるものが手順なのかルールなのかテンプレートなのかが不明確
-- 「忘却」や「圧縮」の概念がなく、長期運用でデータが肥大化しやすい
+### LLM にとって本当に必要な記憶
 
-### 動機となる設計方針
+| LLM の弱点 | 必要な記憶 | Gnosis での対応 |
+|---|---|---|
+| **忘れる**（前のセッションを知らない） | 過去の体験の想起 | エピソード記憶 |
+| **学ばない**（同じ失敗を繰り返す） | 教訓の蓄積と参照 | エピソード記憶 |
+| **知らない**（プロジェクト固有の事情） | ルール・方針の注入 | 手続き記憶（`scope: 'always'`） |
+| **一貫しない**（判断基準がブレる） | ベストプラクティス参照 | 手続き記憶（task + confidence） |
 
-人間の記憶科学に基づき、記憶を**用途と取り出し方で分類**することで、これらの課題を解消できる。特に以下の原則を採用する。
-
-1. **短期記憶 / ワーキングメモリは LLM の Context Window が担当する**  
-   Gnosis はこの層を保持しない。これにより Gnosis の役割が「長期記憶の専門基盤」として明確になる。
-
-2. **Gnosis が担当するのは長期記憶のみ**  
-   長期記憶は「エピソード記憶」「意味記憶」「手続き記憶」の 3 層に整理する。
-
-3. **手続き記憶は固定的な SKILL ストアにしない**  
-   柔軟なパターン分解・グラフ関係・コミュニティ検出によって進化させる。
+普遍的事実は LLM の事前学習や Web 検索 MCP で十分なため、Gnosis は保持しない。
 
 ---
 
 ## 2. 目標とする記憶モデル
-
-### 全体像
 
 ```text
 ┌────────────────────────────────────────────────┐
 │              LLM (Context Window)              │
 │  短期記憶 / ワーキングメモリ（Gnosis管轄外）     │
 └────────────────────────────────────────────────┘
-                        │ 長期記憶の参照・保存
+                        │
 ┌────────────────────────────────────────────────┐
 │                  Gnosis                        │
 │                                                │
 │  ┌──────────────────────────────────────────┐  │
-│  │  エピソード記憶 (Episodic Memory)         │  │
-│  │  いつ・何が・どのような文脈で起きたか     │  │
+│  │  エピソード記憶 (vibe_memories)           │  │
+│  │  ストーリー化された体験・教訓             │  │
+│  │  → LLM が search_memory で能動的に検索   │  │
 │  └──────────────────────────────────────────┘  │
 │  ┌──────────────────────────────────────────┐  │
-│  │  意味記憶 (Semantic Memory)              │  │
-│  │  事実・概念・エンティティ間の関係        │  │
+│  │  手続き記憶 (entities + relations)        │  │
+│  │  小タスク × Graph + フィードバックループ  │  │
+│  │  → query_procedure で目標達成時に取得    │  │
+│  │  → scope:'always' は自動注入（暗黙知）    │  │
 │  └──────────────────────────────────────────┘  │
-│  ┌──────────────────────────────────────────┐  │
-│  │  手続き記憶 (Procedural Memory)          │  │
-│  │  パターン・プレイブック・方針・テンプレ  │  │
-│  └──────────────────────────────────────────┘  │
+│                                                │
+│  ※ 普遍的事実は Web 検索 MCP に委譲           │
+│  ※ entities/relations は手続き記憶の Graph    │
+│    インフラ。「意味記憶」として独立させない     │
 └────────────────────────────────────────────────┘
 ```
 
-### 各層の役割
+### 意味記憶を独立層にしない理由
 
-#### 2-1. エピソード記憶 (Episodic Memory)
-
-| 項目 | 内容 |
-|------|------|
-| **役割** | 時系列・文脈付きの出来事を記録する |
-| **問い** | 「いつ、どこで、何が起きたか」 |
-| **取り出し方** | 時系列再構成・類似エピソード検索・セッション復元 |
-| **忘却** | 古いものは要約して圧縮。参照カウント・最終参照日で優先度付け |
-| **例** | 会話ログ、コードレビュー結果、障害対応記録、調査過程、設計判断メモ |
-
-#### 2-2. 意味記憶 (Semantic Memory)
-
-| 項目 | 内容 |
-|------|------|
-| **役割** | 普遍的な事実・概念・関係を保持する |
-| **問い** | 「何を知っているか」 |
-| **取り出し方** | グラフ探索・ベクトル類似検索・エンティティルックアップ |
-| **忘却** | 重要度・参照頻度に応じて保持。時間的な鮮度（freshness）を管理 |
-| **例** | 「A サービスは B ライブラリに依存する」「このプロジェクトでは Bun を使う」 |
-
-#### 2-3. 手続き記憶 (Procedural Memory)
-
-| 項目 | 内容 |
-|------|------|
-| **役割** | 「どうやるか」を柔軟なパターンとして保持する |
-| **問い** | 「この状況でどう振る舞うべきか」 |
-| **取り出し方** | 文脈マッチング・パターン注入・プレイブック呼び出し |
-| **忘却** | バージョン管理。廃止フラグ・有効期限で管理 |
-| **例** | レビュー手順、デプロイチェックリスト、失敗回避ヒューリスティック |
-
-> **重要**: 手続き記憶は実行可能なコード（SKILL）ではなく、**再利用可能な行動パターン**として表現する。  
-> サブタイプ: `pattern` / `playbook` / `policy` / `template` / `heuristic`
+- プロジェクト固有の事実は手続き記憶の `constraint` / `context` で表現できる
+- 普遍的事実は LLM / Web 検索 MCP で十分
+- 独立層にしてもフィードバックループに参加できず、出力のない消費専用データになる
 
 ---
 
-## 3. 現在のリポジトリ概念との対応
+## 3. 設計原則
 
-| 現在の概念 | 新モデルでの位置づけ | 変更方針 |
-|---|---|---|
-| `vibe_memories` | エピソード記憶の主テーブル | `memory_type` フィールドを追加し種別を明確化 |
-| `experience_logs` | エピソード記憶（失敗/成功サブタイプ） | 当面は `memory_type` による参照関係の明示にとどめる（`scenarioId` / `attempt` / `failureType` などハーネス密結合フィールドを持つため、統合は将来フェーズで別途検討） |
-| `entities` | 意味記憶のノード | `confidence` / `provenance` / `freshness` フィールドを追加 |
-| `relations` | 意味記憶のエッジ | `confidence` / `recordedAt` / `source_task` を追加 |
-| `communities` | 意味記憶のクラスター（中間抽象化層） | コミュニティ検出を手続き記憶のパターン発見にも再利用 |
-| `Guidance Registry` | 手続き記憶の保存先 | `procedural_type` でサブタイプを分類 |
-| `knowledge_topics` | 意味記憶の調査トピック管理（KnowFlow） | 変更なし。KnowFlow タスクの調査対象を表す |
-| `knowledge_claims` | 意味記憶の主張・事実（KnowFlow 自動充填） | 変更なし。`entities` / `relations` への昇格候補 |
-| `knowledge_relations` | 意味記憶の主張間関係（KnowFlow） | 変更なし。`relations` への昇格候補 |
-| `knowledge_sources` | 意味記憶の情報源（KnowFlow） | 変更なし。`provenance` の参照元として活用 |
-| `sync` | エピソード記憶の投入経路 | 変更なし。投入後のルーティングを追加 |
-| `synthesis` (reflect) | エピソード → 意味記憶への昇格操作 | 昇格ロジックを明示的な変換パイプラインとして整理 |
+| 原則 | 内容 |
+|------|------|
+| **2層構造** | エピソード記憶（vibe_memories）と手続き記憶（entities + relations）の2層 |
+| **新テーブル不要** | 既存テーブルへの `ALTER TABLE ADD COLUMN` のみ |
+| **プロンプト改善優先** | スキーマ変更より先にプロンプトの制御語彙導入で品質を上げる |
+| **Graph がスキルになる** | 固定 SKILL テーブルは作らない。`query_procedure` で部分グラフ取得 = 動的スキル |
+| **フィードバック駆動** | 実行結果 → confidence 更新 → Graph 自律進化 |
+| **暗黙知は配信モード** | `scope: 'always'` の constraint は独立層ではなく手続き記憶の自動注入バリアント |
+
+### 実装開始前に確定すること
+
+計画をそのままコード化すると契約不一致が起きやすいため、着手前に以下を固定する。
+
+1. **LLM 出力と永続化入力を分離する**
+  - LLM は `id` を出さない
+  - 保存層で `generateEntityId(type, name)` を使って ID を解決する
+  - 既存の `EntityInputSchema` / `RelationInputSchema` は当面の互換性のため残す
+
+2. **MCP の注入場所を現行構成に合わせる**
+  - 現行の入口は `src/mcp/server.ts`
+  - `src/mcp/handlers.ts` は存在しないため、注入ロジックは server 側の共通ラッパーまたは各 tool handler の前処理として実装する
+
+3. **Guidance は移行期間を設ける**
+  - 新しい Graph 保存を追加しても、既存の `vibe_memories` 参照は即時に壊さない
+  - まずは dual-write / read compatibility を維持し、その後に読み取り元を切り替える
 
 ---
 
-## 4. 提案データモデル / スキーマ方針
+## 4. エピソード記憶: ストーリー化
 
-### 4-1. エピソード記憶
+### 現状の問題
 
-既存の `vibe_memories` テーブルに以下のフィールドを追加する方向を提案する。
+`vibe_memories` は断片的なメモの寄せ集め。`reflect_on_memories`（`src/services/synthesis.ts`）で entities/relations に昇格後、元のメモは `is_synthesized: true` になるだけでエピソードとしての価値が活かされない。
+
+### 設計: 2段階パイプライン
+
+```text
+Phase A: 蓄積（現行通り）
+  store_memory → vibe_memories（memory_type: 'raw'）
+
+Phase B: ストーリー化（新設: consolidate_episodes）
+  入力: vibe_memories WHERE memory_type = 'raw' AND is_synthesized = false
+       + experience_logs WHERE session_id = 対象セッション
+  処理: LLM でナラティブ統合
+  出力: vibe_memories INSERT（memory_type: 'episode', compressed: true）
+  後処理: 元の raw メモの is_synthesized を true に更新
+
+Phase C: 構造化抽出（既存 reflect の拡張）
+  入力: vibe_memories WHERE memory_type = 'episode' AND is_synthesized = false
+  処理: entities / relations 抽出（task / goal / constraint 含む）
+  後処理: 元の episode の is_synthesized を true に更新
+```
+
+### ストーリー化の利点
+
+| 利点 | 効果 |
+|------|------|
+| 検索精度向上 | 断片5件をベクトル検索するよりストーリー1件の方がヒット率が高い |
+| トークン効率 | 断片10件（2000トークン）→ ストーリー1件（500トークン） |
+| 因果関係の保存 | 「何が起きた→なぜ→結果どうなった」が1レコードにまとまる |
+
+### `experience_logs` との関係
+
+テーブル統合はしない（`scenarioId` / `attempt` / `failureType` のハーネス密結合フィールドがあるため）。ストーリー化の**入力として参照**するのみ。
+
+### スキーマ拡張
+
+**対象ファイル**: `src/db/schema.ts` の `vibeMemories` テーブル定義
 
 ```typescript
-// 追加フィールド（vibe_memories への拡張案）
+// 既存フィールドの後に追加
+memoryType: text('memory_type').default('raw'),
+  // 'raw' = 生メモ（従来の store_memory の出力）
+  // 'episode' = ストーリー化済み（consolidate_episodes の出力）
+episodeAt: timestamp('episode_at'),
+  // 出来事が起きた時刻。createdAt（保存時刻）と区別する
+sourceTask: text('source_task'),
+  // 由来タスク ID（例: KnowFlow の topic_tasks.id）
+importance: real('importance').default(0.5),
+  // 重要度 0.0-1.0。consolidate_episodes 時に LLM が判定
+compressed: boolean('compressed').default(false),
+  // true = LLM による要約版。元の raw メモは別途保持
+```
+
+### consolidate_episodes の実装仕様
+
+**新設ファイル**: `src/services/consolidation.ts`
+
+```typescript
+/**
+ * 同一セッションの raw メモ + experience_logs をストーリー化する。
+ *
+ * @param sessionId - 対象セッション ID
+ * @param deps.db - Drizzle DB インスタンス
+ * @param deps.llm - LLM 呼び出し関数
+ * @param deps.embedText - 埋め込みベクトル生成関数
+ * @returns 生成された episode の vibe_memories.id
+ *
+ * トリガー条件（呼び出し元が判断）:
+ *   - 同一セッションの raw メモが 5件以上蓄積
+ *   - または明示的な MCP ツール呼び出し
+ *
+ * 処理:
+ *   1. vibe_memories WHERE session_id = ? AND memory_type = 'raw'
+ *      AND is_synthesized = false を取得（created_at ASC）
+ *   2. experience_logs WHERE session_id = ? を取得
+ *   3. 下記プロンプトで LLM を呼び出し
+ *   4. 結果を vibe_memories に INSERT（memory_type: 'episode'）
+ *   4a. entities にも episode プロキシを INSERT（type: 'episode', metadata.memoryId）
+ *       → Phase C で learned_from 関係のターゲットとして使用
+ *   5. 元の raw メモの is_synthesized を true に UPDATE
+ */
+```
+
+**LLM プロンプト**:
+
+```text
+以下のメモと体験記録を1つのストーリーに統合してください。
+
+【厳守事項】
+1. 入力にない情報を絶対に追加しないでください
+2. 以下の3要素を含む因果関係のあるナラティブにしてください:
+   - 何が起きたか（状況・行動）
+   - なぜそうなったか（原因・判断理由）
+   - 結果どうなったか（成功/失敗・教訓）
+3. パスワード、APIキー、認証トークン、個人情報は除外してください
+4. 出力は以下のJSON形式のみ:
+
 {
-  memoryType: text('memory_type').default('episodic'),
-  // 'episodic' | 'experience_success' | 'experience_failure'
-  episodeAt: timestamp('episode_at'),       // 出来事が起きた時刻（保存時刻と区別）
-  sourceTask: text('source_task'),          // 由来タスク (KnowFlow task ID など)
-  importance: real('importance').default(0.5), // 重要度スコア (0-1)
-  compressed: boolean('compressed').default(false), // 要約圧縮済みフラグ
+  "story": "ストーリー本文（200-500文字）",
+  "importance": 0.0-1.0の数値,
+  "episodeAt": "出来事の中心的な時刻（ISO 8601）"
+}
+
+--- メモ一覧 ---
+{memories}
+
+--- 体験記録（あれば） ---
+{experiences}
+```
+
+### 注意事項
+
+| 懸念 | 対策 |
+|------|------|
+| ストーリー化で情報が欠落 | 元の raw メモは即時削除せず `is_synthesized: true` で保持。将来の忘却バッチでパージ |
+| LLM の幻覚混入 | プロンプトで「入力にない情報を追加するな」を厳格指示。元メモ ID を metadata.sourceIds に保持 |
+| いつストーリー化するか | 同一セッションの raw メモが5件以上蓄積時、または明示的呼び出し |
+
+---
+
+## 5. 手続き記憶: 小タスク × Graph
+
+### 設計思想
+
+**「スキル」というオブジェクトは存在しない。Graph の部分グラフ取得が動的にスキルになる。**
+
+```text
+query_procedure("PRレビューしたい")
+  → Graph 探索で関連 task ノードを収集
+  → confidence でランキング + context でフィルタ
+  → トポロジカルソートで順序付け
+  → LLM がその場で判断に使う = スキル的挙動
+```
+
+### エンティティ type の制御語彙（完全一覧）
+
+**適用場所**: `src/services/llm.ts` の `distillKnowledgeFromTranscript` プロンプト（L176付近）および `extractEntitiesFromText` プロンプト（L42付近）
+
+| type | 用途 | 粒度の目安 | 例 |
+|------|------|-----------|-----|
+| `task` | 単一の行動単位 | 1判断・1アクション | 「差分の安全性を確認する」 |
+| `goal` | 達成したい状態 | 複数 task の親 | 「PRが安全にマージ可能」 |
+| `constraint` | 禁止事項・守るべきルール | 1ルール | 「秘密情報をログに出さない」 |
+| `context` | task/goal の適用条件 | 1条件 | 「緊急対応時」「DB関連の変更」 |
+| `project` | プロジェクト | — | 「gnosis」 |
+| `library` | ライブラリ・フレームワーク | — | 「drizzle-orm」 |
+| `service` | サービス・API | — | 「postgresql」 |
+| `tool` | ツール・CLI | — | 「biome」 |
+| `concept` | 技術概念・アルゴリズム | — | 「HNSW インデックス」「コサイン類似度」 |
+| `person` | 人物 | — | — |
+| `pattern` | 再利用可能な設計・アーキテクチャパターン | — | 「Repository パターン」「CQRS」 |
+| `config` | 設定・環境変数 | — | 「DATABASE_URL」 |
+| `episode` | エピソードのプロキシ | — | `learned_from` 関係のターゲット用。対応する `vibe_memories.id` を `metadata.memoryId` に保持 |
+
+### リレーション relationType の制御語彙（完全一覧）
+
+**適用場所**: 同上
+
+| relationType | 方向 | 意味 | 例 |
+|---|---|---|---|
+| `has_step` | goal → task | goal を達成するためのステップ | PRレビュー → 差分確認 |
+| `precondition` | task → task | 先に完了が必要 | テスト実行 → CI通過確認 |
+| `follows` | task → task | 推奨実行順序 | 影響範囲確認 → 修正方針決定 |
+| `when` | context → goal/task | この条件のとき適用 | 緊急対応時 → 影響範囲優先 |
+| `prohibits` | constraint → task | この行為を禁止 | 秘密情報保護 → ログ出力 |
+| `learned_from` | task/constraint → episode（※） | この体験が根拠 | 再現確認 → incident記録 |
+
+> **※ `learned_from` の実装上の注意**: episode は `vibe_memories` に格納されるため `entities.id` を FK とする `relations` テーブルでは直接リンクできない。対処方針として、(a) task の `metadata.episodeIds` に vibe_memories.id の配列を保持する、または (b) episode を entities にも薄いプロキシとして INSERT（`type: 'episode'`, description にストーリー本文）する。本設計では **(b)** を採用し、`query_procedure` の episode 収集時に entities 経由で vibe_memories を JOIN する。
+| `alternative_to` | task ↔ task | 代替手段（双方向） | 全件テスト ↔ 影響範囲テスト |
+| `depends_on` | any → any | 依存関係 | サービスA → ライブラリB |
+| `uses` | any → any | 使用関係 | プロジェクト → ツール |
+| `implements` | any → any | 実装関係 | — |
+| `extends` | any → any | 拡張関係 | — |
+| `part_of` | any → any | 部分関係 | — |
+| `caused_by` | any → any | 原因 | — |
+| `resolved_by` | any → any | 解決手段 | — |
+
+### エンティティ ID の生成規則
+
+**適用場所**: `src/services/graph.ts` の `saveEntities` 関数
+
+**現状**: LLM が `id` を自由に生成 → 同じ概念が `"bun"` / `"bun-runtime"` で重複。
+
+**変更後**: LLM は `id` を生成しない。`name` と `type` から決定的に生成する。保存層は LLM 由来入力を正規化して ID を補完する。
+
+```typescript
+// src/utils/entityId.ts（新設）
+export function generateEntityId(type: string, name: string): string {
+  // 1. name を正規化: 小文字化、連続スペースを単一ハイフンに、先頭末尾トリム
+  const normalized = name.trim().toLowerCase().replace(/\s+/g, '-');
+  // 2. type + "/" + normalized でスラッグ化
+  return `${type}/${normalized}`;
+  // 例: "library/drizzle-orm", "task/差分の安全性を確認する"
 }
 ```
 
-### 4-2. 意味記憶
+**衝突時**: 既存の `saveEntities` の embedding 類似度 + LLM マージ判定ロジックはそのまま維持。ID が同一なら ON CONFLICT DO UPDATE で上書きされる（既存動作と同じ）。
 
-既存の `entities` / `relations` テーブルに以下を追加する。
+**互換性メモ**:
 
-```typescript
-// entities への拡張案
-{
-  confidence: real('confidence').default(1.0),   // 確信度 (0-1)
-  provenance: text('provenance'),                // 出所 (URL, task_id, manual など)
-  freshness: timestamp('freshness'),             // 最終検証日時
-  importance: real('importance').default(0.5),  // 重要度スコア
-}
+- `src/domain/schemas.ts` の既存スキーマは Phase 1 中は壊さない
+- LLM から返る「ドラフト」は `type + name` ベースで正規化し、保存時に `id` を付与する
+- 既存の手書き入力やテストは、必要なら明示的な `id` を引き続き渡してよい
 
-// relations への拡張案
-{
-  confidence: real('confidence').default(1.0),
-  recordedAt: timestamp('recorded_at').defaultNow(), // この関係が記録された日時
-  sourceTask: text('source_task'),
-  provenance: text('provenance'),
-}
+### 抽出プロンプトの改善
+
+**対象ファイル**: `src/services/llm.ts` の `distillKnowledgeFromTranscript` 関数内プロンプト（L176付近）
+
+**現行プロンプト**（`src/services/llm.ts` L191付近、問題箇所のみ）:
+
+```text
+"entities": [{ "id": "唯一のID", "type": "種別", "name": "名前", "description": "説明" }],
+"relations": [{ "sourceId": "ID1", "targetId": "ID2", "relationType": "関係名", "weight": 1.0 }]
 ```
 
-### 4-3. 手続き記憶 (Procedural Patterns)
+**変更後**:
 
-新テーブル `procedural_patterns` を追加する。
+```text
+"entities": [
+  {
+    "type": "以下から1つ選択: task|goal|constraint|context|project|library|service|tool|concept|person|pattern|config|episode",
+    "name": "正規化された名前（公式名称、日本語可）",
+    "description": "50文字以上の説明。何であるか、なぜ重要かを含む。短すぎる説明は不可"
+  }
+],
+"relations": [
+  {
+    "sourceType": "source の type",
+    "sourceName": "source の name",
+    "targetType": "target の type",
+    "targetName": "target の name",
+    "relationType": "以下から1つ選択: has_step|precondition|follows|when|prohibits|learned_from|alternative_to|depends_on|uses|implements|extends|part_of|caused_by|resolved_by",
+    "weight": 0.0-1.0
+  }
+]
+```
+
+> **注意**: relations の LLM 出力は `sourceType/sourceName` / `targetType/targetName` のドラフトに変更する。受信側で `generateEntityId(sourceType, sourceName)` / `generateEntityId(targetType, targetName)` を呼んで ID を解決する。既存 API 互換のため、永続化層の `sourceId` / `targetId` は残す。
+
+**同様に `src/services/llm.ts` の `extractEntitiesFromText` プロンプト（L53付近）も変更する。**
+
+### コミュニティ要約の改善
+
+**対象ファイル**: `src/services/community.ts` の `buildCommunities` 関数
+
+**現状の問題**: relations のコンテキストが entity ID で表示される（`"abc123 → def456"`）ため LLM が要約しにくい。
+
+**変更**: relations を LLM に渡す際に `entity.name` に解決してから渡す。
+
+```diff
+- `${r.sourceId} --[${r.relationType}]--> ${r.targetId}`
++ `${sourceName} --[${r.relationType}]--> ${targetName}`
+```
+
+`sourceName` / `targetName` は `groupEntities` から `r.sourceId` / `r.targetId` を key にして解決する。
+
+### Graph 構造例
+
+```text
+[goal: PRレビュー完了]
+  ├─ has_step → [task: 差分の安全性確認]
+  │               ├─ learned_from → [episode: SQL injection見逃し事件]
+  │               └─ precondition → [task: CI通過確認]
+  ├─ has_step → [task: テストカバレッジ検証]
+  │               └─ alternative_to → [task: 手動テスト確認]
+  ├─ has_step → [task: パフォーマンス影響評価]
+  │               └─ when ← [context: パフォーマンスクリティカル]
+  └─ has_step → [task: 破壊的変更チェック]
+                    └─ prohibits ← [constraint: 段階リリース必須]
+```
+
+同じ `task` が複数の `goal` から参照される — これが Graph の強み。
+
+### 暗黙知（scope: 'always'）
+
+entities に `scope` フィールドを追加。`scope: 'always'` のエンティティは MCP ツール呼び出し時に自動で system prompt に注入する。
+
+**注入の実装場所**: `src/mcp/server.ts` のツールハンドラ共通前処理、または各 tool handler の冒頭
 
 ```typescript
-export const proceduralPatterns = pgTable('procedural_patterns', {
-  id: uuid('id').primaryKey().defaultRandom(),
+// 各 MCP ツール呼び出しの冒頭で:
+// 1. entities WHERE scope = 'always' を取得（キャッシュ可、TTL: 5分）
+// 2. 取得した constraint / context を system prompt のプレフィックスとして注入
+// 3. project フィルタ: when 関係で context に紐づくものは、現在の context に合致する場合のみ注入
+```
 
-  // 基本情報
-  title: text('title').notNull(),
-  proceduralType: text('procedural_type').notNull(),
-  // 'pattern' | 'playbook' | 'policy' | 'template' | 'heuristic'
+### 新 MCP ツール: `query_procedure`
 
-  intent: text('intent').notNull(),         // 達成したいこと
-  context: text('context'),                 // 適用文脈
-  embedding: vector('embedding', { dimensions: config.embeddingDimension }),
+**新設ファイル**: `src/mcp/tools/queryProcedure.ts`
 
-  // 構造化コンテンツ (JSONB)
-  applicability: jsonb('applicability').default([]),  // 適用条件（旧 `when`; SQL予約語回避のため改名）
-  goal: jsonb('goal').default([]),           // 目的
-  steps: jsonb('steps').default([]),         // 手順
-  constraints: jsonb('constraints').default([]), // 制約
-  variants: jsonb('variants').default([]),   // 状況別変形
-  examples: jsonb('examples').default([]),   // 実例
+```typescript
+// Zod 入力スキーマ
+const QueryProcedureInput = z.object({
+  goal: z.string().describe('達成したい目標（テキスト）'),
+  context: z.string().optional().describe('現在の状況・条件（テキスト、任意）'),
+});
 
-  // メタデータ
-  confidence: real('confidence').default(1.0),
-  provenance: jsonb('provenance').default({}),
-  tags: text('tags').array().default([]),
-  project: text('project'),
-  version: integer('version').default(1).notNull(),
-  // バージョン管理: 内容の変更時にインクリメント。同一 title + proceduralType で
-  // version > 1 のレコードが存在する場合、古いバージョンは deprecated: true とする。
-  deprecated: boolean('deprecated').default(false).notNull(),
-  expiresAt: timestamp('expires_at'),
-
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+// Zod 出力スキーマ
+const QueryProcedureOutput = z.object({
+  goal: z.object({ id: z.string(), name: z.string(), description: z.string() }),
+  tasks: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    description: z.string(),
+    confidence: z.number(),
+    order: z.number(),          // トポロジカルソート順
+    episodes: z.array(z.object({  // learned_from で紐づくエピソード
+      id: z.string(),
+      story: z.string(),
+    })),
+  })),
+  constraints: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    description: z.string(),
+  })),
 });
 ```
 
-### 4-4. 手続き記憶のグラフ関係
+**処理フロー**（`src/services/procedure.ts` 新設）:
 
-手続き記憶同士の関係（前提・派生・補完など）は既存の Knowledge Graph の仕組みを活用する。  
-`procedural_patterns.id` から `entities` への外部キーリンクを設け、`relations` で `goal → how_to → episode` のような関係を表現する。`entities` に `type: 'procedural_pattern'` のノードを別途作成すると二重管理になるため、外部キー参照にとどめる。
+```typescript
+/**
+ * 1. goal 検索: goal テキストの embedding を生成し、
+ *    entities WHERE type = 'goal' からコサイン類似度 TOP 1 を取得。
+ *    類似度が 0.8 未満なら name 部分一致でフォールバック。
+ *
+ * 2. task 収集: goal から has_step 関係を辿り task を収集。
+ *    各 task から follows / precondition を再帰的に辿る（最大3ホップ）。
+ *
+ * 3. context フィルタ: context が指定されていれば、
+ *    when 関係で紐づく context エンティティと入力 context の
+ *    embedding 類似度を計算し、閾値 0.7 以上の task のみ残す。
+ *    context が未指定なら全 task を返す（when 付き task も含む）。
+ *
+ * 4. constraint 収集: 収集した task に prohibits 関係で紐づく
+ *    constraint を収集。
+ *
+ * 5. episode 収集: 各 task の learned_from 関係で紐づく
+ *    entities (type = 'episode') を取得し、その metadata.memoryId で
+ *    vibe_memories のストーリー本文を取得。
+ *
+ * 6. トポロジカルソート: precondition / follows 関係から DAG を構築し
+ *    トポロジカルソート。循環がある場合は confidence 降順でフォールバック。
+ *
+ * 7. confidence フィルタ: confidence < 0.3 の task は末尾に
+ *    「参考（低信頼度）」として分離。
+ */
+```
+
+### `register_guidance` の保存先変更
+
+**対象ファイル**: `src/services/guidance/register.ts` の `saveGuidance` 関数
+
+**現行動作**: `vibe_memories` に `metadata.kind: 'guidance'` で INSERT。
+
+**変更後の動作**:
 
 ```text
-[goal: エラー調査]
-   │
-   └─how_to→ [pattern: 再現手順を先に確認する]
-                 │
-                 └─grounded_in→ [episode: incident-2026-04-12]
-                 └─variant_of→  [pattern: 緊急時の影響範囲優先調査]
+1. 入力の guidanceType に応じて type を決定:
+   - guidanceType: 'rule' → type: 'constraint'
+   - guidanceType: 'skill' → type: 'task'
+   （新規追加: guidanceType: 'goal' → type: 'goal'）
+
+2. entities に INSERT（generateEntityId で ID 生成）:
+   - type: 上記で決定
+   - name: title
+   - description: content
+   - confidence: 0.5（初期値）
+   - scope: 入力の scope（'always' | 'on_demand'）
+   - provenance: 'manual'
+
+3. applicability がある場合:
+   - 各条件を context エンティティとして INSERT
+   - when 関係で紐付け
+
+4. tags がある場合:
+   - metadata.tags に保存（entities の既存 metadata フィールド）
+
+5. 既存の vibe_memories (kind:guidance) は読み取りのみ維持（移行期間）
+```
+
+**移行方針メモ**:
+
+- Phase 4-3 で Graph への保存を開始しても、旧 guidance メモはすぐに削除しない
+- 旧メモの読み取りを止めるのは、Graph 側の登録と検索が安定してからにする
+- そのため、移行直後は `vibe_memories` と `entities/relations` の両方が存在してよい
+
+### task の蓄積フロー（まとめ）
+
+| 蓄積方法 | トリガー | 初期 confidence |
+|---------|---------|----------------|
+| `register_guidance` で手動登録 | ユーザー操作 | 0.5 |
+| `reflect_on_memories` で自動抽出 | consolidate_episodes 後のバッチ | 0.3 |
+| `record_outcome` の改善提案 | フィードバック時 | 0.3 |
+| `buildCommunities` でクラスタから goal 候補発見 | 明示的トリガー | 0.3 |
+
+### スキーマ拡張
+
+**対象ファイル**: `src/db/schema.ts`
+
+#### entities テーブル
+
+```typescript
+// 既存フィールドの後に追加
+confidence: real('confidence').default(0.5),
+  // 確信度 0.0-1.0。record_outcome で更新される
+provenance: text('provenance'),
+  // 出所。'manual' | 'reflect' | 'knowflow' | 'feedback' | URL
+freshness: timestamp('freshness'),
+  // 最終検証日時。record_outcome 時に更新
+scope: text('scope'),
+  // 'always'（自動注入）| 'on_demand'（query_procedure で取得）| null（通常エンティティ）
+```
+
+#### relations テーブル
+
+```typescript
+// 既存フィールドの後に追加
+confidence: real('confidence').default(0.5),
+recordedAt: timestamp('recorded_at').defaultNow(),
+  // この関係が記録された日時
+sourceTask: text('source_task'),
+  // 由来タスク ID
+provenance: text('provenance'),
+  // 出所（entities と同じ形式）
 ```
 
 ---
 
-## 5. 実装フェーズ計画
+## 6. フィードバックループ: confidence スコアリング
 
-### Phase 0: 概念整理とドキュメント化（本ドキュメント）
+### 全体フロー
 
-- [x] 記憶リファクタリング設計書の作成
-- [ ] 既存コードへのコメント追加（`vibe_memories`, `experience_logs`, `guidance` の位置づけを記述）
-
-### Phase 1: エピソード記憶の強化
-
-**目標**: `vibe_memories` を「エピソード記憶」として明示的に扱えるようにする。
-
-- [ ] `vibe_memories` に `memory_type`, `episode_at`, `importance`, `source_task`, `compressed` フィールドを追加するマイグレーション
-- [ ] `store_memory` ツールの入力スキーマに `memoryType` / `episodeAt` / `importance` を追加
-- [ ] `experience_logs` については当面統合せず、`memory_type` による参照関係の明示にとどめる（`scenarioId` / `attempt` / `failureType` などハーネス密結合フィールドを持つため、統合は将来フェーズで別途検討）
-- [ ] 圧縮・要約パイプラインの設計（古いエピソードを LLM で要約し `compressed: true` でフラグ）
-
-### Phase 2: 意味記憶の品質向上
-
-**目標**: `entities` / `relations` に確信度・出所・鮮度を持たせる。
-
-- [ ] `entities` に `confidence`, `provenance`, `freshness`, `importance` フィールドを追加するマイグレーション
-- [ ] `relations` に `confidence`, `source_task`, `provenance` フィールドを追加
-- [ ] KnowFlow が知識を保存する際に `provenance` を自動付与するよう修正
-- [ ] 鮮度に基づいた検索ランキング調整の実装
-
-### Phase 3: 手続き記憶の実装
-
-**目標**: 柔軟な `procedural_patterns` テーブルとツールを追加する。
-
-- [ ] `procedural_patterns` テーブルのマイグレーション作成
-- [ ] ベクトルインデックス（HNSW）の追加
-- [ ] `store_procedure` / `search_procedure` / `apply_procedure` MCP ツールの実装
-- [ ] 既存 Guidance Registry との統合方針を決定（段階的移行 or 並行運用）
-- [ ] 並行運用期間中の使い分けルールを明記（例：新規は `store_procedure` へ登録、既存エントリは `register_guidance` で継続管理）し、LLM がどちらを使うべきかが明確になるようプロンプト・ドキュメントに反映
-- [ ] `procedural_patterns.id` と `entities` の外部キーリンクによるグラフ関係の実現
-
-### Phase 4: コミュニティ検出の活用拡大
-
-**目標**: コミュニティ検出をエピソード・手続き記憶のパターン発見にも適用する。
-
-- [ ] `vibe_memories` のベクトルからコサイン類似度に基づく k-NN グラフを構築するステップの実装（`entities`/`relations` のような明示的エッジが存在しないため、Louvain 適用の前提として必要）
-- [ ] エピソード記憶のクラスタリング（類似エピソードのグループ化）
-- [ ] 手続きパターンのクラスタリング（似たパターンのコミュニティ化）
-- [ ] 「繰り返し出現するパターン」を自動的に `procedural_patterns` へ昇格するパイプライン
-
-### Phase 5: 記憶間の昇格パイプライン整備
-
-**目標**: エピソード → 意味 → 手続きへの知識昇格を自動化する。
-
-- [ ] 既存 `reflect_on_memories` (synthesis) を拡張し、昇格先（意味 or 手続き）を判定するロジックを追加
-- [ ] エピソードの繰り返しパターンから `procedural_patterns` を半自動生成する機能
-- [ ] 昇格された知識への `provenance` 自動付与
-
----
-
-## 6. 既存コミュニティ検出の再利用・適応
-
-### 現在の実装
-
-`src/services/community.ts` は graphology + Louvain アルゴリズムを使って、`entities` / `relations` グラフのコミュニティを検出し、LLM で要約している。
-
-```typescript
-// 現在の利用
-const communityMapping = louvain(graph);
-// → entities を communityId でグループ化し、communities テーブルへ保存
+```text
+query_procedure(goal) → task リスト取得
+         ↓
+LLM が task に沿って実行
+         ↓
+record_outcome → confidence 更新 + エピソード記録 + 改善 task 追加
+         ↓
+Graph が進化 → 次回の query_procedure はより良い結果を返す
 ```
 
-### 再利用の方針
-
-コミュニティ検出ロジックは「**最終的な知識フォーマット**」ではなく「**パターンクラスタリングの中間抽象化層**」として捉え直す。
-
-#### 6-1. 意味記憶への適用（現状維持・拡張）
-
-- 現在の `buildCommunities` は意味記憶のクラスタリングとして継続利用する
-- `communities` テーブルは「意味的なトピッククラスタ」として位置づける
-- エンティティの `communityId` は「意味記憶内のグループ」を表す
-
-#### 6-2. エピソード記憶への適用（新規拡張）
-
-- `vibe_memories` には `entities`/`relations` のような明示的エッジが存在しないため、まずベクトル間のコサイン類似度から **k-NN グラフ**を構築した上で Louvain を実行する
-- `vibe_memories` のベクトルを使って Louvain を実行し、類似エピソードをクラスタリング
-- クラスタを `communities` テーブルに `communityType: 'episodic'` として区別して保存
-- クラスタ単位での要約・圧縮に活用
-
-#### 6-3. 手続き記憶への適用（Phase 4）
-
-- `procedural_patterns` のベクトルを使って Louvain を実行
-- 繰り返し出現するパターンのグループを検出し、より汎用的なパターンへの昇格候補として提示
-- `communities` テーブルに `communityType: 'procedural'` として保存
-
-#### 6-4. 実装への示唆
+### confidence 更新ルール
 
 ```typescript
-// buildCommunities に communityType を追加するイメージ
-export async function buildCommunities(
-  deps: BuildCommunitiesDeps & { communityType?: 'semantic' | 'episodic' | 'procedural' } = {},
-): Promise<CommunityRebuildResult | { message: string }> {
-  const communityType = deps.communityType ?? 'semantic';
-  // communityType に応じてグラフ構築元を切り替える
-  // ...
+// src/services/procedure.ts 内の updateConfidence 関数
+
+function updateConfidence(current: number, event: ConfidenceEvent): number {
+  let delta: number;
+  switch (event) {
+    case 'followed_success':
+      // task に従って成功 → 上昇（上限に近づくほど上がりにくい）
+      delta = 0.1 * (1 - current);
+      break;
+    case 'followed_failure':
+      // task に従って失敗 → 下降（下限に近づくほど下がりにくい）
+      delta = -0.15 * current;
+      break;
+    case 'ignored_success':
+      // task を無視して成功 → 微下降（不要だった可能性）
+      delta = -0.05;
+      break;
+    case 'ignored_failure':
+      // task を無視して失敗 → 上昇（やはり必要だった）
+      delta = 0.05;
+      break;
+  }
+  // クランプ: 0.0 - 1.0
+  return Math.max(0.0, Math.min(1.0, current + delta));
 }
 ```
 
+### confidence によるフィルタリング
+
+| 範囲 | query_procedure での扱い |
+|------|------------------------|
+| `≥ 0.7` | 信頼できる task。上位に表示 |
+| `0.3 - 0.7` | 未検証 or 普通。表示するが `⚠️` 注釈付き |
+| `< 0.3` | 信頼性が低い。末尾に「参考（低信頼度）」として分離 |
+| `< 0.1` | 自動 deprecate 候補。`buildCommunities` 実行時に `metadata.deprecated: true` をセット |
+
+### 新 MCP ツール: `record_outcome`
+
+**新設ファイル**: `src/mcp/tools/recordOutcome.ts`
+
+```typescript
+// Zod 入力スキーマ
+const RecordOutcomeInput = z.object({
+  goalId: z.string().describe('実行した goal の entity ID'),
+  taskResults: z.array(z.object({
+    taskId: z.string().describe('task の entity ID'),
+    followed: z.boolean().describe('この task に従ったか'),
+    succeeded: z.boolean().describe('結果は成功か'),
+    note: z.string().optional().describe('何が起きたか（自由記述）'),
+  })),
+  improvements: z.array(z.object({
+    type: z.enum(['modify_task', 'add_task', 'add_precondition', 'add_constraint']),
+    targetTaskId: z.string().optional().describe('modify_task / add_precondition の対象'),
+    suggestion: z.string().describe('改善内容'),
+  })).optional(),
+});
+```
+
+**処理フロー**（`src/services/procedure.ts` に追加）:
+
+```text
+record_outcome 受信:
+
+① confidence 更新
+   各 taskResult に対して:
+   - event = followed × succeeded の組み合わせで決定
+   - entities.confidence を updateConfidence で更新
+   - entities.freshness を現在時刻に更新
+   - entities.lastReferencedAt を現在時刻に更新
+
+② エピソード記録
+   taskResults + goal 情報を元にストーリーを生成:
+   - LLM プロンプト: 「以下のタスク実行結果を1つのエピソードとして要約せよ」
+   - vibe_memories に INSERT（memory_type: 'episode'）
+   - entities にも episode プロキシを INSERT（type: 'episode', metadata.memoryId に vibe_memories.id）
+   - 各 task に learned_from 関係を追加（source: task, target: episode プロキシ）
+
+③ 改善提案の適用（improvements がある場合）
+   - modify_task: 対象 entity の description を更新
+   - add_task: 新 entity INSERT（type: 'task', confidence: 0.3）
+               + goal → 新task に has_step 関係追加
+   - add_precondition: targetTask → 新task に precondition 関係追加
+   - add_constraint: 新 entity INSERT（type: 'constraint', confidence: 0.3）
+                     + targetTask に prohibits 関係追加
+```
+
 ---
 
-## 7. リスク・トレードオフ・非ゴール
+## 7. マイグレーション判定
+
+### 必要な変更（全て `ALTER TABLE ADD COLUMN`）
+
+| テーブル | 追加カラム | 型 | デフォルト値 | 既存データへの影響 |
+|---------|----------|----|-----------|--------------------|
+| vibe_memories | memory_type | text | `'raw'` | なし（全行が 'raw' になる = 正しい） |
+| vibe_memories | episode_at | timestamp | NULL | なし |
+| vibe_memories | source_task | text | NULL | なし |
+| vibe_memories | importance | real | `0.5` | なし |
+| vibe_memories | compressed | boolean | `false` | なし |
+| entities | confidence | real | `0.5` | なし（初期値として妥当） |
+| entities | provenance | text | NULL | なし |
+| entities | freshness | timestamp | NULL | なし |
+| entities | scope | text | NULL | なし（既存は通常エンティティ） |
+| relations | confidence | real | `0.5` | なし |
+| relations | recorded_at | timestamp | `now()` | なし |
+| relations | source_task | text | NULL | なし |
+| relations | provenance | text | NULL | なし |
+
+### マイグレーション SQL（0010）
+
+```sql
+-- 0010_memory_refactoring.sql
+ALTER TABLE vibe_memories
+  ADD COLUMN IF NOT EXISTS memory_type text DEFAULT 'raw',
+  ADD COLUMN IF NOT EXISTS episode_at timestamp,
+  ADD COLUMN IF NOT EXISTS source_task text,
+  ADD COLUMN IF NOT EXISTS importance real DEFAULT 0.5,
+  ADD COLUMN IF NOT EXISTS compressed boolean DEFAULT false;
+
+ALTER TABLE entities
+  ADD COLUMN IF NOT EXISTS confidence real DEFAULT 0.5,
+  ADD COLUMN IF NOT EXISTS provenance text,
+  ADD COLUMN IF NOT EXISTS freshness timestamp,
+  ADD COLUMN IF NOT EXISTS scope text;
+
+ALTER TABLE relations
+  ADD COLUMN IF NOT EXISTS confidence real DEFAULT 0.5,
+  ADD COLUMN IF NOT EXISTS recorded_at timestamp DEFAULT now(),
+  ADD COLUMN IF NOT EXISTS source_task text,
+  ADD COLUMN IF NOT EXISTS provenance text;
+
+-- クエリで頻用されるカラムにインデックスを追加
+CREATE INDEX IF NOT EXISTS vibe_memories_memory_type_idx
+  ON vibe_memories (memory_type);
+CREATE INDEX IF NOT EXISTS entities_scope_idx
+  ON entities (scope) WHERE scope IS NOT NULL;
+CREATE INDEX IF NOT EXISTS entities_type_confidence_idx
+  ON entities (type, confidence);
+```
+
+### 判定結果
+
+| 項目 | 判定 |
+|------|------|
+| 破壊的変更 | **なし** |
+| 新テーブル | **なし** |
+| 既存データへの影響 | **なし** |
+| 必要なマイグレーション数 | **1本** |
+| ダウンタイム | **なし** |
+| ロールバック | `ALTER TABLE DROP COLUMN` で即時復旧 |
+| **総合判定** | **✅ マイグレーションする価値あり。リスク極低** |
+
+---
+
+## 8. 現在のリポジトリ概念との対応
+
+| 現在の概念 | 新モデルでの位置づけ | 変更するファイル |
+|---|---|---|
+| `vibe_memories` | エピソード記憶 | `src/db/schema.ts`, `src/mcp/tools/memory.ts` |
+| `vibe_memories` (kind:guidance) | 手続き記憶へ移行 | `src/services/guidance/register.ts`, `src/mcp/tools/guidance.ts` |
+| `experience_logs` | エピソードの入力源 | 変更なし（参照のみ） |
+| `entities` | 手続き記憶の Graph ノード | `src/db/schema.ts`, `src/services/graph.ts` |
+| `relations` | 手続き記憶の Graph エッジ | `src/db/schema.ts`, `src/services/graph.ts` |
+| `communities` | Graph クラスター | `src/services/community.ts`（要約改善のみ） |
+| `knowledge_*` | 変更なし | — |
+| `sync` | 変更なし | — |
+| `synthesis` (reflect) | 2段階目 + task 抽出追加 | `src/services/synthesis.ts` |
+
+---
+
+## 9. 実装フェーズ計画
+
+### Phase 1: 抽出プロンプトの改善（スキーマ変更なし）
+
+**目標**: Graph の品質をプロンプト改善だけで向上させる。  
+**前提条件**: なし  
+**成果物**: 変更されたプロンプト、新設の `entityId.ts`
+
+| # | タスク | 対象ファイル | 受け入れ条件 |
+|---|-------|-------------|-------------|
+| 1-1 | `generateEntityId` ユーティリティ新設 | `src/utils/entityId.ts`（新設） | `generateEntityId('library', 'Drizzle ORM')` → `'library/drizzle-orm'` |
+| 1-2 | LLM 出力のドラフト契約を更新 | `src/services/llm.ts`, `src/domain/schemas.ts` | `entities` / `relations` の LLM 出力が name/type ベースに揃う |
+| 1-3 | `distillKnowledgeFromTranscript` プロンプト変更 | `src/services/llm.ts` L176付近 | type / relationType が制御語彙のみ。description 50文字以上指示。relations が name ベース |
+| 1-4 | `extractEntities` プロンプト変更 | `src/services/llm.ts` L42付近 | 同上 |
+| 1-5 | `saveEntities` で ID 生成ロジック変更 | `src/services/graph.ts` | LLM 出力の `name` + `type` から `generateEntityId` で ID 生成 |
+| 1-6 | `saveRelations` で ID 解決ロジック変更 | `src/services/graph.ts` | LLM 出力の `sourceType/sourceName` / `targetType/targetName` から ID を解決 |
+| 1-7 | 互換性テスト追加 | `test/synthesis.test.ts`, `test/graph.test.ts` | 旧 `id` 付き入力と新ドラフト入力の両方が通る |
+| 1-8 | コミュニティ要約で name 表示 | `src/services/community.ts` | relations コンテキストが `name -[type]-> name` 形式 |
+| 1-9 | 制御語彙テスト追加 | `test/synthesis.test.ts`, `test/graph.test.ts` | 制御語彙外の type がバリデーションエラーになること |
+
+### Phase 2: スキーマ拡張（マイグレーション 0010）
+
+**目標**: エピソード記憶と手続き記憶に必要なフィールドを追加する。  
+**前提条件**: Phase 1 完了  
+**成果物**: マイグレーションファイル、更新された Drizzle スキーマ
+
+| # | タスク | 対象ファイル | 受け入れ条件 |
+|---|-------|-------------|-------------|
+| 2-1 | マイグレーション SQL 作成 | `drizzle/0010_memory_refactoring.sql`（新設） | §7 の SQL が正常に実行できる |
+| 2-2 | Drizzle スキーマ更新 | `src/db/schema.ts` | vibeMemories / entities / relations に新カラム定義追加 |
+| 2-3 | domain スキーマの整合 | `src/domain/schemas.ts` | 追加カラムに合わせた入力・出力契約が揃う |
+| 2-4 | スナップショット更新 | `drizzle/meta/` | `bun run drizzle-kit generate` で生成 |
+| 2-5 | 既存テスト通過確認 | 全テスト | `bun test` が全て PASS |
+
+### Phase 3: エピソード記憶のストーリー化
+
+**目標**: 断片メモをストーリー化されたエピソードに統合する。  
+**前提条件**: Phase 2 完了  
+**成果物**: `consolidation.ts`、更新された `synthesis.ts`
+
+| # | タスク | 対象ファイル | 受け入れ条件 |
+|---|-------|-------------|-------------|
+| 3-1 | `consolidateEpisodes` 関数実装 | `src/services/consolidation.ts`（新設） | 同一セッションの raw メモ5件 → ストーリー1件が生成される |
+| 3-2 | `consolidate_episodes` MCP ツール登録 | `src/mcp/tools/memory.ts`, `src/mcp/tools/index.ts` | MCP 経由で呼び出し可能 |
+| 3-3 | `reflect_on_memories` の入力変更 | `src/services/synthesis.ts` | `memory_type = 'episode'` のみを対象にする |
+| 3-4 | `store_memory` 入力スキーマ拡張 | `src/mcp/tools/memory.ts` | `memoryType`, `episodeAt`, `importance` が指定可能 |
+| 3-5 | テスト追加 | `test/consolidation.test.ts`（新設） | ストーリー化の入出力、experience_logs 参照 |
+
+### Phase 4: 手続き記憶（小タスク × Graph + 暗黙知）
+
+**目標**: スキル的挙動と暗黙知の自動注入を実現する。  
+**前提条件**: Phase 2 完了（Phase 3 と並行可能）  
+**成果物**: `procedure.ts`、更新された `guidance/register.ts`、`queryProcedure.ts`
+
+| # | タスク | 対象ファイル | 受け入れ条件 |
+|---|-------|-------------|-------------|
+| 4-1 | `queryProcedure` 関数実装 | `src/services/procedure.ts`（新設） | goal テキスト → 順序付き task リスト + constraints + episodes |
+| 4-2 | `query_procedure` MCP ツール登録 | `src/mcp/tools/queryProcedure.ts`（新設）, `src/mcp/tools/index.ts` | MCP 経由で呼び出し可能 |
+| 4-3 | `saveGuidance` 保存先変更 | `src/services/guidance/register.ts` | entities/relations に保存。vibe_memories への書き込みを停止 |
+| 4-3a | `GuidanceTypeSchema` に `goal` 追加 | `src/domain/schemas.ts`, `src/mcp/tools/guidance.ts` | `guidanceType: 'goal'` が受け付けられること |
+| 4-4 | scope:'always' 自動注入 | `src/mcp/server.ts` | entities WHERE scope='always' が各ツール呼び出し時に注入される |
+| 4-5 | `reflect_on_memories` で task 抽出 | `src/services/synthesis.ts` | エピソードから type:'task' エンティティ + learned_from 関係が生成される |
+| 4-6 | テスト追加 | `test/procedure.test.ts`（新設） | query_procedure / register_guidance 移行のテスト |
+
+### Phase 5: フィードバックループ
+
+**目標**: 実行結果で Graph を自律的に進化させる。  
+**前提条件**: Phase 4 完了  
+**成果物**: `recordOutcome.ts`、`procedure.ts` への追加
+
+| # | タスク | 対象ファイル | 受け入れ条件 |
+|---|-------|-------------|-------------|
+| 5-1 | `updateConfidence` 関数実装 | `src/services/procedure.ts` | 4パターンの confidence 計算が正しく動作 |
+| 5-2 | `recordOutcome` 関数実装 | `src/services/procedure.ts` | confidence 更新 + エピソード記録 + 改善提案適用 |
+| 5-3 | `record_outcome` MCP ツール登録 | `src/mcp/tools/recordOutcome.ts`（新設）, `src/mcp/tools/index.ts` | MCP 経由で呼び出し可能 |
+| 5-4 | `queryProcedure` に confidence フィルタ追加 | `src/services/procedure.ts` | `< 0.3` が末尾分離、`< 0.1` が除外 |
+| 5-5 | deprecate 候補フラグ | `src/services/community.ts` | `buildCommunities` 時に confidence < 0.1 の entity に `metadata.deprecated: true` |
+| 5-6 | テスト追加 | `test/procedure.test.ts` | confidence 更新4パターン + クランプ |
+
+---
+
+## 10. リスク・トレードオフ・非ゴール
 
 ### リスク
 
 | リスク | 深刻度 | 対策 |
 |--------|--------|------|
-| スキーマ変更による既存データの移行コスト | 中 | フィールド追加はデフォルト値付きで後方互換を維持。破壊的変更は Phase 2 以降に先送り |
-| `experience_logs` と `vibe_memories` の統合による回帰 | 中 | 統合は任意。並行運用を Phase 3 まで継続できる設計にする |
-| 手続き記憶の柔軟すぎるスキーマによる運用の複雑化 | 低-中 | `proceduralType` と `intent` を必須にし、最小限の構造を強制する |
-| コミュニティ検出の計算コスト増大（エピソード・手続き分も実行）| 低 | `build_communities` は常時実行ではなく、明示的なトリガー型を維持する |
-| Guidance Registry との二重管理 | 中 | Phase 3 で段階的移行の方針を明確化。新規は `procedural_patterns` へ、既存は互換維持 |
+| スキーマ変更による移行コスト | 極低 | ADD COLUMN + DEFAULT のみ |
+| 制御語彙の不足 | 低 | `src/domain/schemas.ts` で語彙の enum を管理。`src/utils/entityId.ts` は ID 生成のみ担当 |
+| ストーリー化での LLM 幻覚 | 中 | 元メモ保持 + provenance + プロンプト厳格指示 |
+| Guidance 移行時の互換性 | 中 | Phase 4-3 で旧形式（vibe_memories kind:guidance）の読み取りは維持 |
+| confidence スコアの偏り | 低 | freshness 連動の時間減衰で長期未使用 task を自然に下げる |
 
 ### トレードオフ
 
-- **シンプルさ vs 表現力**: `procedural_patterns` の JSONB フィールドは柔軟だが、スキーマが緩くなりすぎるリスクがある。必須フィールドを Zod で厳格に検証することでバランスを取る。
-- **統合 vs 分離**: `experience_logs` を `vibe_memories` に統合すると管理がシンプルになるが、Experience 専用ツールの挙動変更が必要になる。移行は慎重に行う。
-- **自動化 vs 透明性**: エピソードから手続きへの自動昇格は利便性が高いが、誤昇格のリスクもある。初期は「候補提示」として人間の確認を要する設計にする。
+| 観点 | 選択 | 代償 |
+|------|------|------|
+| シンプルさ vs 表現力 | entities/relations に統合 | 専用テーブルより型安全性が低い → 制御語彙 + Zod でカバー |
+| 自動化 vs 透明性 | task 自動抽出あり | 誤抽出リスク → confidence: 0.3 で開始し実績で昇格 |
+| 統合 vs 分離 | experience_logs は統合しない | 参照のみ → ストーリー化の入力として利用 |
 
 ### 非ゴール
 
-- **感覚記憶・プライミング・条件づけの実装**: これらは LLM 側のプロンプト調整層であり、Gnosis のデータ層では管理しない
-- **LLM Context Window の管理**: Gnosis はコンテキスト内容を保持しない。あくまで長期記憶の専門基盤
-- **リアルタイムの記憶更新**: Gnosis は非同期の長期記憶基盤であり、ミリ秒レベルのリアルタイム更新は目指さない
-- **他のエージェントフレームワーク（LangChain 等）への対応**: MCP プロトコルを通じた互換性に留め、特定フレームワーク専用の実装は行わない
-- **手続き記憶の実行エンジン化**: `procedural_patterns` はあくまで参照・注入用のデータであり、自律実行エンジンにはしない
+| 非ゴール | 理由 |
+|---------|------|
+| 意味記憶の独立層 | 普遍的事実は LLM / Web 検索で十分。フィードバックループに参加できない |
+| 新テーブルの追加 | entities/relations で表現可能 |
+| LLM Context Window の管理 | Gnosis は長期記憶専門 |
+| リアルタイム記憶更新 | 非同期バッチ基盤 |
+| 手続き記憶の実行エンジン化 | 参照・注入用のみ |
 
 ---
 
-## 8. 将来の拡張について
+## 11. 将来の拡張について
 
-### 8-1. 記憶の忘却設計
+### 11-1. 記憶の忘却設計
 
-長期運用でのデータ肥大化を防ぐため、以下の忘却メカニズムを将来的に実装することが望ましい。
+- エピソード記憶: `referenceCount` が低く `createdAt` が古いものを LLM で要約→圧縮する定期バッチ
+- 手続き記憶: `confidence < 0.1` の task を `metadata.deprecated: true` に自動フラグ
 
-- **エピソード記憶の圧縮**: 参照カウントが低く、古いエピソードを LLM で要約し圧縮する定期バッチ
-- **意味記憶の鮮度管理**: `freshness` フィールドが古い entities を定期的に再検証または削除候補としてフラグ
-- **手続き記憶のバージョン管理**: `deprecated` フラグと `version` フィールドによる世代管理
+### 11-2. 多テナント・プロジェクト分離
 
-### 8-2. 記憶間の相互強化
+- `when ← [context: プロジェクトA]` でプロジェクト固有の手続きを分離
+- `scope: 'always'` + `when` の組み合わせでプロジェクト固有の暗黙知を実現
 
-- **エピソード → 意味記憶の昇格**: 複数のエピソードから繰り返し登場するエンティティを意味記憶に自動昇格
-- **意味記憶 + エピソード → 手続き記憶の生成**: 「同じ文脈で同じ解決策が有効だった」パターンを手続き記憶として半自動生成
-- **手続き記憶の評価ループ**: エピソードのアウトカムから手続きパターンの `confidence` を自動更新
+### 11-3. 評価基盤との統合
 
-### 8-3. 多テナント・プロジェクト分離
+- confidence の推移をダッシュボードで可視化（`apps/monitor`）
+- `record_outcome` の成功率を定量評価
 
-- `project` / `sessionId` / `namespace` の概念を強化し、プロジェクト固有記憶と汎用記憶の明示的な分離を実現
-- チーム共有知識と個人記憶の分離設計
+### 11-4. Knowledge Federation
 
-### 8-4. 評価基盤との統合
-
-- 記憶の再現率・精度を定量評価する `eval/` 拡張
-- 「このエピソードが将来の判断に役立ったか」をトラッキングする活用ログ
-- 手続きパターンの適用成功率を記録し、`confidence` の自動更新に活用
-
-### 8-5. Knowledge Federation
-
-- 将来的に複数 Gnosis インスタンス間で意味記憶・手続き記憶を共有する federation 機能
-- プロジェクトをまたいだパターン再利用の実現
+- 複数 Gnosis インスタンス間で手続き記憶を共有する federation 機能

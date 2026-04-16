@@ -165,6 +165,43 @@ export async function saveMemory(
 }
 
 /**
+ * エピソード記憶（ストーリー化済みメモ）を保存します。
+ * memory_type, importance, episodeAt などの Phase 2 追加フィールドに対応します。
+ */
+export async function saveEpisodeMemory(
+  input: {
+    sessionId: string;
+    content: string;
+    metadata?: Record<string, unknown>;
+    memoryType?: 'raw' | 'episode';
+    episodeAt?: Date;
+    sourceTask?: string;
+    importance?: number;
+    compressed?: boolean;
+  },
+  database: DbClient = db,
+) {
+  const embedding = await generateEmbedding(input.content);
+
+  const [memory] = await database
+    .insert(vibeMemories)
+    .values({
+      sessionId: input.sessionId,
+      content: input.content,
+      embedding,
+      metadata: input.metadata ?? {},
+      memoryType: input.memoryType ?? 'raw',
+      episodeAt: input.episodeAt,
+      sourceTask: input.sourceTask,
+      importance: input.importance ?? 0.5,
+      compressed: input.compressed ?? false,
+    })
+    .returning();
+
+  return memory;
+}
+
+/**
  * セマンティック検索を実行して類似するメモリを取得します
  */
 export async function searchMemory(

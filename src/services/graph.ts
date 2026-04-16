@@ -6,6 +6,7 @@ import { communities, entities, relations } from '../db/schema.js';
 import { NotFoundError } from '../domain/errors.js';
 import { EntityInputSchema, RelationInputSchema } from '../domain/schemas.js';
 import type { EntityInput, RelationInput } from '../domain/schemas.js';
+import { generateEntityId } from '../utils/entityId.js';
 import { extractEntitiesFromText, judgeAndMergeEntities } from './llm.js';
 import { generateEmbedding } from './memory.js';
 
@@ -49,10 +50,26 @@ export async function saveEntities(
   embeddingGenerator: EmbeddingGenerator = generateEmbedding,
   deps: SaveEntitiesDeps = {},
 ) {
-  const inputs = rawInputs.map((i) => EntityInputSchema.parse(i));
+  // id がない場合は type + name から決定的に生成する
+  const inputs = rawInputs.map((raw) => {
+    const parsed = EntityInputSchema.parse(raw);
+    const id = parsed.id ?? generateEntityId(parsed.type, parsed.name);
+    return { ...parsed, id };
+  });
   if (inputs.length === 0) return;
 
-  const processedInputs: (EntityInput & { embedding: number[] })[] = [];
+  const processedInputs: Array<{
+    id: string;
+    type: string;
+    name: string;
+    description?: string;
+    metadata?: Record<string, unknown>;
+    embedding: number[];
+    confidence?: number;
+    provenance?: string;
+    scope?: string;
+    freshness?: Date;
+  }> = [];
 
   for (const input of inputs) {
     const textToEmbed = `${input.name} ${input.description || ''}`.trim();
@@ -130,15 +147,32 @@ export async function saveEntities(
         description: sql`excluded.description`,
         embedding: sql`excluded.embedding`,
         metadata: sql`excluded.metadata`,
+        confidence: sql`COALESCE(excluded.confidence, ${entities.confidence})`,
+        scope: sql`COALESCE(excluded.scope, ${entities.scope})`,
+        provenance: sql`COALESCE(excluded.provenance, ${entities.provenance})`,
+        freshness: sql`COALESCE(excluded.freshness, ${entities.freshness})`,
       },
     });
 }
 
 /**
- * リレーションを保存します
+ * リレーションを保存します。
+ * `sourceId`/`targetId` 形式（既存）と `sourceType/sourceName`/`targetType/targetName` 形式の両方を受け付けます。
  */
 export async function saveRelations(rawInputs: RelationInput[], database: DbClient = db) {
-  const inputs = rawInputs.map((i) => RelationInputSchema.parse(i));
+  const inputs = rawInputs.map((raw) => {
+    const parsed = RelationInputSchema.parse(raw);
+    // name ベース形式を id ベースに変換
+    if ('sourceName' in parsed) {
+      return {
+        sourceId: generateEntityId(parsed.sourceType, parsed.sourceName),
+        targetId: generateEntityId(parsed.targetType, parsed.targetName),
+        relationType: parsed.relationType,
+        weight: parsed.weight,
+      };
+    }
+    return parsed;
+  });
   if (inputs.length === 0) return;
   for (const input of inputs) {
     const numericWeight =

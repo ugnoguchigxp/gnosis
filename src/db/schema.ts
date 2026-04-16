@@ -30,6 +30,12 @@ export const vibeMemories = pgTable(
     lastReferencedAt: timestamp('last_referenced_at').defaultNow().notNull(),
     isSynthesized: boolean('is_synthesized').default(false).notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
+    // Phase 2 additions
+    memoryType: text('memory_type').default('raw'),
+    episodeAt: timestamp('episode_at'),
+    sourceTask: text('source_task'),
+    importance: real('importance').default(0.5),
+    compressed: boolean('compressed').default(false),
   },
   (table) => ({
     sessionCreatedAtIdx: index('vibe_memories_session_created_at_idx').on(
@@ -71,6 +77,11 @@ export const entities = pgTable(
     referenceCount: integer('reference_count').default(0).notNull(),
     lastReferencedAt: timestamp('last_referenced_at').defaultNow().notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
+    // Phase 2 additions
+    confidence: real('confidence').default(0.5),
+    provenance: text('provenance'),
+    freshness: timestamp('freshness'),
+    scope: text('scope'),
   },
   (table) => ({
     embeddingHnswIdx: index('entities_embedding_hnsw_idx').using(
@@ -101,6 +112,11 @@ export const relations = pgTable(
     relationType: text('relation_type').notNull(),
     weight: real('weight'), // changed from text to real
     createdAt: timestamp('created_at').defaultNow().notNull(),
+    // Phase 2 additions
+    confidence: real('confidence').default(0.5),
+    recordedAt: timestamp('recorded_at').defaultNow(),
+    sourceTask: text('source_task'),
+    provenance: text('provenance'),
   },
   (table) => ({
     uniqueRelation: unique('relations_source_target_type_unique').on(

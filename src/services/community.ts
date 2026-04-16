@@ -1,4 +1,4 @@
-import { inArray } from 'drizzle-orm';
+import { inArray, sql } from 'drizzle-orm';
 import louvain from 'graphology-communities-louvain';
 import { db } from '../db/index.js';
 import { communities, entities, type relations } from '../db/schema.js';
@@ -67,12 +67,22 @@ export async function buildCommunities(
       (r) => entityIds.includes(r.sourceId) || entityIds.includes(r.targetId),
     );
 
+    // entity ID → name のマップを作成（relations コンテキストを可読にする）
+    const entityNameMap = new Map(groupEntities.map((e) => [e.id, e.name]));
+
     const contextText = `
 Entities:
 ${groupEntities.map((e) => `- ${e.name} (${e.type}): ${e.description || ''}`).join('\n')}
 
 Relations:
-${groupRelations.map((r) => `- ${r.sourceId} --[${r.relationType}]--> ${r.targetId}`).join('\n')}
+${groupRelations
+  .map(
+    (r) =>
+      `- ${entityNameMap.get(r.sourceId) ?? r.sourceId} --[${r.relationType}]--> ${
+        entityNameMap.get(r.targetId) ?? r.targetId
+      }`,
+  )
+  .join('\n')}
 `.trim();
 
     // LLM で要約
@@ -95,6 +105,24 @@ ${groupRelations.map((r) => `- ${r.sourceId} --[${r.relationType}]--> ${r.target
       .where(inArray(entities.id, entityIds));
 
     logger(`Community "${name}" built with ${entityIds.length} entities.`);
+  }
+
+  // Phase 5-5: confidence < 0.1 の entity を deprecated フラグ
+  const deprecateCandidates = allEntities
+    .filter((e) => {
+      const conf = (e as { confidence?: number | null }).confidence;
+      return typeof conf === 'number' && conf < 0.1;
+    })
+    .map((e) => e.id);
+
+  if (deprecateCandidates.length > 0) {
+    await database
+      .update(entities)
+      .set({
+        metadata: sql`jsonb_set(COALESCE(metadata, '{}'::jsonb), '{deprecated}', 'true'::jsonb)`,
+      })
+      .where(inArray(entities.id, deprecateCandidates));
+    logger(`Deprecated ${deprecateCandidates.length} low-confidence entities (confidence < 0.1).`);
   }
 
   const result = {

@@ -1,9 +1,85 @@
 import { z } from 'zod';
 
+// ---------------------------------------------------------------------------
+// 制御語彙: エンティティ type の列挙
+// ---------------------------------------------------------------------------
+export const ENTITY_TYPES = [
+  'task',
+  'goal',
+  'constraint',
+  'context',
+  'project',
+  'library',
+  'service',
+  'tool',
+  'concept',
+  'person',
+  'pattern',
+  'config',
+  'episode',
+] as const;
+
+export const EntityTypeSchema = z.enum(ENTITY_TYPES);
+export type EntityType = z.infer<typeof EntityTypeSchema>;
+
+// ---------------------------------------------------------------------------
+// 制御語彙: リレーション relationType の列挙
+// ---------------------------------------------------------------------------
+export const RELATION_TYPES = [
+  'has_step',
+  'precondition',
+  'follows',
+  'when',
+  'prohibits',
+  'learned_from',
+  'alternative_to',
+  'depends_on',
+  'uses',
+  'implements',
+  'extends',
+  'part_of',
+  'caused_by',
+  'resolved_by',
+] as const;
+
+export const RelationTypeSchema = z.enum(RELATION_TYPES);
+export type RelationType = z.infer<typeof RelationTypeSchema>;
+
+// ---------------------------------------------------------------------------
+// LLM ドラフトスキーマ: id なし、制御語彙の type を使用
+// ---------------------------------------------------------------------------
+
+/**
+ * LLM が出力するエンティティのドラフト形式。
+ * id は含まない — 保存層で generateEntityId(type, name) により解決する。
+ */
+export const LlmEntityDraftSchema = z.object({
+  type: EntityTypeSchema,
+  name: z.string().min(1),
+  description: z.string().min(1),
+  metadata: z.record(z.unknown()).optional(),
+});
+export type LlmEntityDraft = z.infer<typeof LlmEntityDraftSchema>;
+
+/**
+ * LLM が出力するリレーションのドラフト形式。
+ * sourceId / targetId ではなく type + name で表現する。
+ * 保存層で generateEntityId を使って ID を解決する。
+ */
+export const LlmRelationDraftSchema = z.object({
+  sourceType: z.string().min(1),
+  sourceName: z.string().min(1),
+  targetType: z.string().min(1),
+  targetName: z.string().min(1),
+  relationType: RelationTypeSchema,
+  weight: z.number().min(0).max(1).optional(),
+});
+export type LlmRelationDraft = z.infer<typeof LlmRelationDraftSchema>;
+
 /**
  * Guidance & Skills
  */
-export const GuidanceTypeSchema = z.enum(['rule', 'skill']);
+export const GuidanceTypeSchema = z.enum(['rule', 'skill', 'goal']);
 export type GuidanceType = z.infer<typeof GuidanceTypeSchema>;
 
 export const GuidanceScopeSchema = z.enum(['always', 'on_demand']);
@@ -39,20 +115,38 @@ export type GuidanceChunk = z.infer<typeof GuidanceChunkSchema>;
  * Graph Knowledge
  */
 export const EntityInputSchema = z.object({
-  id: z.string().min(1),
+  id: z.string().min(1).optional(), // absent 時は保存層で generateEntityId(type, name) により自動生成
   type: z.string().min(1),
   name: z.string().min(1),
   description: z.string().optional(),
   metadata: z.record(z.unknown()).optional(),
+  // Phase 2 additions
+  confidence: z.number().min(0).max(1).optional(),
+  provenance: z.string().optional(),
+  scope: z.string().optional(),
+  freshness: z.date().optional(),
 });
 export type EntityInput = z.infer<typeof EntityInputSchema>;
 
-export const RelationInputSchema = z.object({
+/** ID ベース（既存形式、尚前互換用） */
+const RelationIdInputSchema = z.object({
   sourceId: z.string().min(1),
   targetId: z.string().min(1),
   relationType: z.string().min(1),
   weight: z.union([z.number(), z.string()]).optional(),
 });
+
+/** name ベース（LLM ドラフト形式、保存層で ID を解決） */
+const RelationNameInputSchema = z.object({
+  sourceType: z.string().min(1),
+  sourceName: z.string().min(1),
+  targetType: z.string().min(1),
+  targetName: z.string().min(1),
+  relationType: z.string().min(1),
+  weight: z.union([z.number(), z.string()]).optional(),
+});
+
+export const RelationInputSchema = z.union([RelationIdInputSchema, RelationNameInputSchema]);
 export type RelationInput = z.infer<typeof RelationInputSchema>;
 
 /**
@@ -62,6 +156,12 @@ export const VibeMemoryInputSchema = z.object({
   sessionId: z.string().min(1),
   content: z.string().min(1),
   metadata: z.record(z.unknown()).default({}),
+  // Phase 2 additions
+  memoryType: z.enum(['raw', 'episode']).optional().default('raw'),
+  episodeAt: z.date().optional(),
+  sourceTask: z.string().optional(),
+  importance: z.number().min(0).max(1).optional().default(0.5),
+  compressed: z.boolean().optional().default(false),
 });
 export type VibeMemoryInput = z.infer<typeof VibeMemoryInputSchema>;
 
@@ -83,22 +183,8 @@ export type MergedEntityResult = z.infer<typeof MergedEntityResultSchema>;
 
 export const DistilledKnowledgeSchema = z.object({
   memories: z.array(z.string()),
-  entities: z.array(
-    z.object({
-      id: z.string().min(1),
-      type: z.string().min(1),
-      name: z.string().min(1),
-      description: z.string().min(1),
-    }),
-  ),
-  relations: z.array(
-    z.object({
-      sourceId: z.string().min(1),
-      targetId: z.string().min(1),
-      relationType: z.string().min(1),
-      weight: z.number().optional(),
-    }),
-  ),
+  entities: z.array(LlmEntityDraftSchema),
+  relations: z.array(LlmRelationDraftSchema),
 });
 export type DistilledKnowledge = z.infer<typeof DistilledKnowledgeSchema>;
 
