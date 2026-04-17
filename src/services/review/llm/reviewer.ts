@@ -141,6 +141,20 @@ export async function getReviewLLMService(
           throw error;
         }
       },
+      async generateMessages(messages, options) {
+        if (local.generateMessages) {
+          return local.generateMessages(messages, options);
+        }
+        // Fallback to text generate
+        const prompt = messages.map((m) => `[${m.role}] ${m.content}`).join('\n\n');
+        return local.generate(prompt, options);
+      },
+      async generateMessagesStructured(messages, options) {
+        if (local.generateMessagesStructured) {
+          return local.generateMessagesStructured(messages, options);
+        }
+        throw new ReviewError('E007', 'Local LLM does not support structured tool calls');
+      },
     };
   }
 
@@ -157,6 +171,18 @@ export async function getReviewLLMService(
           }
           throw error;
         }
+      },
+      async generateMessages(messages, options) {
+        if (cloud.generateMessages) {
+          return cloud.generateMessages(messages, options);
+        }
+        return cloud.generate('', options); // Should not happen with cloud
+      },
+      async generateMessagesStructured(messages, options) {
+        if (cloud.generateMessagesStructured) {
+          return cloud.generateMessagesStructured(messages, options);
+        }
+        throw new ReviewError('E007', 'Cloud LLM does not support structured tool calls');
       },
     };
   } catch (error) {
