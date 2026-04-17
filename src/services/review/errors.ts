@@ -20,6 +20,7 @@ export const ReviewErrors = {
   E009: 'STATIC_ANALYSIS_FAILED',
   E010: 'DIFFGUARD_MCP_ERROR',
   E011: 'ASTMEND_MCP_ERROR',
+  E012: 'MAX_AGENTIC_ROUNDS_REACHED',
 } as const;
 
 export const ReviewWarnings = {

@@ -8,7 +8,7 @@ import {
 } from './hallucinator.js';
 import { createLocalReviewLLMService } from './localProvider.js';
 import { buildReviewPrompt, buildReviewPromptV1, buildReviewPromptV3 } from './promptBuilder.js';
-import type { ReviewLLMPreference, ReviewLLMService } from './types.js';
+import type { ReviewLLMPreference, ReviewLLMService, ReviewerAlias } from './types.js';
 
 function extractJsonPayload(rawOutput: string): string {
   const fenced = rawOutput.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -85,13 +85,50 @@ function normalizeFinding(
   };
 }
 
+/**
+ * resolves the reviewer alias from environment variables.
+ */
+export function resolveReviewerAlias(): ReviewerAlias {
+  const env = process.env.GNOSIS_REVIEWER?.trim().toLowerCase();
+  if (env === 'gemma4' || env === 'bonsai' || env === 'bedrock' || env === 'openai') {
+    return env as ReviewerAlias;
+  }
+  return 'bedrock'; // Default fallback
+}
+
+/**
+ * Resolves the reviewer LLM service based on environment variables.
+ * Preference argument is kept for compatibility but overridden by GNOSIS_REVIEWER if set.
+ */
 export async function getReviewLLMService(
-  preference: ReviewLLMPreference = 'cloud',
+  preference?: ReviewLLMPreference,
 ): Promise<ReviewLLMService> {
-  const local = createLocalReviewLLMService();
+  const alias = resolveReviewerAlias();
+
+  // If GNOSIS_REVIEWER is explicitly set, we use it.
+  // Otherwise, we fallback to the old preference-based logic or default to bedrock.
+  const useEnv = !!process.env.GNOSIS_REVIEWER;
+
+  if (useEnv) {
+    switch (alias) {
+      case 'gemma4':
+        return createLocalReviewLLMService({ alias: 'gemma4' });
+      case 'bonsai':
+        return createLocalReviewLLMService({ alias: 'bonsai' });
+      case 'bedrock':
+        return createCloudReviewLLMService({ provider: 'bedrock' });
+      case 'openai':
+        return createCloudReviewLLMService({ provider: 'openai' });
+    }
+  }
+
+  // Legacy fallback logic
+  const pref =
+    preference ?? (process.env.GNOSIS_REVIEW_LLM_PREFERENCE === 'local' ? 'local' : 'cloud');
+  const local = createLocalReviewLLMService({ alias: 'gemma4' });
   const cloudFallback = () => createCloudReviewLLMService();
 
-  if (preference === 'local') {
+  if (pref === 'local') {
     return {
       provider: 'local',
       async generate(prompt: string, options?: { format?: 'json' | 'text' }): Promise<string> {
@@ -101,7 +138,6 @@ export async function getReviewLLMService(
           if (error instanceof ReviewError && (error.code === 'E006' || error.code === 'E007')) {
             return cloudFallback().generate(prompt, options);
           }
-
           throw error;
         }
       },
@@ -110,7 +146,6 @@ export async function getReviewLLMService(
 
   try {
     const cloud = createCloudReviewLLMService();
-
     return {
       provider: 'cloud',
       async generate(prompt: string, options?: { format?: 'json' | 'text' }): Promise<string> {
@@ -120,7 +155,6 @@ export async function getReviewLLMService(
           if (error instanceof ReviewError && (error.code === 'E007' || error.code === 'E006')) {
             return local.generate(prompt, options);
           }
-
           throw error;
         }
       },
@@ -129,7 +163,6 @@ export async function getReviewLLMService(
     if (error instanceof ReviewError) {
       return local;
     }
-
     throw new ReviewError('E007', `No review LLM providers available: ${error}`);
   }
 }

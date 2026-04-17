@@ -1,9 +1,11 @@
 import { spawn } from 'node:child_process';
 import { config } from '../../../config.js';
+import { type LocalLlmAlias, resolveLauncherPlan } from '../../../scripts/local-llm-cli.js';
 import { REVIEW_LIMITS, ReviewError } from '../errors.js';
 import type { ReviewLLMService } from './types.js';
 
 type LocalProviderOptions = {
+  alias?: LocalLlmAlias;
   scriptPath?: string;
   timeoutMs?: number;
 };
@@ -63,23 +65,21 @@ function spawnCommand(
 }
 
 export function createLocalReviewLLMService(options: LocalProviderOptions = {}): ReviewLLMService {
-  const scriptPath = options.scriptPath ?? config.llmScript;
+  const alias = options.alias ?? 'gemma4';
   const timeoutMs = options.timeoutMs ?? REVIEW_LIMITS.LLM_TIMEOUT_MS;
 
   return {
     provider: 'local',
     async generate(prompt: string, opts = {}): Promise<string> {
       const outputFormat = opts.format ?? 'text';
-      const result = await spawnCommand(
-        scriptPath,
-        ['--output', outputFormat, '--prompt', prompt],
-        timeoutMs,
-      );
+      const plan = resolveLauncherPlan(alias, ['--output', outputFormat, '--prompt', prompt]);
+
+      const result = await spawnCommand(plan.command, plan.args, timeoutMs);
 
       if (result.code !== 0) {
         throw new ReviewError(
           'E007',
-          result.stderr.trim() || `Local LLM exited with code ${result.code}`,
+          result.stderr.trim() || `Local LLM (${alias}) exited with code ${result.code}`,
         );
       }
 

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { simpleGit } from 'simple-git';
+import { sha256 } from '../../utils/crypto.js';
 import { deduplicateFindings, mergeFindings, validateFindingsFull } from './diff/merge.js';
 import { countAddedLines, countRemovedLines, normalizeDiff } from './diff/normalizer.js';
 import { ReviewError } from './errors.js';
@@ -17,8 +18,10 @@ import {
   retrieveGuidance,
   searchSimilarFindings,
 } from './knowledge/index.js';
+import { reviewWithTools } from './llm/agenticReviewer.js';
 import { getReviewLLMService, reviewWithLLM } from './llm/reviewer.js';
-import type { ReviewLLMService } from './llm/types.js';
+import { resolveReviewerAlias } from './llm/reviewer.js';
+import type { ChatMessage, ReviewLLMService } from './llm/types.js';
 import type { ReviewMcpToolCaller } from './mcp/caller.js';
 import { calculateMetrics } from './metrics/calculator.js';
 import { enrichRiskSignalsWithImpact, planReview } from './planner/riskScorer.js';
@@ -26,9 +29,13 @@ import { renderReviewMarkdown } from './render/markdown.js';
 import { analyzeImpactWithAstmend, extractChangedSymbols } from './static/astmend.js';
 import { analyzeDiffWithDiffGuard, runDiffGuard } from './static/diffguard.js';
 import { runStaticAnalysisOnChangedDetailed } from './static/runner.js';
+import type { ReviewerToolContext } from './tools/types.js';
 import {
   type DegradedMode,
   type Finding,
+  type FindingCategory,
+  type FindingConfidence,
+  type FindingSeverity,
   type FixSuggestion,
   type GuidanceItem,
   type NormalizedDiff,
@@ -39,6 +46,22 @@ import {
   type ReviewStatus,
   type StaticAnalysisFinding,
 } from './types.js';
+
+interface LLMReviewResult {
+  findings: Array<{
+    title: string;
+    severity: FindingSeverity;
+    confidence: FindingConfidence;
+    file_path: string;
+    line_new: number;
+    category: FindingCategory;
+    rationale: string;
+    suggested_fix?: string;
+    evidence: string;
+  }>;
+  summary: string;
+  next_actions: string[];
+}
 
 type RunReviewDeps = {
   llmService?: ReviewLLMService;
@@ -663,6 +686,133 @@ export async function runReviewStageD(
     fix_suggestions: fixSuggestions,
     review_kpis: reviewKpis,
   });
+}
+
+export async function runReviewStageE(
+  req: ReviewRequest,
+  deps: RunReviewDeps = {},
+): Promise<ReviewOutput> {
+  const startTime = deps.now?.() ?? Date.now();
+  const now = deps.now ?? Date.now;
+
+  validateAllowedRoot(req.repoPath);
+  validateSessionId(req.sessionId);
+
+  let rawDiff: string;
+  try {
+    rawDiff = await (deps.diffProvider ?? getDiff)(req.repoPath, req.mode);
+  } catch (error) {
+    throw new ReviewError('E005', `Git diff failed: ${error}`);
+  }
+
+  if (!rawDiff.trim()) {
+    return buildNoChangesResult(startTime, now);
+  }
+
+  enforceHardLimit(rawDiff);
+
+  const llmService = deps.llmService ?? (await getReviewLLMService());
+  const reviewerAlias = resolveReviewerAlias();
+
+  const ctx: ReviewerToolContext = {
+    repoPath: req.repoPath,
+    gnosisSessionId: req.sessionId,
+    mcpCaller: deps.mcpCaller,
+    maxToolRounds: 5,
+    webSearchFn: undefined,
+  };
+
+  const systemPrompt = `
+You are a highly skilled software engineer. Perform a code review for the following diff.
+Base your review on the provided context and any information you gather using your tools.
+
+Goal: ${req.taskGoal ?? 'Review the code changes for bugs, security issues, and maintainability.'}
+
+Return your final review in the following JSON format ONLY:
+{
+  "findings": [
+    {
+      "title": "Finding title",
+      "severity": "error|warning|info",
+      "confidence": "high|medium|low",
+      "file_path": "relative/path/to/file",
+      "line_new": 123,
+      "category": "bug|security|performance|design|maintainability",
+      "rationale": "Why this is an issue",
+      "suggested_fix": "How to fix it",
+      "evidence": "Code snippet or context"
+    }
+  ],
+  "summary": "Overall summary of the review",
+  "next_actions": ["Action 1", "Action 2"]
+}
+`;
+
+  const messages: ChatMessage[] = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: `The diff to review:\n\n${rawDiff}` },
+  ];
+
+  try {
+    const finalResponse = await reviewWithTools(llmService, messages, ctx);
+
+    // Attempt to parse JSON from the final response
+    let parsed: LLMReviewResult;
+    try {
+      const jsonMatch = finalResponse.match(/\{[\s\S]*\}/);
+      parsed = JSON.parse(jsonMatch ? jsonMatch[0] : finalResponse);
+    } catch (e) {
+      // Fallback if not JSON
+      parsed = {
+        findings: [],
+        summary: finalResponse,
+        next_actions: [],
+      };
+    }
+
+    const findings: Finding[] = (parsed.findings ?? []).map((f) => {
+      const fingerprint = sha256(`${f.file_path}:${f.line_new}:${f.title}:${f.rationale}`);
+      return {
+        ...f,
+        id: randomUUID(),
+        fingerprint,
+        needsHumanConfirmation: f.severity !== 'error',
+        source: llmService.provider === 'local' ? 'local_llm' : 'heavy_llm',
+      };
+    });
+
+    const result = ReviewOutputSchema.parse({
+      review_id: randomUUID(),
+      task_id: req.taskId,
+      review_status: deriveReviewStatus(findings),
+      findings,
+      summary: parsed.summary || 'Review completed successfully.',
+      next_actions: parsed.next_actions || [],
+      rerun_review: findings.some((f) => f.severity === 'error'),
+      metadata: {
+        reviewed_files: countChangedFiles(rawDiff),
+        risk_level: determineRiskLevel(findings),
+        static_analysis_used: true, // Agentic review implicitly uses static tools if needed
+        knowledge_applied: [],
+        degraded_mode: false,
+        degraded_reasons: [],
+        local_llm_used: llmService.provider === 'local',
+        heavy_llm_used: llmService.provider === 'cloud',
+        review_duration_ms: now() - startTime,
+        // Custom Stage E metadata
+        reviewer_alias: reviewerAlias,
+        stage: 'E',
+      },
+      markdown: '',
+    });
+
+    return buildResult(result);
+  } catch (error) {
+    if (error instanceof ReviewError && error.code === 'E006') {
+      return buildTimedOutResult(startTime, now);
+    }
+    throw error;
+  }
 }
 
 export async function runReviewStageBFromRepo(

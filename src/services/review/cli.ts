@@ -6,8 +6,9 @@ import {
   runReviewStageB,
   runReviewStageC,
   runReviewStageD,
+  runReviewStageE,
 } from './orchestrator.js';
-import { ReviewModeSchema, ReviewRequestSchema } from './types.js';
+import { ReviewModeSchema, type ReviewOutput, ReviewRequestSchema } from './types.js';
 
 type CliArgs = {
   repoPath: string;
@@ -20,7 +21,7 @@ type CliArgs = {
   goal?: string;
   llmPreference?: 'local' | 'cloud';
   json: boolean;
-  stage: 'a' | 'b' | 'c' | 'd';
+  stage: 'a' | 'b' | 'c' | 'd' | 'e';
   enableStaticAnalysis: boolean;
 };
 
@@ -41,7 +42,8 @@ function parseArgs(argv: string[]): CliArgs {
   const llmPreference = llmFlag === 'local' ? 'local' : llmFlag === 'cloud' ? 'cloud' : undefined;
   const json = argv.includes('--json');
   const stageArg = getArg(argv, '--stage');
-  const stage = stageArg === 'a' || stageArg === 'c' || stageArg === 'd' ? stageArg : 'b';
+  const stage =
+    stageArg === 'a' || stageArg === 'c' || stageArg === 'd' || stageArg === 'e' ? stageArg : 'b';
   const enableStaticAnalysis = argv.includes('--enable-static-analysis');
 
   return {
@@ -85,14 +87,26 @@ export async function runReviewCli(argv = process.argv.slice(2)): Promise<void> 
   const envPreference = process.env.GNOSIS_REVIEW_LLM_PREFERENCE === 'local' ? 'local' : 'cloud';
   const llmService = await getReviewLLMService(args.llmPreference ?? envPreference);
 
-  const result =
-    args.stage === 'a'
-      ? await runReviewStageA(request, { llmService })
-      : args.stage === 'b'
-        ? await runReviewStageB(request, { llmService })
-        : args.stage === 'c'
-          ? await runReviewStageC(request, { llmService })
-          : await runReviewStageD(request, { llmService });
+  let result: ReviewOutput;
+  switch (args.stage) {
+    case 'a':
+      result = await runReviewStageA(request, { llmService });
+      break;
+    case 'b':
+      result = await runReviewStageB(request, { llmService });
+      break;
+    case 'c':
+      result = await runReviewStageC(request, { llmService });
+      break;
+    case 'd':
+      result = await runReviewStageD(request, { llmService });
+      break;
+    case 'e':
+      result = await runReviewStageE(request, { llmService });
+      break;
+    default:
+      result = await runReviewStageB(request, { llmService });
+  }
 
   if (args.json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

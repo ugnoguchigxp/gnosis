@@ -36,4 +36,7 @@ export interface ReviewLLMService {
   readonly provider: 'local' | 'cloud';
 }
 
+/** Named LLM aliases for code review */
+export type ReviewerAlias = 'gemma4' | 'bonsai' | 'bedrock' | 'openai';
+
 export type ReviewLLMPreference = 'local' | 'cloud';

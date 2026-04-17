@@ -160,9 +160,16 @@ function isGeneratedFile(filePath: string): boolean {
 export async function runStaticAnalysis(
   files: string[],
   projectRoot: string,
+  kind?: 'typecheck' | 'lint',
 ): Promise<{ findings: StaticAnalysisFinding[]; degraded: boolean }> {
   const language = detectLanguage(files[0] ?? '');
-  const tools = ALLOWED_TOOLS[language] ?? [];
+  let tools = ALLOWED_TOOLS[language] ?? [];
+
+  if (kind === 'typecheck') {
+    tools = tools.filter((t) => t.source === 'tsc');
+  } else if (kind === 'lint') {
+    tools = tools.filter((t) => t.source !== 'tsc');
+  }
 
   for (const tool of tools) {
     if (!isToolAvailable(tool.command)) continue;
@@ -178,6 +185,14 @@ export async function runStaticAnalysis(
   }
 
   return { findings: [], degraded: true };
+}
+
+export async function runStaticAnalysisByKind(
+  kind: 'typecheck' | 'lint',
+  files: string[],
+  projectRoot: string,
+): Promise<{ findings: StaticAnalysisFinding[]; degraded: boolean }> {
+  return runStaticAnalysis(files, projectRoot, kind);
 }
 
 function isInChangedRange(line: number | undefined, diff: NormalizedDiff): boolean {
