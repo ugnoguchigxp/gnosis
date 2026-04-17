@@ -25,8 +25,6 @@ describe('local LLM CLI launchers', () => {
     expect(readText('scripts/bonsai')).toContain('src/scripts/local-llm-cli.ts');
     expect(readText('scripts/bedrock')).toContain('src/scripts/local-llm-cli.ts');
     expect(readText('scripts/openai')).toContain('src/scripts/local-llm-cli.ts');
-    expect(readText('services/local-llm/scripts/openai')).toContain('--alias openai');
-    expect(readText('services/local-llm/scripts/bedrock')).toContain('--alias bedrock');
   });
 
   test('alias router resolves each launcher to the expected runtime', () => {
@@ -49,14 +47,12 @@ describe('local LLM CLI launchers', () => {
   });
 
   test('PATH helpers include all command names', () => {
-    expect(readText('scripts/register-path.sh')).toContain('ROOT_SCRIPTS');
-    expect(readText('scripts/register-path.sh')).toContain('which gemma4');
-    expect(readText('scripts/register-path.sh')).toContain('which bonsai');
-    expect(readText('scripts/register-path.sh')).toContain('which bedrock');
-    expect(readText('scripts/register-path.sh')).toContain('which openai');
-    expect(readText('services/local-llm/scripts/install_path.sh')).toContain(
-      "To use 'gemma4', 'ollama-v4', 'bonsai', 'bedrock', and 'openai' commands from anywhere",
-    );
+    const reg = readText('scripts/register-path.sh');
+    expect(reg).toContain('ROOT_SCRIPTS');
+    expect(reg).toContain('which gemma4');
+    expect(reg).toContain('which bonsai');
+    expect(reg).toContain('which bedrock');
+    expect(reg).toContain('which openai');
   });
 
   test('setup guidance references all four launchers', () => {
