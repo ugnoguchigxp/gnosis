@@ -175,6 +175,8 @@ export interface ReviewMetadata {
   local_llm_used: boolean;
   heavy_llm_used: boolean;
   review_duration_ms: number;
+  reviewer_alias?: string;
+  stage?: string;
 }
 
 export const ReviewMetadataSchema = z
@@ -188,6 +190,8 @@ export const ReviewMetadataSchema = z
     local_llm_used: z.boolean(),
     heavy_llm_used: z.boolean(),
     review_duration_ms: z.number().int().nonnegative(),
+    reviewer_alias: z.string().optional(),
+    stage: z.string().optional(),
   })
   .strict();
 
