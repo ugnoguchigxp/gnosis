@@ -2,10 +2,15 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { server } from './mcp/server.js';
 import { startBackgroundWorkers } from './services/background/manager.js';
 
-// MCPプロトコル(STDIO)を破壊しないよう、すべての console.log を console.error に強制リダイレクト
-console.log = (...args: unknown[]) => {
-  console.error(...args);
+// MCPプロトコル(STDIO)を破壊しないよう、すべての標準出力を標準エラーに強制リダイレクト
+const redirectLogs = () => {
+  const originalError = console.error;
+  console.log = (...args: unknown[]) => originalError(...args);
+  console.info = (...args: unknown[]) => originalError(...args);
+  console.warn = (...args: unknown[]) => originalError(...args);
 };
+
+redirectLogs();
 
 async function main() {
   // MCPプロトコル(STDIO)を破壊しないよう、console.log を console.error にリダイレクト

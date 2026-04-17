@@ -219,12 +219,8 @@
           "name": "entities_community_id_communities_id_fk",
           "tableFrom": "entities",
           "tableTo": "communities",
-          "columnsFrom": [
-            "community_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["community_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -450,12 +446,8 @@
           "name": "knowledge_claims_topic_id_knowledge_topics_id_fk",
           "tableFrom": "knowledge_claims",
           "tableTo": "knowledge_topics",
-          "columnsFrom": [
-            "topic_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["topic_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -465,10 +457,7 @@
         "knowledge_claims_topic_fingerprint_unique": {
           "name": "knowledge_claims_topic_fingerprint_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "topic_id",
-            "fingerprint"
-          ]
+          "columns": ["topic_id", "fingerprint"]
         }
       },
       "policies": {},
@@ -554,12 +543,8 @@
           "name": "knowledge_relations_topic_id_knowledge_topics_id_fk",
           "tableFrom": "knowledge_relations",
           "tableTo": "knowledge_topics",
-          "columnsFrom": [
-            "topic_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["topic_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -569,10 +554,7 @@
         "knowledge_relations_topic_fingerprint_unique": {
           "name": "knowledge_relations_topic_fingerprint_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "topic_id",
-            "fingerprint"
-          ]
+          "columns": ["topic_id", "fingerprint"]
         }
       },
       "policies": {},
@@ -663,12 +645,8 @@
           "name": "knowledge_sources_topic_id_knowledge_topics_id_fk",
           "tableFrom": "knowledge_sources",
           "tableTo": "knowledge_topics",
-          "columnsFrom": [
-            "topic_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["topic_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -678,10 +656,7 @@
         "knowledge_sources_topic_source_unique": {
           "name": "knowledge_sources_topic_source_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "topic_id",
-            "source_id"
-          ]
+          "columns": ["topic_id", "source_id"]
         }
       },
       "policies": {},
@@ -771,9 +746,7 @@
         "knowledge_topics_canonical_topic_unique": {
           "name": "knowledge_topics_canonical_topic_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "canonical_topic"
-          ]
+          "columns": ["canonical_topic"]
         }
       },
       "policies": {},
@@ -898,12 +871,8 @@
           "name": "relations_source_id_entities_id_fk",
           "tableFrom": "relations",
           "tableTo": "entities",
-          "columnsFrom": [
-            "source_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["source_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -911,12 +880,8 @@
           "name": "relations_target_id_entities_id_fk",
           "tableFrom": "relations",
           "tableTo": "entities",
-          "columnsFrom": [
-            "target_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["target_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -926,11 +891,7 @@
         "relations_source_target_type_unique": {
           "name": "relations_source_target_type_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "source_id",
-            "target_id",
-            "relation_type"
-          ]
+          "columns": ["source_id", "target_id", "relation_type"]
         }
       },
       "policies": {},
@@ -1237,12 +1198,8 @@
           "name": "review_outcomes_review_case_id_review_cases_id_fk",
           "tableFrom": "review_outcomes",
           "tableTo": "review_cases",
-          "columnsFrom": [
-            "review_case_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["review_case_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1252,10 +1209,7 @@
         "review_outcomes_case_finding_unique": {
           "name": "review_outcomes_case_finding_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "review_case_id",
-            "finding_id"
-          ]
+          "columns": ["review_case_id", "finding_id"]
         }
       },
       "policies": {},
@@ -1756,10 +1710,7 @@
         "vibe_memories_session_dedupe_key_unique": {
           "name": "vibe_memories_session_dedupe_key_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "session_id",
-            "dedupe_key"
-          ]
+          "columns": ["session_id", "dedupe_key"]
         }
       },
       "policies": {},
