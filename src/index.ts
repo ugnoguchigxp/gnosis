@@ -1,8 +1,13 @@
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { server } from './mcp/server.js';
+import { startBackgroundWorkers } from './services/background/manager.js';
 
 async function main() {
   const transport = new StdioServerTransport();
+
+  // バックグラウンドワーカーの開始
+  startBackgroundWorkers();
+
   await server.connect(transport);
   console.error('Gnosis VibeMemory & Knowledge Graph MCP Server is running over STDIO');
 }

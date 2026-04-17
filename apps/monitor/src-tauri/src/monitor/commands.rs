@@ -53,3 +53,32 @@ pub async fn monitor_enqueue_task(
     .await
     .map_err(|error| error.to_string())
 }
+
+#[tauri::command]
+pub async fn monitor_list_episodes(
+    state: State<'_, MonitorRuntime>,
+) -> Result<serde_json::Value, String> {
+    cli::fetch_episodes(&state.project_root)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_delete_episode(
+    state: State<'_, MonitorRuntime>,
+    id: String,
+) -> Result<serde_json::Value, String> {
+    cli::delete_episode(&state.project_root, &id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_register_episode(
+    state: State<'_, MonitorRuntime>,
+    content: String,
+) -> Result<serde_json::Value, String> {
+    cli::register_episode(&state.project_root, &content)
+        .await
+        .map_err(|error| error.to_string())
+}

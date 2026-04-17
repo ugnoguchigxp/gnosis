@@ -113,6 +113,13 @@ describe('guidance MCP tools', () => {
         scope: 'on_demand',
         priority: 80,
         tags: ['typescript', 'testing'],
+        applicability: {
+          projects: ['gnosis'],
+          domains: ['programming'],
+          languages: ['typescript'],
+          environments: ['local'],
+          repos: ['github.com/ugnoguchigxp/gnosis'],
+        },
         archiveKey: 'my-skill',
       });
 
@@ -122,6 +129,7 @@ describe('guidance MCP tools', () => {
       expect(callArg.scope).toBe('on_demand');
       expect(callArg.priority).toBe(80);
       expect(callArg.tags).toEqual(['typescript', 'testing']);
+      expect(callArg.applicability.projects).toEqual(['gnosis']);
     });
 
     it('throws on invalid input schema', async () => {

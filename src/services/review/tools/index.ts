@@ -8,6 +8,8 @@ import {
 } from './gitTools.js';
 import {
   getGuidanceToolEntry,
+  queryGraphToolEntry,
+  queryProcedureToolEntry,
   recallLessonsToolEntry,
   searchKnowledgeToolEntry,
   searchMemoryToolEntry,
@@ -82,6 +84,8 @@ export function createDefaultReviewerToolRegistry(): ReviewerToolRegistry {
   registry.register(searchMemoryToolEntry);
   registry.register(searchKnowledgeToolEntry);
   registry.register(getGuidanceToolEntry);
+  registry.register(queryProcedureToolEntry);
+  registry.register(queryGraphToolEntry);
   registry.register(webSearchToolEntry);
   return registry;
 }

@@ -23,6 +23,7 @@ import { getReviewLLMService, reviewWithLLM } from './llm/reviewer.js';
 import { resolveReviewerAlias } from './llm/reviewer.js';
 import type { ChatMessage, ReviewLLMService } from './llm/types.js';
 import type { ReviewMcpToolCaller } from './mcp/caller.js';
+import { recordReviewResult } from './memoryIntegration.js';
 import { calculateMetrics } from './metrics/calculator.js';
 import { enrichRiskSignalsWithImpact, planReview } from './planner/riskScorer.js';
 import { renderReviewMarkdown } from './render/markdown.js';
@@ -723,8 +724,15 @@ export async function runReviewStageE(
   };
 
   const systemPrompt = `
-You are a highly skilled software engineer. Perform a code review for the following diff.
-Base your review on the provided context and any information you gather using your tools.
+You are a highly skilled software engineer and an expert code reviewer. Perform an autonomous, agentic code review for the following diff.
+
+### Gnosis Memory & Procedural Knowledge
+You have access to Gnosis, a sophisticated memory system. Before reaching conclusions:
+1. Use 'query_procedure' to fetch project-specific instructions, constraints, and past episodes related to "Code Review" for this project (${req.repoPath
+    .split('/')
+    .pop()}).
+2. Use 'recall_lessons' if you encounter patterns that might have caused issues in the past.
+3. Use 'query_graph' to understand the relationships and dependencies of the components you are auditing.
 
 Goal: ${req.taskGoal ?? 'Review the code changes for bugs, security issues, and maintainability.'}
 
@@ -738,12 +746,12 @@ Return your final review in the following JSON format ONLY:
       "file_path": "relative/path/to/file",
       "line_new": 123,
       "category": "bug|security|performance|design|maintainability",
-      "rationale": "Why this is an issue",
+      "rationale": "Why this is an issue using evidence from Gnosis memory if applicable",
       "suggested_fix": "How to fix it",
       "evidence": "Code snippet or context"
     }
   ],
-  "summary": "Overall summary of the review",
+  "summary": "Overall summary of the review, including how past lessons were applied",
   "next_actions": ["Action 1", "Action 2"]
 }
 `;
@@ -804,6 +812,11 @@ Return your final review in the following JSON format ONLY:
         stage: 'E',
       },
       markdown: '',
+    });
+
+    // Background call to record outcome in Gnosis memory
+    recordReviewResult(result).catch((err) => {
+      console.error('[Stage E] Failed to record review outcome:', err);
     });
 
     return buildResult(result);

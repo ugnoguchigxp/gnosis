@@ -25,6 +25,16 @@ type CliArgs = {
   enableStaticAnalysis: boolean;
 };
 
+function isReviewDebugEnabled(): boolean {
+  const raw = process.env.GNOSIS_REVIEW_DEBUG?.trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+}
+
+function emitReviewDebugLog(payload: Record<string, unknown>): void {
+  if (!isReviewDebugEnabled()) return;
+  console.error(`[review-debug] ${JSON.stringify({ ts: new Date().toISOString(), ...payload })}`);
+}
+
 function getArg(argv: string[], key: string): string | undefined {
   const index = argv.indexOf(key);
   return index >= 0 && index + 1 < argv.length ? argv[index + 1] : undefined;
@@ -71,6 +81,7 @@ function deriveSessionId(repoPath: string, branchHint: string): string {
 export async function runReviewCli(argv = process.argv.slice(2)): Promise<void> {
   const args = parseArgs(argv);
   const sessionId = args.sessionId ?? deriveSessionId(args.repoPath, args.baseRef || args.headRef);
+  const requestId = `${args.taskId}:${Date.now()}`;
 
   const request = ReviewRequestSchema.parse({
     taskId: args.taskId,
@@ -84,29 +95,58 @@ export async function runReviewCli(argv = process.argv.slice(2)): Promise<void> 
     enableStaticAnalysis: args.enableStaticAnalysis,
   });
 
+  emitReviewDebugLog({
+    event: 'cli_review_start',
+    requestId,
+    repoPath: request.repoPath,
+    stage: args.stage,
+    mode: args.mode,
+    llmPreference: args.llmPreference ?? null,
+  });
+
   const envPreference = process.env.GNOSIS_REVIEW_LLM_PREFERENCE === 'local' ? 'local' : 'cloud';
-  const llmService = await getReviewLLMService(args.llmPreference ?? envPreference);
+  const llmService = await getReviewLLMService(args.llmPreference ?? envPreference, {
+    invoker: 'cli',
+    requestId,
+  });
 
   let result: ReviewOutput;
-  switch (args.stage) {
-    case 'a':
-      result = await runReviewStageA(request, { llmService });
-      break;
-    case 'b':
-      result = await runReviewStageB(request, { llmService });
-      break;
-    case 'c':
-      result = await runReviewStageC(request, { llmService });
-      break;
-    case 'd':
-      result = await runReviewStageD(request, { llmService });
-      break;
-    case 'e':
-      result = await runReviewStageE(request, { llmService });
-      break;
-    default:
-      result = await runReviewStageB(request, { llmService });
+  try {
+    switch (args.stage) {
+      case 'a':
+        result = await runReviewStageA(request, { llmService });
+        break;
+      case 'b':
+        result = await runReviewStageB(request, { llmService });
+        break;
+      case 'c':
+        result = await runReviewStageC(request, { llmService });
+        break;
+      case 'd':
+        result = await runReviewStageD(request, { llmService });
+        break;
+      case 'e':
+        result = await runReviewStageE(request, { llmService });
+        break;
+      default:
+        result = await runReviewStageB(request, { llmService });
+    }
+  } catch (error) {
+    emitReviewDebugLog({
+      event: 'cli_review_error',
+      requestId,
+      stage: args.stage,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
   }
+
+  emitReviewDebugLog({
+    event: 'cli_review_success',
+    requestId,
+    stage: args.stage,
+    markdownLength: result.markdown.length,
+  });
 
   if (args.json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { ReviewError } from '../errors.js';
 import type { Finding, ReviewContextV1, ReviewContextV2, ReviewContextV3 } from '../types.js';
 import { createCloudReviewLLMService } from './cloudProvider.js';
@@ -9,6 +12,45 @@ import {
 import { createLocalReviewLLMService } from './localProvider.js';
 import { buildReviewPrompt, buildReviewPromptV1, buildReviewPromptV3 } from './promptBuilder.js';
 import type { ReviewLLMPreference, ReviewLLMService, ReviewerAlias } from './types.js';
+
+type ReviewLlmRuntimeOptions = {
+  invoker?: 'mcp' | 'cli' | 'service' | 'unknown';
+  requestId?: string;
+};
+
+const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
+let reviewEnvLoaded = false;
+
+function loadReviewEnvFile(filePath = path.join(ROOT_DIR, '.env')): void {
+  if (reviewEnvLoaded) return;
+  reviewEnvLoaded = true;
+  if (!fs.existsSync(filePath)) return;
+
+  const content = fs.readFileSync(filePath, 'utf8');
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+
+    const equalIndex = trimmed.indexOf('=');
+    if (equalIndex <= 0) continue;
+
+    const key = trimmed.slice(0, equalIndex).trim();
+    const rawValue = trimmed.slice(equalIndex + 1).trim();
+    const value = rawValue.replace(/^['"]|['"]$/g, '');
+    if (!(key in process.env)) {
+      process.env[key] = value;
+    }
+  }
+}
+
+function syncAzureEndpointToGnosisBaseUrl(): void {
+  if (
+    !process.env.GNOSIS_REVIEW_LLM_API_BASE_URL &&
+    process.env.AZURE_OPENAI_ENDPOINT?.trim().length
+  ) {
+    process.env.GNOSIS_REVIEW_LLM_API_BASE_URL = process.env.AZURE_OPENAI_ENDPOINT;
+  }
+}
 
 function extractJsonPayload(rawOutput: string): string {
   const fenced = rawOutput.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -102,19 +144,25 @@ export function resolveReviewerAlias(): ReviewerAlias {
  */
 export async function getReviewLLMService(
   preference?: ReviewLLMPreference,
+  runtime: ReviewLlmRuntimeOptions = {},
 ): Promise<ReviewLLMService> {
-  const alias = resolveReviewerAlias();
+  loadReviewEnvFile();
+  syncAzureEndpointToGnosisBaseUrl();
 
-  // If GNOSIS_REVIEWER is explicitly set, we use it.
-  // Otherwise, we fallback to the old preference-based logic or default to bedrock.
-  const useEnv = !!process.env.GNOSIS_REVIEWER;
+  const alias = resolveReviewerAlias();
+  const invoker = runtime.invoker ?? 'service';
+  const requestId = runtime.requestId;
+
+  // If the caller explicitly asks local/cloud, that intent should win.
+  // GNOSIS_REVIEWER is treated as a default only when no explicit preference is passed.
+  const useEnv = !!process.env.GNOSIS_REVIEWER && preference === undefined;
 
   if (useEnv) {
     switch (alias) {
       case 'gemma4':
-        return createLocalReviewLLMService({ alias: 'gemma4' });
+        return createLocalReviewLLMService({ alias: 'gemma4', invoker, requestId });
       case 'bonsai':
-        return createLocalReviewLLMService({ alias: 'bonsai' });
+        return createLocalReviewLLMService({ alias: 'bonsai', invoker, requestId });
       case 'bedrock':
         return createCloudReviewLLMService({ provider: 'bedrock' });
       case 'openai':
@@ -125,7 +173,7 @@ export async function getReviewLLMService(
   // Legacy fallback logic
   const pref =
     preference ?? (process.env.GNOSIS_REVIEW_LLM_PREFERENCE === 'local' ? 'local' : 'cloud');
-  const local = createLocalReviewLLMService({ alias: 'gemma4' });
+  const local = createLocalReviewLLMService({ alias: 'gemma4', invoker, requestId });
   const cloudFallback = () => createCloudReviewLLMService();
 
   if (pref === 'local') {

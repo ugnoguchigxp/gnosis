@@ -33,6 +33,10 @@ export async function saveGuidance(
       languages?: string[];
       frameworks?: string[];
       excludedFrameworks?: string[];
+      projects?: string[];
+      domains?: string[];
+      environments?: string[];
+      repos?: string[];
     };
     archiveKey?: string;
     sessionId?: string;
@@ -88,8 +92,13 @@ export async function saveGuidance(
   if (input.applicability?.signals) contextConditions.push(...input.applicability.signals);
   if (input.applicability?.languages) contextConditions.push(...input.applicability.languages);
   if (input.applicability?.frameworks) contextConditions.push(...input.applicability.frameworks);
+  if (input.applicability?.projects) contextConditions.push(...input.applicability.projects);
+  if (input.applicability?.domains) contextConditions.push(...input.applicability.domains);
+  if (input.applicability?.environments)
+    contextConditions.push(...input.applicability.environments);
+  if (input.applicability?.repos) contextConditions.push(...input.applicability.repos);
 
-  for (const condition of contextConditions) {
+  for (const condition of new Set(contextConditions)) {
     const ctxId = generateEntityId('context', condition);
     const ctxEmbedding = await resolvedDeps.generateEmbedding(condition);
     await saveEntities(

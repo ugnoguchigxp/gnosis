@@ -69,6 +69,21 @@ bash scripts/install_path.sh
 # 実行後、指示に従って shell を再起動または source してください
 ```
 
+### 3-1. Sandbox 環境での MLX 起動ガード
+
+`CODEX_SANDBOX=seatbelt` のような sandbox/headless 実行環境では、MLX が Metal 初期化時に
+ネイティブ abort（`NSRangeException`）する既知事例があります。  
+そのため `mlx` / `bonsai` バックエンドはデフォルトで安全停止します。
+
+- デフォルト: 安全停止（クラッシュ回避）
+- 強制有効化: `LOCAL_LLM_ALLOW_MLX_IN_SEATBELT=1`
+
+```bash
+LOCAL_LLM_ALLOW_MLX_IN_SEATBELT=1 ./scripts/gemma4 --prompt "hello"
+```
+
+強制有効化は、環境が安定していることを確認した場合のみ使用してください。
+
 ### 4. CLI セッション維持モード (サーバー不要)
 
 `main.py` / `scripts/gemma4` は単発実行モードをサポートしています。  

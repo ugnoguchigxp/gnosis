@@ -44,6 +44,16 @@ export type QueryProcedureDeps = {
   embed?: (text: string) => Promise<number[]>;
 };
 
+export type QueryProcedureOptions = {
+  context?: string;
+  project?: string;
+  domains?: string[];
+  languages?: string[];
+  frameworks?: string[];
+  environment?: string;
+  repo?: string;
+};
+
 export type RecordOutcomeDeps = {
   database?: DbClient;
   embed?: (text: string) => Promise<number[]>;
@@ -101,17 +111,106 @@ export type ProcedureResult = {
   constraints: ProcedureConstraint[];
 };
 
+type NormalizedApplicabilityFilters = {
+  projects: string[];
+  domains: string[];
+  languages: string[];
+  frameworks: string[];
+  environments: string[];
+  repos: string[];
+};
+
+const normalizeToken = (value: string): string => value.trim().toLowerCase();
+
+const normalizeFilterList = (values?: string[]): string[] =>
+  (values ?? []).map(normalizeToken).filter((v) => v.length > 0);
+
+function resolveProcedureOptions(contextOrOptions?: string | QueryProcedureOptions): {
+  contextText?: string;
+  filters: NormalizedApplicabilityFilters;
+} {
+  const options: QueryProcedureOptions =
+    typeof contextOrOptions === 'string' || contextOrOptions === undefined
+      ? { context: contextOrOptions }
+      : contextOrOptions;
+
+  return {
+    contextText: options.context,
+    filters: {
+      projects: normalizeFilterList(options.project ? [options.project] : undefined),
+      domains: normalizeFilterList(options.domains),
+      languages: normalizeFilterList(options.languages),
+      frameworks: normalizeFilterList(options.frameworks),
+      environments: normalizeFilterList(options.environment ? [options.environment] : undefined),
+      repos: normalizeFilterList(options.repo ? [options.repo] : undefined),
+    },
+  };
+}
+
+const hasApplicabilityFilters = (filters: NormalizedApplicabilityFilters): boolean =>
+  filters.projects.length > 0 ||
+  filters.domains.length > 0 ||
+  filters.languages.length > 0 ||
+  filters.frameworks.length > 0 ||
+  filters.environments.length > 0 ||
+  filters.repos.length > 0;
+
+const normalizeMetadataList = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => (typeof item === 'string' ? normalizeToken(item) : ''))
+    .filter((v) => v.length > 0);
+};
+
+function matchesApplicabilityFilter(
+  metadata: unknown,
+  filters: NormalizedApplicabilityFilters,
+): { matched: boolean; reason?: string } {
+  if (!hasApplicabilityFilters(filters)) return { matched: true };
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata))
+    return { matched: true };
+
+  const applicability = (metadata as { applicability?: unknown }).applicability;
+  if (!applicability || typeof applicability !== 'object' || Array.isArray(applicability)) {
+    return { matched: true };
+  }
+
+  const app = applicability as Record<string, unknown>;
+  const checks: Array<{ key: keyof NormalizedApplicabilityFilters; metadataKey: string }> = [
+    { key: 'projects', metadataKey: 'projects' },
+    { key: 'domains', metadataKey: 'domains' },
+    { key: 'languages', metadataKey: 'languages' },
+    { key: 'frameworks', metadataKey: 'frameworks' },
+    { key: 'environments', metadataKey: 'environments' },
+    { key: 'repos', metadataKey: 'repos' },
+  ];
+
+  for (const { key, metadataKey } of checks) {
+    const requested = filters[key];
+    if (requested.length === 0) continue;
+    const candidate = normalizeMetadataList(app[metadataKey]);
+    if (candidate.length === 0) continue; // 未指定は「広く適用可能」とみなす
+    const hasIntersection = requested.some((value) => candidate.includes(value));
+    if (!hasIntersection) {
+      return { matched: false, reason: `applicability.${metadataKey} mismatch` };
+    }
+  }
+
+  return { matched: true };
+}
+
 /**
  * goal テキストから関連する task / constraint / episode を取得し、
  * トポロジカルソートされた手続き記憶を返す。
  */
 export async function queryProcedure(
   goalText: string,
-  contextText?: string,
+  contextOrOptions?: string | QueryProcedureOptions,
   deps: QueryProcedureDeps = {},
 ): Promise<ProcedureResult | null> {
   const database = deps.database ?? db;
   const embed = deps.embed ?? generateEmbedding;
+  const { contextText, filters } = resolveProcedureOptions(contextOrOptions);
 
   // 1. goal 検索: embedding 類似度 TOP 1
   const goalEmbedding = await embed(goalText);
@@ -202,10 +301,25 @@ export async function queryProcedure(
   }
 
   // 4. task エンティティ取得
-  const taskEntities =
+  let taskEntities =
     filteredTaskIds.length > 0
       ? await database.select().from(entities).where(inArray(entities.id, filteredTaskIds))
       : [];
+
+  if (hasApplicabilityFilters(filters)) {
+    taskEntities = taskEntities.filter((task) => {
+      const matched = matchesApplicabilityFilter(task.metadata, filters);
+      if (!matched.matched) {
+        console.debug(
+          `[queryProcedure] task filtered out id=${task.id} name=${task.name} reason=${
+            matched.reason ?? 'unknown'
+          }`,
+        );
+      }
+      return matched.matched;
+    });
+    filteredTaskIds = taskEntities.map((task) => task.id);
+  }
 
   // 5. constraint 収集 (prohibits 関係)
   const constraintRelations =
@@ -386,6 +500,7 @@ export async function recordOutcome(
         episodeAt: new Date(),
         importance: 0.6,
         compressed: false,
+        sourceTask: input.goalId,
       })
       .returning();
     episodeId = episode.id;

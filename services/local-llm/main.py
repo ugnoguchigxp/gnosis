@@ -71,6 +71,9 @@ def _generate_session_id() -> str:
 def _validate_session_id(session_id: str) -> bool:
     return re.match(SESSION_ID_RE, session_id) is not None
 
+def _is_truthy_env(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
 async def main():
     parser = argparse.ArgumentParser(description="Multi-Backend AI Chat Agent (Local Direct Tooling)")
     parser.add_argument("--backend", choices=["mlx", "ollama", "bonsai", "mock"], default="mlx", help="Inference backend")
@@ -85,6 +88,24 @@ async def main():
     parser.add_argument("--no-session", action="store_true", help="Disable session persistence in single-turn mode")
     parser.add_argument("--output", choices=["json", "text"], default="json", help="Output format in single-turn mode")
     args = parser.parse_args()
+
+    # NOTE:
+    # In seatbelt/headless sandboxed sessions, MLX may abort the process during
+    # Metal device discovery before Python can catch exceptions
+    # (see ml-explore/mlx#3148). To avoid repeated crash dialogs and make
+    # failure recoverable for callers, block MLX backends by default in that context.
+    if (
+        args.backend in {"mlx", "bonsai"}
+        and os.getenv("CODEX_SANDBOX") == "seatbelt"
+        and not _is_truthy_env("LOCAL_LLM_ALLOW_MLX_IN_SEATBELT")
+    ):
+        print(
+            "[Startup Error] MLX backends are disabled in CODEX_SANDBOX=seatbelt to avoid"
+            " native aborts during Metal initialization."
+            " Use --backend ollama or set LOCAL_LLM_ALLOW_MLX_IN_SEATBELT=1 to override.",
+            file=sys.stderr,
+        )
+        sys.exit(78)
 
     # バックエンドの動的インポート
     if args.backend == "mlx":

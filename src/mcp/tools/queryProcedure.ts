@@ -6,6 +6,15 @@ import type { ToolEntry } from '../registry.js';
 const queryProcedureSchema = z.object({
   goal: z.string().describe('達成したい目標（テキスト）'),
   context: z.string().optional().describe('現在の状況・条件（テキスト、任意）'),
+  project: z.string().optional().describe('適用対象のプロジェクト識別子（任意）'),
+  domains: z
+    .array(z.string())
+    .optional()
+    .describe('適用対象ドメイン（programming/infra/cli/batch等）'),
+  languages: z.array(z.string()).optional().describe('適用対象言語（python/typescript/rust等）'),
+  frameworks: z.array(z.string()).optional().describe('適用対象フレームワーク（任意）'),
+  environment: z.string().optional().describe('実行環境（local/docker/k8s/aws等、任意）'),
+  repo: z.string().optional().describe('対象リポジトリ（任意）'),
 });
 
 export const queryProcedureTools: ToolEntry[] = [
@@ -20,8 +29,17 @@ export const queryProcedureTools: ToolEntry[] = [
 - context が指定されれば、when 関係で適切なタスクのみに絞り込み`,
     inputSchema: zodToJsonSchema(queryProcedureSchema) as Record<string, unknown>,
     handler: async (args) => {
-      const { goal, context } = queryProcedureSchema.parse(args);
-      const result = await queryProcedure(goal, context);
+      const { goal, context, project, domains, languages, frameworks, environment, repo } =
+        queryProcedureSchema.parse(args);
+      const result = await queryProcedure(goal, {
+        context,
+        project,
+        domains,
+        languages,
+        frameworks,
+        environment,
+        repo,
+      });
       if (!result) {
         return {
           content: [{ type: 'text', text: `No procedure found for goal: "${goal}"` }],

@@ -85,6 +85,21 @@ export type GuidanceType = z.infer<typeof GuidanceTypeSchema>;
 export const GuidanceScopeSchema = z.enum(['always', 'on_demand']);
 export type GuidanceScope = z.infer<typeof GuidanceScopeSchema>;
 
+export const GuidanceApplicabilitySchema = z
+  .object({
+    signals: z.array(z.string().min(1)).optional(),
+    fileTypes: z.array(z.string().min(1)).optional(),
+    languages: z.array(z.string().min(1)).optional(),
+    frameworks: z.array(z.string().min(1)).optional(),
+    excludedFrameworks: z.array(z.string().min(1)).optional(),
+    projects: z.array(z.string().min(1)).optional(),
+    domains: z.array(z.string().min(1)).optional(),
+    environments: z.array(z.string().min(1)).optional(),
+    repos: z.array(z.string().min(1)).optional(),
+  })
+  .strict();
+export type GuidanceApplicability = z.infer<typeof GuidanceApplicabilitySchema>;
+
 export const GuidanceManifestSchema = z
   .object({
     packId: z.string().min(1).optional(),

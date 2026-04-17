@@ -21,6 +21,8 @@
 
 - `consolidate_episodes`（raw -> episode）  
   `src/services/consolidation.ts`
+- `reflect_on_memories`（episode から Graph 抽出）  
+  `src/services/synthesis.ts`
 - `query_procedure` / `record_outcome`（手続き記憶 + confidence更新）  
   `src/services/procedure.ts`
 - `scope:'always'` の自動注入  
@@ -59,15 +61,16 @@
 
 ### 4-2. フォールバック条件（例）
 
-- JSON parse 失敗が連続2回
-- 出力スキーマバリデーション失敗が連続2回
-- 自己評価スコア（任意実装）< 0.6
+- JSON parse 失敗が連続3回（暫定値）
+- 出力スキーマバリデーション失敗が連続3回（暫定値）
+- 自己評価スコア（任意実装）< 0.5（暫定値）
 - 高リスク操作（セキュリティ/重大設計変更）としてフラグされた場合
 
 注記:
 
 - デフォルトでは cloud へ自動フォールバックしない（ローカル再試行のみ）。
 - cloud への切替は feature flag 有効時のみ許可する。
+- 上記の数値は初期運用用の**暫定値**。`record_outcome` とルーターログの実績で見直す。
 
 ### 4-3. 実装ポイント
 
@@ -105,11 +108,8 @@
 
 ### 5-2. 実行基盤
 
-- 既存の worker/queue（`src/services/knowflow/worker/*`）を活用し、memory loop タスクを追加する。
-- もしくは初期段階では cron から CLI を直接呼び出す:
-  - `consolidate_episodes` 相当
-  - `reflect_on_memories`
-  - KG audit スクリプト（新設）
+- **Phase C の採用方式**: 既存の worker/queue（`src/services/knowflow/worker/*`）へ統合する。
+- cron から CLI 直接呼び出しは、開発用の手動実行・障害時の暫定運用に限定する。
 - ループ運用ポリシー:
   - デフォルトは local LLM のみ（有料API呼び出し 0 を目標）
   - 必要時は flag で `openai` または `bedrock` に切替可能
@@ -148,6 +148,11 @@
 - `metadata.applicability` の一致
 - 上記2つの AND 条件で最終候補を決定
 
+補足:
+
+- `when` は既存の relationType 制御語彙に含まれる（新設不要）。
+- 方向は `context -> task/goal` を採用する。
+
 ---
 
 ## 7. Knowledge Graph評価（local LLM活用）
@@ -176,6 +181,8 @@
 
 ## 8. 実装フェーズ案
 
+本章は概要。具体的な変更対象・受け入れ条件は **セクション11** を正とする。
+
 ### Phase A: ルーター導入
 
 - `LlmRouter` 新設（taskKindベースの alias 選択 + fallback）
@@ -188,7 +195,7 @@
 
 ### Phase C: ループ自動化
 
-- memory loop runner（cron/worker）実装
+- worker/queue 統合の memory loop runner 実装
 - raw閾値・実行間隔・失敗時リトライポリシーを設定可能化
 
 ### Phase D: KG監査
@@ -201,22 +208,24 @@
 
 ## 9. 成功指標（レビュー観点）
 
-- ループでの有料API呼び出し件数（デフォルト 0）
-- `consolidate_episodes` の成功率
-- `query_procedure` の採用率（返却タスクが実行される割合）
-- `record_outcome` 後の confidence 安定性（急激な振動の減少）
-- 適用ミスマッチ率（他プロジェクト向け手順が混入する率）の低下
-- `MEMORY_LOOP_ALLOW_CLOUD` 切替時の動作整合性（provider選択/監査ログ）
+| 指標 | 目標 | 測定方法 | データソース |
+|---|---|---|---|
+| ループでの有料API呼び出し件数 | デフォルト `0` | 5分集計 | LlmRouter 実行ログ |
+| `consolidate_episodes` 成功率 | `>= 95%` | 成功/失敗件数 | worker task ログ |
+| `query_procedure` 採用率 | 継続改善 | `record_outcome` で followed=true の割合 | `record_outcome` 入力/保存データ |
+| confidence 安定性 | 急激な振動を抑制 | 7日移動平均の変動幅 | `entities.confidence` 履歴 |
+| 適用ミスマッチ率 | 継続改善 | 実行後に「対象外だった」判定の割合 | `record_outcome.note` + 監査ログ |
+| cloud切替整合性 | 逸脱 `0` | provider/理由必須ログの欠落件数 | LlmRouter 監査ログ |
 
 ---
 
-## 10. 未決事項（他AIレビュー依頼ポイント）
+## 10. 暫定決定事項（2026-04-17 時点）
 
-1. `applicability` を metadata運用で継続するか、将来列追加するか
-2. local再試行から cloud切替に進む閾値（2回失敗/0.6未満）の妥当性
-3. `bonsai` をどの処理まで任せるか（構造抽出の可否）
-4. KG監査の実行頻度（1日1回 vs 6時間毎）
-5. `query_procedure` のフィルタを AND 固定にするか、重み付けにするか
+1. `applicability` は当面 `metadata` 運用を継続し、列追加は実測課題が出てから判断する。
+2. cloud 切替閾値は暫定で「連続3回失敗 / 自己評価 < 0.5」。
+3. `bonsai` は短文分類・タグ付け・JSON補正に限定し、主要抽出は `gemma4` を使用する。
+4. KG監査頻度は日次を基本とし、6時間毎は必要性が示された場合のみ採用する。
+5. `query_procedure` フィルタは Phase B では AND 固定で開始し、重み付けは Phase D 以降で再検討する。
 
 ---
 
@@ -285,8 +294,8 @@
 
 変更対象:
 
-- `src/services/knowflow/worker/knowFlowHandler.ts` または memory loop 専用 runner（新設）
-- `src/services/knowflow/cli.ts`（必要時）
+- `src/services/knowflow/worker/knowFlowHandler.ts`
+- `src/services/knowflow/cli.ts`（手動実行用コマンド追加）
 - `src/mcp/tools/memory.ts`
 
 作業項目:
@@ -335,7 +344,10 @@
 | `MEMORY_LOOP_DEFAULT_ALIAS` | `gemma4` | 通常処理の第一候補 |
 | `MEMORY_LOOP_LIGHT_ALIAS` | `bonsai` | 軽量処理の候補 |
 | `MEMORY_LOOP_INTERVAL_MS` | `300000` | ループ間隔（5分） |
-| `MEMORY_LOOP_MAX_LOCAL_RETRIES` | `2` | local 再試行回数 |
+| `MEMORY_LOOP_MAX_LOCAL_RETRIES` | `3` | local 再試行回数 |
+| `MEMORY_LOOP_MIN_QUALITY_SCORE` | `0.5` | cloud 切替判定の暫定しきい値 |
+| `MEMORY_LOOP_IDLE_BACKOFF_MULTIPLIER` | `2` | idle 連続時の間隔倍率 |
+| `MEMORY_LOOP_MAX_INTERVAL_MS` | `900000` | idle バックオフ上限（15分） |
 | `MEMORY_LOOP_ENABLE_DAILY_AUDIT` | `true` | 日次監査の有効化 |
 | `MEMORY_LOOP_ENABLE_WEEKLY_AUDIT` | `true` | 週次監査の有効化 |
 
@@ -343,6 +355,7 @@
 
 - 既定値では `openai/bedrock` に一切到達しない。
 - cloud 利用時は provider と理由を必ずログに記録する。
+- idle が連続する場合は `5分 -> 10分 -> 15分` と伸長し、新規対象検知で 5分に戻す。
 
 ---
 
@@ -357,6 +370,10 @@
 - `query_procedure`:
   - applicability 条件一致時のみ task が返る
   - context のみ指定した従来ケースが壊れない
+- KG監査（決定論）:
+  - 重複候補検出（type+name 正規化）
+  - 循環検出（precondition/follows）
+  - 孤立 task 検出（入出次数）
 
 ### 13-2. Integration
 
@@ -379,11 +396,12 @@
 2. cloud 許可時でも対象タスクを限定し、全タスクへの自動拡大をしない。
 3. 有料API利用回数をメトリクス化し、しきい値超過時に通知する。
 4. 失敗時は local-only モードへ自動復帰できるようにする。
+5. `MEMORY_LOOP_ALLOW_CLOUD` の変更は運用管理者のみが実施し、変更履歴を残す。
 
 ---
 
 ## 15. ロールバック方針
 
 1. `MEMORY_LOOP_ALLOW_CLOUD=false` に戻して cloud 経路を即停止する。
-2. `LlmRouter` 導入前の呼び出し経路を feature flag で残し、段階的切戻しを可能にする。
+2. 旧経路 feature flag は導入後 2リリースで削除判定し、期限を越えて残さない。
 3. applicability フィルタで障害が出た場合は、`query_procedure` を context-only フィルタに一時退避する。

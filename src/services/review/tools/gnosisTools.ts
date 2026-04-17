@@ -108,3 +108,64 @@ export const getGuidanceToolEntry: ReviewerToolEntry = {
     }
   },
 };
+
+export const queryProcedureToolEntry: ReviewerToolEntry = {
+  definition: {
+    name: 'query_procedure',
+    description:
+      '特定の目標（Goal）に関連する推奨手順、制約事項、および過去のエピソードを取得します。',
+    inputSchema: {
+      type: 'object',
+      required: ['goal'],
+      properties: {
+        goal: { type: 'string', description: '達成したい目標 (例: "TypeScriptのコードレビュー")' },
+        context: { type: 'string', description: '追加の文脈情報' },
+        project: { type: 'string', description: 'プロジェクト名 (例: "gnosis")' },
+        languages: { type: 'array', items: { type: 'string' }, description: '対象言語' },
+      },
+    },
+  },
+  async handler(args, ctx) {
+    const { queryProcedure } = await import('../../procedure.js');
+    try {
+      const result = await queryProcedure(String(args.goal), {
+        context: args.context as string,
+        project: args.project as string,
+        languages: args.languages as string[],
+      });
+      if (!result) return 'No matching procedure found for this goal.';
+      return JSON.stringify(result, null, 2);
+    } catch (error) {
+      return `[Error querying procedure]: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+    }
+  },
+};
+
+export const queryGraphToolEntry: ReviewerToolEntry = {
+  definition: {
+    name: 'query_graph',
+    description:
+      '特定のエンティティを中心とした、周辺のグラフ構造（知識コンテキスト）を取得します。',
+    inputSchema: {
+      type: 'object',
+      required: ['entity_query'],
+      properties: {
+        entity_query: { type: 'string', description: '探索の起点となるエンティティ名' },
+        depth: { type: 'integer', default: 2, description: '探索の深さ' },
+      },
+    },
+  },
+  async handler(args, ctx) {
+    const { queryGraphContext, searchEntityByQuery } = await import('../../graph.js');
+    try {
+      const entityId = await searchEntityByQuery(String(args.entity_query));
+      if (!entityId) return 'Entity not found.';
+      const result = await queryGraphContext(entityId, Number(args.depth ?? 2));
+      return JSON.stringify(result, null, 2);
+    } catch (error) {
+      return `[Error querying graph]: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  },
+};

@@ -13,6 +13,7 @@ const { children } = $props();
 	<nav class="app-nav">
 		<a href="/" class="nav-link">Monitor</a>
 		<a href="/graph" class="nav-link">Graph</a>
+		<a href="/memories" class="nav-link">Memories</a>
 	</nav>
 	<div class="app-content">
 		{@render children()}

@@ -12,6 +12,7 @@ import {
   MergedEntityResultSchema,
 } from '../domain/schemas.js';
 import type { DistilledKnowledge, ExtractedEntity, MergedEntityResult } from '../domain/schemas.js';
+import { runPromptWithMemoryLoopRouter } from './memoryLoopLlmRouter.js';
 
 export type SpawnSyncResult = {
   stdout: string;
@@ -174,7 +175,7 @@ export async function distillKnowledgeFromTranscript(
   deps: LlmServiceDeps = {},
 ): Promise<DistilledKnowledge> {
   const spawnSync = deps.spawnSync ?? defaultSpawnSync;
-  const llmScript = deps.llmScript ?? config.llmScript;
+  const llmScript = deps.llmScript;
   const llmTimeoutMs = deps.llmTimeoutMs ?? config.llmTimeoutMs;
   const lockFn = deps.withLock ?? withGlobalLock;
   const prompt = `
@@ -213,29 +214,27 @@ ${transcript}
 """
 `.trim();
 
-  const result = await lockFn('local-llm', async () =>
-    spawnSync(llmScript, ['--output', 'text', '--max-tokens', '1500', '--prompt', prompt], {
-      encoding: 'utf-8',
-      env: { ...process.env },
-      timeout:
-        Number.isFinite(llmTimeoutMs) && llmTimeoutMs > 0
-          ? llmTimeoutMs
-          : config.llm.defaultTimeoutMs * 2,
-    }),
-  );
-
-  if (result.error) {
-    console.error('LLM Distillation Error:', result.error);
+  let output = '';
+  try {
+    const routed = await runPromptWithMemoryLoopRouter(
+      {
+        prompt,
+        taskKind: 'distillation',
+        llmScript,
+        llmTimeoutMs:
+          Number.isFinite(llmTimeoutMs) && llmTimeoutMs > 0
+            ? llmTimeoutMs
+            : config.llm.defaultTimeoutMs * 2,
+        maxTokens: 1500,
+      },
+      { spawnSync, withLock: lockFn },
+    );
+    output = routed.output;
+  } catch (error) {
+    console.error('LLM Distillation Error:', error);
     throw new Error('LLM distillation command failed');
   }
 
-  if (result.status !== 0) {
-    console.error('LLM Distillation Status:', result.status);
-    console.error('LLM Distillation Stderr:', result.stderr?.trim());
-    throw new Error(`LLM distillation exited with status ${result.status}`);
-  }
-
-  const output = result.stdout?.trim();
   if (!output) {
     throw new Error('Empty LLM response');
   }

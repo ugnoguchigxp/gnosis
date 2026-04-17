@@ -59,6 +59,24 @@ export const WorkerConfigSchema = z
 
 export type WorkerConfig = z.infer<typeof WorkerConfigSchema>;
 
+export const MemoryLoopConfigSchema = z
+  .object({
+    allowCloud: z.boolean(),
+    cloudProvider: z.enum(['openai', 'bedrock']),
+    defaultAlias: z.enum(['gemma4', 'bonsai']),
+    lightAlias: z.enum(['gemma4', 'bonsai']),
+    intervalMs: z.number().int().positive(),
+    maxLocalRetries: z.number().int().min(1),
+    minQualityScore: z.number().min(0).max(1),
+    idleBackoffMultiplier: z.number().int().min(1),
+    maxIntervalMs: z.number().int().positive(),
+    enableDailyAudit: z.boolean(),
+    enableWeeklyAudit: z.boolean(),
+  })
+  .strict();
+
+export type MemoryLoopConfig = z.infer<typeof MemoryLoopConfigSchema>;
+
 /**
  * プロジェクト全体の設定管理
  */
@@ -68,12 +86,11 @@ export const config = {
     process.env.GNOSIS_LOCAL_LLM_PATH || path.resolve(process.cwd(), 'services/local-llm'),
 
   // LLM スクリプトのフルパス (個別コマンド)
-  gemma4Script:
-    process.env.GNOSIS_GEMMA4_SCRIPT ||
-    path.resolve(process.cwd(), 'services/local-llm/scripts/gemma4'),
-  bonsaiScript:
-    process.env.GNOSIS_BONSAI_SCRIPT ||
-    path.resolve(process.cwd(), 'services/local-llm/scripts/bonsai'),
+  gemma4Script: process.env.GNOSIS_GEMMA4_SCRIPT || path.resolve(process.cwd(), 'scripts/gemma4'),
+  bonsaiScript: process.env.GNOSIS_BONSAI_SCRIPT || path.resolve(process.cwd(), 'scripts/bonsai'),
+  openaiScript: process.env.GNOSIS_OPENAI_SCRIPT || path.resolve(process.cwd(), 'scripts/openai'),
+  bedrockScript:
+    process.env.GNOSIS_BEDROCK_SCRIPT || path.resolve(process.cwd(), 'scripts/bedrock'),
 
   // 現在使用する LLM スクリプト (デフォルト: gemma4)
   llmScript:
@@ -162,6 +179,29 @@ export const config = {
   llm: {
     maxBuffer: envNumber(process.env.GNOSIS_LLM_MAX_BUFFER_BYTES, 10 * 1024 * 1024),
     defaultTimeoutMs: envNumber(process.env.GNOSIS_LLM_DEFAULT_TIMEOUT_MS, 45_000),
+  },
+
+  memoryLoop: MemoryLoopConfigSchema.parse({
+    allowCloud: envBoolean(process.env.MEMORY_LOOP_ALLOW_CLOUD, true),
+    cloudProvider: process.env.MEMORY_LOOP_CLOUD_PROVIDER === 'bedrock' ? 'bedrock' : 'openai',
+    defaultAlias: process.env.MEMORY_LOOP_DEFAULT_ALIAS === 'bonsai' ? 'bonsai' : 'gemma4',
+    lightAlias: process.env.MEMORY_LOOP_LIGHT_ALIAS === 'gemma4' ? 'gemma4' : 'bonsai',
+    intervalMs: envNumber(process.env.MEMORY_LOOP_INTERVAL_MS, 300_000),
+    maxLocalRetries: Math.max(1, envNumber(process.env.MEMORY_LOOP_MAX_LOCAL_RETRIES, 1)),
+    minQualityScore: envNumber(process.env.MEMORY_LOOP_MIN_QUALITY_SCORE, 0.5),
+    idleBackoffMultiplier: Math.max(
+      1,
+      envNumber(process.env.MEMORY_LOOP_IDLE_BACKOFF_MULTIPLIER, 2),
+    ),
+    maxIntervalMs: envNumber(process.env.MEMORY_LOOP_MAX_INTERVAL_MS, 900_000),
+    enableDailyAudit: envBoolean(process.env.MEMORY_LOOP_ENABLE_DAILY_AUDIT, true),
+    enableWeeklyAudit: envBoolean(process.env.MEMORY_LOOP_ENABLE_WEEKLY_AUDIT, true),
+  }),
+
+  backgroundWorker: {
+    enabled: envBoolean(process.env.GNOSIS_BACKGROUND_WORKER_ENABLED, true),
+    intervalMs: envNumber(process.env.GNOSIS_BACKGROUND_WORKER_INTERVAL_MS, 300_000), // 5 min
+    minRawCount: envNumber(process.env.GNOSIS_BACKGROUND_WORKER_MIN_RAW_COUNT, 5),
   },
 
   llmharness: {

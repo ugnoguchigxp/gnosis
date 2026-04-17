@@ -29,6 +29,10 @@ const registerGuidanceSchema = z.object({
       languages: z.array(z.string()).optional(),
       frameworks: z.array(z.string()).optional(),
       excludedFrameworks: z.array(z.string()).optional(),
+      projects: z.array(z.string()).optional(),
+      domains: z.array(z.string()).optional(),
+      environments: z.array(z.string()).optional(),
+      repos: z.array(z.string()).optional(),
     })
     .optional()
     .describe('構造化された適用条件'),
