@@ -17,7 +17,10 @@ ALTER TABLE "vibe_memories"
 --> statement-breakpoint
 
 UPDATE "review_cases"
-SET "status" = 'completed'
+SET "status" = CASE
+  WHEN "completed_at" IS NOT NULL THEN 'completed'
+  ELSE 'running'
+END
 WHERE "status" IS NULL OR "status" NOT IN ('running', 'completed');
 ALTER TABLE "review_cases"
   ALTER COLUMN "status" SET DEFAULT 'running';

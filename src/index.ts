@@ -3,6 +3,12 @@ import { server } from './mcp/server.js';
 import { startBackgroundWorkers } from './services/background/manager.js';
 
 async function main() {
+  // MCPプロトコル(STDIO)を破壊しないよう、console.log を console.error にリダイレクト
+  const originalLog = console.log;
+  console.log = (...args: unknown[]) => {
+    console.error(...args);
+  };
+
   const transport = new StdioServerTransport();
 
   // バックグラウンドワーカーの開始

@@ -33,7 +33,7 @@ export const vibeMemories = pgTable(
     isSynthesized: boolean('is_synthesized').default(false).notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     // Phase 2 additions
-    memoryType: text('memory_type').default('raw'),
+    memoryType: text('memory_type').default('raw').notNull(),
     episodeAt: timestamp('episode_at'),
     sourceTask: text('source_task'),
     importance: real('importance').default(0.5),
@@ -51,7 +51,7 @@ export const vibeMemories = pgTable(
     metadataGinIdx: index('vibe_memories_metadata_gin_idx').using('gin', table.metadata),
     metadataKindIdx: index('vibe_memories_metadata_kind_idx').on(sql`(${table.metadata}->>'kind')`),
     guidanceSessionCreatedIdx: index('vibe_memories_guidance_session_created_idx')
-      .on(table.sessionId, table.createdAt)
+      .on(table.sessionId, table.createdAt.desc())
       .where(sql`${table.metadata} @> '{"kind":"guidance"}'::jsonb`),
     embeddingHnswIdx: index('vibe_memories_embedding_hnsw_idx').using(
       'hnsw',
@@ -200,10 +200,10 @@ export const topicTasks = pgTable(
       table.createdAt,
     ),
     pendingPriorityCreatedIdx: index('topic_tasks_pending_priority_created_idx')
-      .on(table.priority, table.createdAt)
+      .on(table.priority.desc(), table.createdAt)
       .where(sql`${table.status} = 'pending'`),
     deferredNextRunPriorityCreatedIdx: index('topic_tasks_deferred_next_run_priority_created_idx')
-      .on(table.nextRunAt, table.priority, table.createdAt)
+      .on(table.nextRunAt, table.priority.desc(), table.createdAt)
       .where(sql`${table.status} = 'deferred' AND ${table.nextRunAt} IS NOT NULL`),
     runningUpdatedAtIdx: index('topic_tasks_running_updated_idx')
       .on(table.updatedAt)

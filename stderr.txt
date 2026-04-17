@@ -1,0 +1,9 @@
+[BackgroundWorker:Introspection] Starting with interval 300000ms
+[BackgroundWorker:Introspection] Executing task...
+[BackgroundManager] All background workers started.
+Gnosis VibeMemory & Knowledge Graph MCP Server is running over STDIO
+[ConsolidationTask] Found 5 groups eligible for consolidation.
+[ConsolidationTask] Starting consolidation for session: test-session-1776418045104 (general work, 6 raw memories)
+[ConsolidationTask] Starting consolidation for session: test-session-1776417933128 (general work, 6 raw memories)
+[ConsolidationTask] Starting consolidation for session: guidance-registry (general work, 587 raw memories)
+[ConsolidationTask] Starting consolidation for session: test-session-1776418045104 (task: task-A, 5 raw memories)

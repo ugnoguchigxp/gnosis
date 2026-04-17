@@ -57,7 +57,7 @@ const defaultLogger = (event: LlmLogEvent): void => {
     ts: new Date().toISOString(),
     ...event,
   };
-  console.log(JSON.stringify(payload));
+  console.error(JSON.stringify(payload));
 };
 
 const shellQuote = (value: string): string => `'${value.replace(/'/g, `'"'"'`)}'`;
