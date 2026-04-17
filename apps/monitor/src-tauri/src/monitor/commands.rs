@@ -82,3 +82,13 @@ pub async fn monitor_register_episode(
         .await
         .map_err(|error| error.to_string())
 }
+
+#[tauri::command]
+pub async fn monitor_consolidate_session(
+    state: State<'_, MonitorRuntime>,
+    session_id: String,
+) -> Result<serde_json::Value, String> {
+    cli::consolidate_session(&state.project_root, &session_id)
+        .await
+        .map_err(|error| error.to_string())
+}

@@ -352,7 +352,10 @@ CLI の全フラグ: `--json` `--table` `--verbose` `--profile <name>` `--run-id
 ```bash
 bun run db:init            # DB 作成 + マイグレーション + シード
 bun run db:generate        # スキーマ変更から SQL マイグレーション生成
+bun run db:meta-check      # migration SQL と _journal.json の整合性チェック
+bun run db:reconcile       # 既存DBの drizzle migration 履歴を補正
 bun run db:migrate         # マイグレーション適用
+bun run db:audit           # テーブル利用状況/索引利用/FK索引不足を監査
 ```
 
 ### 監視 UI

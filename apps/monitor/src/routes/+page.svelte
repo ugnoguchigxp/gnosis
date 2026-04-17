@@ -48,11 +48,15 @@ const createInitialSnapshot = (): MonitorSnapshotData => ({
 let snapshot = $state<MonitorSnapshotData>(createInitialSnapshot());
 let timeline = $state<TimelineEvent[]>([]);
 let connectionStatus = $state<ConnectionStatus>('offline');
-const autoUpdate = $state(true);
+// biome-ignore lint/style/useConst: Svelte 5 $state needs let for bind:value in template
+let autoUpdate = $state(true);
 let currentTimelinePage = $state(1);
-const statusFilter = $state<'all' | TimelineStatus>('all');
-const sourceFilter = $state<'all' | string>('all');
-const topicFilter = $state('');
+// biome-ignore lint/style/useConst: Svelte 5 $state needs let for bind:value in template
+let statusFilter = $state<'all' | TimelineStatus>('all');
+// biome-ignore lint/style/useConst: Svelte 5 $state needs let for bind:value in template
+let sourceFilter = $state<'all' | string>('all');
+// biome-ignore lint/style/useConst: Svelte 5 $state needs let for bind:value in template
+let topicFilter = $state('');
 let lastSnapshotTs = $state<number | null>(null);
 let errorMessage = $state<string | null>(null);
 let wsUrl = $state<string>('');

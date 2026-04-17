@@ -164,3 +164,22 @@ pub async fn register_episode(project_root: &Path, content: &str) -> anyhow::Res
 
     serde_json::from_slice(&output.stdout).context("failed to parse register result")
 }
+
+pub async fn consolidate_session(project_root: &Path, session_id: &str) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-episodes.ts")
+        .arg("consolidate")
+        .arg(session_id)
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute monitor-episodes consolidate command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("monitor-episodes consolidate command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse consolidate result")
+}

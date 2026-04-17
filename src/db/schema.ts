@@ -10,6 +10,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
   vector,
 } from 'drizzle-orm/pg-core';
@@ -42,6 +43,10 @@ export const vibeMemories = pgTable(
       table.sessionId,
       table.createdAt,
     ),
+    memoryTypeIdx: index('vibe_memories_memory_type_idx').on(table.memoryType),
+    sessionRawPendingIdx: index('vibe_memories_session_raw_pending_idx')
+      .on(table.sessionId, table.sourceTask, table.createdAt)
+      .where(sql`${table.memoryType} = 'raw' AND ${table.isSynthesized} = false`),
     embeddingHnswIdx: index('vibe_memories_embedding_hnsw_idx').using(
       'hnsw',
       table.embedding.op('vector_cosine_ops'),
@@ -88,6 +93,9 @@ export const entities = pgTable(
       'hnsw',
       table.embedding.op('vector_cosine_ops'),
     ),
+    communityIdIdx: index('entities_community_id_idx').on(table.communityId),
+    scopeIdx: index('entities_scope_idx').on(table.scope).where(sql`${table.scope} IS NOT NULL`),
+    typeConfidenceIdx: index('entities_type_confidence_idx').on(table.type, table.confidence),
   }),
 );
 
@@ -124,6 +132,8 @@ export const relations = pgTable(
       table.targetId,
       table.relationType,
     ),
+    sourceTypeIdx: index('relations_source_type_idx').on(table.sourceId, table.relationType),
+    targetTypeIdx: index('relations_target_type_idx').on(table.targetId, table.relationType),
   }),
 );
 
@@ -170,12 +180,18 @@ export const topicTasks = pgTable(
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
   (table) => ({
+    activeDedupeUniqueIdx: uniqueIndex('topic_tasks_active_dedupe_idx')
+      .on(table.dedupeKey)
+      .where(sql`${table.status} IN ('pending', 'running', 'deferred')`),
     statusNextRunPriorityIdx: index('topic_tasks_status_next_run_priority_idx').on(
       table.status,
       table.nextRunAt,
       table.priority,
       table.createdAt,
     ),
+    runningUpdatedAtIdx: index('topic_tasks_running_updated_idx')
+      .on(table.updatedAt)
+      .where(sql`${table.status} = 'running'`),
     dedupeKeyIdx: index('topic_tasks_dedupe_key_idx').on(table.dedupeKey),
   }),
 );
@@ -321,6 +337,10 @@ export const reviewOutcomes = pgTable(
   (table) => ({
     caseIdx: index('idx_review_outcomes_case').on(table.reviewCaseId),
     outcomeIdx: index('idx_review_outcomes_outcome').on(table.outcomeType),
+    guidanceIdsGinIdx: index('idx_review_outcomes_guidance_ids_gin').using(
+      'gin',
+      table.guidanceIds,
+    ),
     falsePositiveIdx: index('idx_review_outcomes_fp')
       .on(table.falsePositive)
       .where(sql`${table.falsePositive} = true`),

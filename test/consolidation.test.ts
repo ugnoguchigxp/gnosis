@@ -69,6 +69,7 @@ const makeDb = (rawMemories: any[] = [], experiencesData: any[] = [], stepsData:
     { id: 'ep-uuid-123', content: 'story', memoryType: 'episode' },
   ]);
 
+  // biome-ignore lint/suspicious/noExplicitAny: mock
   const mockQuery = (data: any[]) => {
     const chain = {
       orderBy: () => chain,
@@ -83,6 +84,7 @@ const makeDb = (rawMemories: any[] = [], experiencesData: any[] = [], stepsData:
 
   return {
     select: () => ({
+      // biome-ignore lint/suspicious/noExplicitAny: mock
       from: (table: any) => {
         if (table === vibeMemories) return mockQuery(rawMemories);
         if (table === experienceLogs) return mockQuery(experiencesData);

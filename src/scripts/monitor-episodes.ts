@@ -1,6 +1,6 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { entities, vibeMemories } from '../db/schema.js';
+import { entities, relations, vibeMemories } from '../db/schema.js';
 import { consolidateEpisodes } from '../services/consolidation.js';
 
 async function main() {
@@ -15,52 +15,106 @@ async function main() {
       .orderBy(desc(vibeMemories.createdAt));
 
     console.log(JSON.stringify(eps, null, 2));
+    process.exit(0);
   } else if (command === 'delete') {
-    const id = args[1];
+    const id = args[1]?.trim();
     if (!id) throw new Error('Missing episode ID');
 
-    // 関連するエンティティも削除を試みる
-    const entry = await db.query.vibeMemories.findFirst({
+    // 1. まずエピソードの存在確認とメタデータ（sourceIds）の取得を行う
+    const episode = await db.query.vibeMemories.findFirst({
       where: eq(vibeMemories.id, id),
     });
 
-    await db.delete(vibeMemories).where(eq(vibeMemories.id, id));
+    if (!episode) {
+      console.error(JSON.stringify({ success: false, error: 'Episode not found', id }));
+      process.exit(1);
+    }
 
-    // エンティティ側のクリーニング (metadata.memoryId に IDが入っているパターンが多い)
-    // 簡易的に ID パスを含んでいるものを削除
-    // await db.delete(entities).where(like(entities.id, `%${id}%`));
-    // ^ 本来は安全なエンティティ削除ロジックが必要だが、まずはメモリ側を優先
+    const metadata = episode.metadata as { sourceIds?: string[] } | null;
+    const { sourceIds } = metadata || {};
+    const episodeEntityId = `episode/${episode.id}`;
 
-    console.log(JSON.stringify({ success: true, id }));
+    // 2. 関連するデータの物理削除をアトミックに行う (TRANSACTION)
+    console.error(`Starting atomic physical cleanup for episode: ${id}`);
+
+    try {
+      await db.transaction(async (tx) => {
+        // (a) ナレッジグラフ上のエンティティ削除 (プロキシおよび metadata 経由)
+        await tx.delete(entities).where(eq(entities.id, episodeEntityId));
+        await tx.delete(entities).where(sql`metadata->>'memoryId' = ${id}`);
+
+        // (b) リレーションの削除
+        await tx
+          .delete(relations)
+          .where(sql`source_id = ${episodeEntityId} OR target_id = ${episodeEntityId}`);
+
+        // (c) 元になった生メモの物理削除
+        if (Array.isArray(sourceIds) && sourceIds.length > 0) {
+          await tx.delete(vibeMemories).where(inArray(vibeMemories.id, sourceIds));
+          console.error(`Deleted ${sourceIds.length} raw memories.`);
+        }
+
+        // (d) エピソード記憶本体を最後に削除
+        await tx.delete(vibeMemories).where(eq(vibeMemories.id, episode.id));
+      });
+
+      console.log(
+        JSON.stringify({ success: true, id, message: 'Physical deletion completed successfully' }),
+      );
+      process.exit(0);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(
+        JSON.stringify({ success: false, error: `Transaction failed: ${message}`, id }),
+      );
+      process.exit(1);
+    }
   } else if (command === 'register') {
-    // ユーザーからの入力を raw memory にして即座に統合
+    // ユーザーからの入力を raw memory にして即座に登録（統合は別途実行）
     const content = args[1];
     if (!content) throw new Error('Missing content');
 
     const sessionId = `manual-reg-${Date.now()}`;
 
-    // 1. Raw memory として一旦登録
+    // 1. Raw memory として登録
     const [raw] = await db
       .insert(vibeMemories)
       .values({
         content,
-        embedding: new Array(384).fill(0), // ダミー、後で consolidate 内で episode 用に生成される
+        embedding: new Array(384).fill(0),
         memoryType: 'raw',
         sessionId,
         isSynthesized: false,
       })
       .returning();
 
-    // 2. 統合処理を走らせる (minRawCount=1 で実行)
+    console.log(
+      JSON.stringify({ success: true, rawId: raw.id, sessionId, message: 'Raw memory registered' }),
+    );
+    process.exit(0);
+  } else if (command === 'consolidate') {
+    // 指定されたセッション、または最新のセッションを統合してエピソード化
+    const sessionId = args[1];
+    if (!sessionId) throw new Error('Missing session ID for consolidation');
+
+    console.error(`Starting consolidation for session: ${sessionId}`);
     const result = await consolidateEpisodes(sessionId, { minRawCount: 1 });
 
     if (result) {
       console.log(JSON.stringify({ success: true, ...result }));
     } else {
-      console.log(JSON.stringify({ success: false, error: 'Consolidation failed' }));
+      console.log(
+        JSON.stringify({
+          success: false,
+          error: 'Consolidation skipped (not enough data or already processed)',
+        }),
+      );
     }
+    process.exit(0);
   } else {
-    console.error('Unknown command. Use: list, delete <id>, register <content>');
+    console.error(
+      'Unknown command. Use: list, delete <id>, register <content>, consolidate <sessionId>',
+    );
     process.exit(1);
   }
 }

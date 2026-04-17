@@ -25,7 +25,8 @@ pub fn run() {
             monitor::commands::monitor_enqueue_task,
             monitor::commands::monitor_list_episodes,
             monitor::commands::monitor_delete_episode,
-            monitor::commands::monitor_register_episode
+            monitor::commands::monitor_register_episode,
+            monitor::commands::monitor_consolidate_session
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

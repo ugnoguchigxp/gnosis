@@ -71,6 +71,27 @@
       "when": 1776200000000,
       "tag": "0009_code_review_cases",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1776283200000,
+      "tag": "0010_memory_refactoring",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1776456000000,
+      "tag": "0011_table_efficiency",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1776459600000,
+      "tag": "0012_entities_fk_index",
+      "breakpoints": true
     }
   ]
 }
