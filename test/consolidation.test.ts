@@ -60,28 +60,35 @@ mock.module('../src/config.js', () => ({
   },
 }));
 
+import { experienceLogs, relations, vibeMemories } from '../src/db/schema.js';
 import { consolidateEpisodes } from '../src/services/consolidation.js';
 
 // biome-ignore lint/suspicious/noExplicitAny: mock helper
-const makeDb = (rawMemories: any[] = [], experiencesData: any[] = []) => {
-  let callCount = 0;
+const makeDb = (rawMemories: any[] = [], experiencesData: any[] = [], stepsData: any[] = []) => {
   const insertReturning = mock().mockResolvedValue([
     { id: 'ep-uuid-123', content: 'story', memoryType: 'episode' },
   ]);
+
+  const mockQuery = (data: any[]) => {
+    const chain = {
+      orderBy: () => chain,
+      limit: () => chain,
+      innerJoin: () => chain,
+      where: () => chain,
+      // biome-ignore lint/suspicious/noThenProperty: intentional mock thenable for DB chain
+      then: (resolve: (v: typeof data) => void) => Promise.resolve(data).then(resolve),
+    };
+    return chain;
+  };
+
   return {
     select: () => ({
-      from: () => ({
-        where: () => {
-          callCount++;
-          // 1回目: vibeMemories, 2回目: experienceLogs
-          const data = callCount === 1 ? rawMemories : experiencesData;
-          return {
-            orderBy: () => Promise.resolve(data),
-            // biome-ignore lint/suspicious/noThenProperty: intentional mock thenable for DB chain
-            then: (resolve: (v: typeof data) => void) => Promise.resolve(data).then(resolve),
-          };
-        },
-      }),
+      from: (table: any) => {
+        if (table === vibeMemories) return mockQuery(rawMemories);
+        if (table === experienceLogs) return mockQuery(experiencesData);
+        if (table === relations) return mockQuery(stepsData);
+        return mockQuery([]);
+      },
     }),
     insert: () => ({
       values: () => ({
@@ -100,12 +107,20 @@ const makeDb = (rawMemories: any[] = [], experiencesData: any[] = []) => {
 describe('consolidateEpisodes', () => {
   it('returns null when raw memories are fewer than minRawCount', async () => {
     const db = makeDb([
-      { id: 'm1', sessionId: 'sess1', content: 'memo 1', memoryType: 'raw', isSynthesized: false },
+      {
+        id: 'm1',
+        sessionId: 'sess1',
+        content: 'memo 1',
+        memoryType: 'raw',
+        isSynthesized: false,
+        createdAt: new Date(),
+      },
     ]);
 
     const result = await consolidateEpisodes('sess1', {
       database: db as never,
       minRawCount: 5,
+      getGuidance: mock().mockResolvedValue(''),
     });
 
     expect(result).toBeNull();
@@ -118,8 +133,9 @@ describe('consolidateEpisodes', () => {
       content: `memo ${i}`,
       memoryType: 'raw',
       isSynthesized: false,
+      createdAt: new Date(Date.now() + i * 1000),
     }));
-    const db = makeDb(rawMemos, []);
+    const db = makeDb(rawMemos, [], []);
 
     const mockSpawn = mock().mockReturnValue({
       stdout: JSON.stringify({
@@ -139,6 +155,7 @@ describe('consolidateEpisodes', () => {
       spawnSync: mockSpawn,
       embedText: mockEmbed,
       minRawCount: 5,
+      getGuidance: mock().mockResolvedValue('Mocked guidance'),
     });
 
     expect(result).not.toBeNull();
