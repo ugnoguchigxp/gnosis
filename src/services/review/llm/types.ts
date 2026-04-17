@@ -1,5 +1,38 @@
+export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
+
+/** Tool definition passed to cloud LLM APIs for native tool calling. */
+export type LLMToolDefinition = {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+};
+
+/** A native tool call parsed from the LLM response. */
+export type NativeToolCall = {
+  id: string;
+  name: string;
+  arguments: Record<string, string>;
+};
+
+/** Result from generateMessages — text and optional native tool calls. */
+export type LLMGenerateResult = {
+  text: string;
+  toolCalls?: NativeToolCall[];
+  /** Raw response for re-injection into history (e.g. Anthropic content blocks). */
+  rawAssistantContent?: unknown;
+};
+
 export interface ReviewLLMService {
   generate(prompt: string, options?: { format?: 'json' | 'text' }): Promise<string>;
+  generateMessages?(
+    messages: ChatMessage[],
+    options?: { format?: 'json' | 'text'; tools?: LLMToolDefinition[] },
+  ): Promise<string>;
+  /** Like generateMessages but returns structured result with native tool calls. */
+  generateMessagesStructured?(
+    messages: ChatMessage[],
+    options?: { format?: 'json' | 'text'; tools?: LLMToolDefinition[] },
+  ): Promise<LLMGenerateResult>;
   readonly provider: 'local' | 'cloud';
 }
 

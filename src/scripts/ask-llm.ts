@@ -5,18 +5,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { stdin as input, stdout as output } from 'node:process';
 import { createInterface } from 'node:readline/promises';
+import { fileURLToPath } from 'node:url';
 import {
   type ReviewCloudProvider,
   createCloudReviewLLMService,
 } from '../services/review/llm/cloudProvider.js';
+import type { ChatMessage } from '../services/review/llm/types.js';
+import { buildToolInstruction, runConversationTurn } from './llmConversation.js';
+import { createLocalMcpToolClient } from './localMcpClient.js';
 
 type CliMode = 'interactive' | 'single';
-
-type ChatMessage = {
-  role: 'user' | 'assistant';
-  content: string;
-};
-
 type SessionRecord = {
   session_id: string;
   created_at: string;
@@ -41,12 +39,14 @@ type CloudCliArgs = {
   apiVersion?: string;
   apiKey?: string;
   model?: string;
+  enableMcp: boolean;
 };
 
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{6,64}$/;
 const DEFAULT_SESSION_DIR = path.resolve(os.homedir(), '.localLlm', 'sessions');
+const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
-function loadEnvFile(filePath = path.resolve(process.cwd(), '.env')): void {
+function loadEnvFile(filePath = path.join(ROOT_DIR, '.env')): void {
   if (!fs.existsSync(filePath)) return;
 
   const content = fs.readFileSync(filePath, 'utf8');
@@ -69,6 +69,39 @@ function loadEnvFile(filePath = path.resolve(process.cwd(), '.env')): void {
 function getArg(argv: string[], key: string): string | undefined {
   const index = argv.indexOf(key);
   return index >= 0 && index + 1 < argv.length ? argv[index + 1] : undefined;
+}
+
+function collectPositionals(argv: string[]): string[] {
+  const positionals: string[] = [];
+  const valueFlags = new Set([
+    '--provider',
+    '--prompt',
+    '--input',
+    '--output',
+    '--session-id',
+    '--session-dir',
+    '--model-id',
+    '--inference-profile-id',
+    '--region',
+    '--api-base-url',
+    '--api-version',
+    '--api-key',
+    '--model',
+  ]);
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg.startsWith('--')) {
+      if (valueFlags.has(arg)) {
+        index += 1;
+      }
+      continue;
+    }
+    if (arg.includes('=')) continue;
+    positionals.push(arg);
+  }
+
+  return positionals;
 }
 
 function validateSessionId(sessionId: string): void {
@@ -99,7 +132,11 @@ function loadSession(sessionDir: string, sessionId: string): SessionRecord | nul
     updated_at:
       typeof parsed.updated_at === 'string' ? parsed.updated_at : new Date().toISOString(),
     provider:
-      parsed.provider === 'openai' || parsed.provider === 'azure-openai'
+      parsed.provider === 'openai' ||
+      parsed.provider === 'azure-openai' ||
+      parsed.provider === 'bedrock' ||
+      parsed.provider === 'anthropic' ||
+      parsed.provider === 'google'
         ? parsed.provider
         : 'bedrock',
     model: typeof parsed.model === 'string' ? parsed.model : '',
@@ -122,31 +159,42 @@ function saveSession(sessionDir: string, record: SessionRecord): void {
   );
 }
 
-function buildConversationPrompt(history: ChatMessage[], userText: string): string {
-  const transcript = history
-    .map(
-      (message) => `${message.role === 'user' ? 'ユーザー' : 'アシスタント'}: ${message.content}`,
-    )
-    .join('\n');
-
-  return [
-    'あなたは有能な日本語アシスタントです。',
-    '返答は自然で簡潔にしてください。',
-    '以下は会話履歴です。必要に応じて文脈を踏まえて答えてください。',
-    '',
-    transcript ? `会話履歴:\n${transcript}\n` : '会話履歴: なし\n',
-    `ユーザー: ${userText}`,
-    'アシスタント:',
-  ].join('\n');
+function baseSystemPrompt(): string {
+  return 'あなたは有能なアシスタントです。返答は自然で簡潔にしてください。';
 }
 
-function parseArgs(argv: string[]): CloudCliArgs {
+function ensureSystemPrompt(
+  history: ChatMessage[],
+  includeTools: boolean,
+  isNativeTools: boolean,
+): void {
+  let systemContent = baseSystemPrompt();
+  if (includeTools && isNativeTools) {
+    systemContent += `\n\nあなたにはウェブ検索とURL取得の2つのツールがあります。
+- search_web: ウェブ検索。リアルタイム情報（天気・ニュース・最新の出来事など）が必要な場合に使う。
+- fetch_content: 指定URLのページ内容を取得。検索結果のスニペットだけでは情報が不足する場合、URLを指定して詳細を取得する。
+
+重要: 検索結果のスニペットに具体的な数値や詳細が含まれていない場合は、必ず fetch_content で該当URLの中身を取得してから回答してください。推測や「確認できませんでした」という回答は避けてください。`;
+  } else if (includeTools) {
+    systemContent += `\n\n${buildToolInstruction()}`;
+  }
+
+  if (history[0]?.role === 'system') {
+    history[0] = { role: 'system', content: systemContent };
+    return;
+  }
+
+  history.unshift({ role: 'system', content: systemContent });
+}
+
+export function parseArgs(argv: string[]): CloudCliArgs {
   const providerArg = (getArg(argv, '--provider') ?? 'bedrock') as ReviewCloudProvider;
   const promptArg = getArg(argv, '--prompt') ?? getArg(argv, '--input');
   const output = getArg(argv, '--output') === 'json' ? 'json' : 'text';
   const mode = argv.includes('--interactive') ? 'interactive' : 'single';
+  const enableMcp = !argv.includes('--no-mcp') || argv.includes('--mcp');
 
-  const positionals = argv.filter((arg) => !arg.startsWith('--') && !arg.includes('='));
+  const positionals = collectPositionals(argv);
   const prompt = promptArg ?? (positionals.join(' ').trim() || undefined);
 
   return {
@@ -164,30 +212,51 @@ function parseArgs(argv: string[]): CloudCliArgs {
     apiVersion: getArg(argv, '--api-version'),
     apiKey: getArg(argv, '--api-key'),
     model: getArg(argv, '--model'),
+    enableMcp,
   };
 }
 
+function resolveEffectiveProvider(args: CloudCliArgs): ReviewCloudProvider {
+  if (
+    args.provider === 'openai' &&
+    !args.apiKey &&
+    !process.env.OPENAI_API_KEY &&
+    process.env.AZURE_OPENAI_API_KEY
+  ) {
+    return 'azure-openai';
+  }
+  return args.provider;
+}
+
 function buildService(args: CloudCliArgs) {
+  if (args.provider === 'bedrock') {
+    return createCloudReviewLLMService({
+      provider: 'bedrock',
+      bedrockModelId: args.modelId,
+      bedrockInferenceProfileId: args.inferenceProfileId,
+      awsRegion: args.region,
+      apiBaseUrl: args.apiBaseUrl,
+    });
+  }
+
+  const effectiveProvider = resolveEffectiveProvider(args);
+
   const apiKey =
     args.apiKey ??
-    (args.provider === 'azure-openai'
+    (effectiveProvider === 'azure-openai'
       ? process.env.AZURE_OPENAI_API_KEY ?? process.env.GNOSIS_REVIEW_LLM_API_KEY
       : process.env.OPENAI_API_KEY ?? process.env.GNOSIS_REVIEW_LLM_API_KEY);
 
   const model =
     args.model ??
-    args.modelId ??
-    (args.provider === 'azure-openai'
+    (effectiveProvider === 'azure-openai'
       ? process.env.AZURE_OPENAI_MODEL ?? process.env.GNOSIS_REVIEW_LLM_MODEL
-      : process.env.OPENAI_MODEL ?? process.env.GNOSIS_REVIEW_LLM_MODEL ?? 'gpt-5.4-mini');
+      : process.env.OPENAI_MODEL ?? process.env.GNOSIS_REVIEW_LLM_MODEL ?? 'gpt-5-mini');
 
   return createCloudReviewLLMService({
-    provider: args.provider,
+    provider: effectiveProvider,
     apiKey,
     model,
-    bedrockModelId: args.modelId,
-    bedrockInferenceProfileId: args.inferenceProfileId,
-    awsRegion: args.region,
     apiBaseUrl: args.apiBaseUrl,
     apiVersion: args.apiVersion,
   });
@@ -203,11 +272,35 @@ async function readStdinPrompt(): Promise<string> {
   return buffer.trim();
 }
 
-function getCliLabel(provider: ReviewCloudProvider): string {
-  if (provider === 'azure-openai') return 'Azure OpenAI';
-  if (provider === 'openai') return 'OpenAI';
-  if (provider === 'bedrock') return 'Bedrock';
-  return provider;
+function resolveModelLabel(args: CloudCliArgs): string {
+  const effectiveProvider = resolveEffectiveProvider(args);
+  if (effectiveProvider === 'azure-openai') {
+    const model =
+      args.model ?? process.env.AZURE_OPENAI_MODEL ?? process.env.GNOSIS_REVIEW_LLM_MODEL ?? '';
+    return `Azure OpenAI${model ? ` (${model})` : ''}`;
+  }
+  if (effectiveProvider === 'openai') {
+    const model =
+      args.model ?? process.env.OPENAI_MODEL ?? process.env.GNOSIS_REVIEW_LLM_MODEL ?? 'gpt-5-mini';
+    return `OpenAI (${model})`;
+  }
+  if (effectiveProvider === 'bedrock') {
+    const model =
+      args.inferenceProfileId ??
+      args.modelId ??
+      process.env.GNOSIS_REVIEW_LLM_BEDROCK_INFERENCE_PROFILE_ID ??
+      process.env.GNOSIS_REVIEW_LLM_BEDROCK_MODEL_ID ??
+      '';
+    return `Bedrock${model ? ` (${model})` : ''}`;
+  }
+  return effectiveProvider;
+}
+
+function printStartBanner(label: string, sessionId: string | undefined): void {
+  output.write('\n=== Chat session started ===\n');
+  output.write(`  Model   : ${label}\n`);
+  if (sessionId) output.write(`  Session : ${sessionId}\n`);
+  output.write('  Commands: exit · reset · Ctrl+C to quit\n\n');
 }
 
 async function runSingleTurn(args: CloudCliArgs, prompt: string): Promise<void> {
@@ -215,6 +308,7 @@ async function runSingleTurn(args: CloudCliArgs, prompt: string): Promise<void> 
   const wantsSession = !args.noSession;
   const sessionDir = path.resolve(args.sessionDir ?? DEFAULT_SESSION_DIR);
   const sessionId = args.sessionId ?? (wantsSession ? generateSessionId() : undefined);
+  const toolClient = args.enableMcp ? createLocalMcpToolClient() : undefined;
 
   if (sessionId) validateSessionId(sessionId);
 
@@ -230,13 +324,15 @@ async function runSingleTurn(args: CloudCliArgs, prompt: string): Promise<void> 
     }
   }
 
-  const finalPrompt = buildConversationPrompt(history, prompt);
-  const response = await service.generate(finalPrompt, {
-    format: args.output === 'json' ? 'json' : 'text',
+  const hasNativeTools = Boolean(toolClient && service.generateMessagesStructured);
+  ensureSystemPrompt(history, Boolean(toolClient), hasNativeTools);
+  const response = await runConversationTurn(history, prompt, service, {
+    maxTokens: 4096,
+    temperature: 0,
+    allowTools: Boolean(toolClient),
+    toolClient,
+    forceJson: args.output === 'json',
   });
-
-  history.push({ role: 'user', content: prompt });
-  history.push({ role: 'assistant', content: response.trim() });
 
   if (sessionId && wantsSession) {
     saveSession(sessionDir, {
@@ -247,6 +343,10 @@ async function runSingleTurn(args: CloudCliArgs, prompt: string): Promise<void> 
       model: args.modelId ?? args.inferenceProfileId ?? 'bedrock',
       messages: history,
     });
+  }
+
+  if (toolClient) {
+    await toolClient.disconnect().catch(() => undefined);
   }
 
   if (args.output === 'json') {
@@ -276,6 +376,7 @@ async function runInteractive(args: CloudCliArgs): Promise<void> {
   const wantsSession = !args.noSession;
   const sessionDir = path.resolve(args.sessionDir ?? DEFAULT_SESSION_DIR);
   const sessionId = args.sessionId ?? (wantsSession ? generateSessionId() : undefined);
+  const toolClient = args.enableMcp ? createLocalMcpToolClient() : undefined;
 
   if (sessionId) validateSessionId(sessionId);
 
@@ -283,11 +384,16 @@ async function runInteractive(args: CloudCliArgs): Promise<void> {
   const history: ChatMessage[] = loaded?.messages ?? [];
   const sessionCreated = Boolean(sessionId && wantsSession && !loaded);
 
-  output.write(
-    `${getCliLabel(args.provider)} interactive mode. Commands: /exit, /reset${
-      sessionId ? `, session: ${sessionId}` : ''
-    }\n`,
-  );
+  const hasNativeTools = Boolean(toolClient && service.generateMessagesStructured);
+  ensureSystemPrompt(history, Boolean(toolClient), hasNativeTools);
+
+  const label = resolveModelLabel(args);
+  printStartBanner(label, sessionId);
+
+  process.on('SIGINT', () => {
+    output.write('\nBye.\n');
+    process.exit(0);
+  });
 
   while (true) {
     const userText = (await rl.question('You: ')).trim();
@@ -295,7 +401,8 @@ async function runInteractive(args: CloudCliArgs): Promise<void> {
     if (userText === '/exit' || userText === 'exit' || userText === 'quit') break;
     if (userText === '/reset' || userText === 'reset') {
       history.length = 0;
-      output.write('History cleared.\n');
+      ensureSystemPrompt(history, Boolean(toolClient), hasNativeTools);
+      output.write('Chat history reset.\n');
       if (sessionId && wantsSession) {
         saveSession(sessionDir, {
           session_id: sessionId,
@@ -309,10 +416,19 @@ async function runInteractive(args: CloudCliArgs): Promise<void> {
       continue;
     }
 
-    const prompt = buildConversationPrompt(history, userText);
-    const response = await service.generate(prompt, { format: 'text' });
-    history.push({ role: 'user', content: userText });
-    history.push({ role: 'assistant', content: response.trim() });
+    try {
+      const response = await runConversationTurn(history, userText, service, {
+        maxTokens: 4096,
+        temperature: 0,
+        allowTools: Boolean(toolClient),
+        toolClient,
+        forceJson: false,
+      });
+      output.write(`${response.trim()}\n`);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      output.write(`[Error] ${msg}\n`);
+    }
 
     if (sessionId && wantsSession) {
       saveSession(sessionDir, {
@@ -324,8 +440,10 @@ async function runInteractive(args: CloudCliArgs): Promise<void> {
         messages: history,
       });
     }
+  }
 
-    output.write(`${response.trim()}\n`);
+  if (toolClient) {
+    await toolClient.disconnect().catch(() => undefined);
   }
 
   if (args.output === 'json') {
@@ -362,7 +480,9 @@ async function main(): Promise<void> {
   await runInteractive(args);
 }
 
-main().catch((error) => {
-  console.error('Cloud CLI failed:', error);
-  process.exit(1);
-});
+if (import.meta.main) {
+  main().catch((error) => {
+    console.error('Cloud CLI failed:', error);
+    process.exit(1);
+  });
+}

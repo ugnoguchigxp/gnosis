@@ -77,6 +77,7 @@ const makeDb = (rawMemories: any[] = [], experiencesData: any[] = []) => {
           const data = callCount === 1 ? rawMemories : experiencesData;
           return {
             orderBy: () => Promise.resolve(data),
+            // biome-ignore lint/suspicious/noThenProperty: intentional mock thenable for DB chain
             then: (resolve: (v: typeof data) => void) => Promise.resolve(data).then(resolve),
           };
         },

@@ -1,5 +1,11 @@
 import { REVIEW_LIMITS, ReviewError } from '../errors.js';
-import type { ReviewLLMService } from './types.js';
+import type {
+  ChatMessage,
+  LLMGenerateResult,
+  LLMToolDefinition,
+  NativeToolCall,
+  ReviewLLMService,
+} from './types.js';
 
 export type ReviewCloudProvider = 'openai' | 'bedrock' | 'azure-openai' | 'anthropic' | 'google';
 
@@ -34,7 +40,7 @@ const DEFAULTS: Record<
   'azure-openai': {
     baseUrl: '',
     path: '/openai/deployments',
-    apiVersion: '2024-06-01',
+    apiVersion: '2025-04-01-preview',
   },
   anthropic: {
     baseUrl: 'https://api.anthropic.com',
@@ -317,17 +323,107 @@ function resolveRequestConfig(
   };
 }
 
+const getBedrockIdentifiers = (options: {
+  bedrockInferenceProfileId?: string;
+  bedrockModelId?: string;
+}): string[] => {
+  const identifiers = [options.bedrockInferenceProfileId, options.bedrockModelId].filter(
+    (value): value is string => Boolean(value?.trim()),
+  );
+  return [...new Set(identifiers)];
+};
+
+async function runBedrockRequest(params: {
+  identifiers: string[];
+  apiBaseUrl: string;
+  apiPath: string;
+  awsRegion: string;
+  awsAccessKeyId: string;
+  awsSecretAccessKey: string;
+  awsSessionToken?: string;
+  body: string;
+  signal: AbortSignal;
+}): Promise<Record<string, unknown>> {
+  let lastStatusText = '';
+  const triedIdentifiers: string[] = [];
+
+  for (const identifier of params.identifiers) {
+    triedIdentifiers.push(identifier);
+    const baseUrl =
+      params.apiBaseUrl || `https://bedrock-runtime.${params.awsRegion}.amazonaws.com`;
+    const path = `${params.apiPath.replace(/\/$/, '')}/model/${encodeURIComponent(
+      identifier,
+    )}/invoke`;
+    const url = new URL(path, baseUrl).toString();
+    const headers = await signBedrockRequest({
+      url: new URL(url),
+      body: params.body,
+      accessKeyId: params.awsAccessKeyId,
+      secretAccessKey: params.awsSecretAccessKey,
+      sessionToken: params.awsSessionToken,
+      region: params.awsRegion,
+    });
+
+    const response = await fetch(url, {
+      method: 'POST',
+      signal: params.signal,
+      headers,
+      body: params.body,
+    });
+
+    if (response.ok) {
+      return (await response.json()) as Record<string, unknown>;
+    }
+
+    const text = await response.text().catch(() => '');
+    lastStatusText = `(${response.status}) ${text}`;
+    if (response.status !== 404) {
+      throw new ReviewError('E007', `Cloud LLM request failed ${lastStatusText}`);
+    }
+  }
+
+  const triedText =
+    triedIdentifiers.length > 0 ? ` Tried identifiers: ${triedIdentifiers.join(', ')}` : '';
+  throw new ReviewError(
+    'E007',
+    `Cloud LLM request failed ${lastStatusText || '(404)'}${triedText}`,
+  );
+}
+
 export function createCloudReviewLLMService(options: CloudProviderOptions = {}): ReviewLLMService {
   const provider = options.provider ?? normalizeProvider(process.env.GNOSIS_REVIEW_LLM_PROVIDER);
   const defaults = DEFAULTS[provider];
   const apiBaseUrl =
-    options.apiBaseUrl ?? process.env.GNOSIS_REVIEW_LLM_API_BASE_URL ?? defaults.baseUrl;
-  const apiPath = options.apiPath ?? process.env.GNOSIS_REVIEW_LLM_API_PATH ?? defaults.path;
+    options.apiBaseUrl ??
+    (provider === 'bedrock'
+      ? defaults.baseUrl
+      : process.env.GNOSIS_REVIEW_LLM_API_BASE_URL ?? defaults.baseUrl);
+  const apiPath =
+    options.apiPath ??
+    (provider === 'bedrock'
+      ? defaults.path
+      : process.env.GNOSIS_REVIEW_LLM_API_PATH ?? defaults.path);
   const apiVersion =
     options.apiVersion ?? process.env.GNOSIS_REVIEW_LLM_API_VERSION ?? defaults.apiVersion;
   const timeoutMs = options.timeoutMs ?? REVIEW_LIMITS.LLM_TIMEOUT_MS;
-  const apiKey = options.apiKey ?? process.env.GNOSIS_REVIEW_LLM_API_KEY;
-  const model = options.model ?? process.env.GNOSIS_REVIEW_LLM_MODEL;
+  const providerApiKeyEnv =
+    provider === 'azure-openai'
+      ? process.env.AZURE_OPENAI_API_KEY
+      : provider === 'anthropic'
+        ? process.env.ANTHROPIC_API_KEY
+        : provider === 'google'
+          ? process.env.GOOGLE_API_KEY
+          : process.env.OPENAI_API_KEY;
+  const providerModelEnv =
+    provider === 'azure-openai'
+      ? process.env.AZURE_OPENAI_MODEL
+      : provider === 'anthropic'
+        ? process.env.ANTHROPIC_MODEL
+        : provider === 'google'
+          ? process.env.GOOGLE_MODEL
+          : process.env.OPENAI_MODEL;
+  const apiKey = options.apiKey ?? providerApiKeyEnv ?? process.env.GNOSIS_REVIEW_LLM_API_KEY;
+  const model = options.model ?? providerModelEnv ?? process.env.GNOSIS_REVIEW_LLM_MODEL;
   const awsRegion = options.awsRegion ?? process.env.AWS_REGION;
   const awsAccessKeyId = options.awsAccessKeyId ?? process.env.AWS_ACCESS_KEY_ID;
   const awsSecretAccessKey = options.awsSecretAccessKey ?? process.env.AWS_SECRET_ACCESS_KEY;
@@ -354,10 +450,32 @@ export function createCloudReviewLLMService(options: CloudProviderOptions = {}):
     }
   } else {
     if (!apiKey) {
-      throw new ReviewError('E007', 'Cloud review LLM is not configured: missing API key');
+      const envVarName =
+        provider === 'azure-openai'
+          ? 'AZURE_OPENAI_API_KEY'
+          : provider === 'anthropic'
+            ? 'ANTHROPIC_API_KEY'
+            : provider === 'google'
+              ? 'GOOGLE_API_KEY'
+              : 'OPENAI_API_KEY';
+      throw new ReviewError(
+        'E007',
+        `Cloud review LLM is not configured: missing API key (set ${envVarName} in .env or pass --api-key)`,
+      );
     }
     if (!model) {
-      throw new ReviewError('E007', 'Cloud review LLM is not configured: missing model');
+      const envVarName =
+        provider === 'azure-openai'
+          ? 'AZURE_OPENAI_MODEL'
+          : provider === 'anthropic'
+            ? 'ANTHROPIC_MODEL'
+            : provider === 'google'
+              ? 'GOOGLE_MODEL'
+              : 'OPENAI_MODEL';
+      throw new ReviewError(
+        'E007',
+        `Cloud review LLM is not configured: missing model (set ${envVarName} in .env or pass --model)`,
+      );
     }
   }
   if (provider === 'azure-openai' && !apiBaseUrl) {
@@ -367,21 +485,253 @@ export function createCloudReviewLLMService(options: CloudProviderOptions = {}):
     );
   }
 
+  // Internal: generate text (no tool schema) — shared by generateMessages and
+  // the google/anthropic fallback in generateMessagesStructured
+  async function callTextGenerate(
+    messages: ChatMessage[],
+    opts: { format?: 'json' | 'text' },
+  ): Promise<string> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      if (provider === 'bedrock') {
+        const systemMsg = messages.find((m) => m.role === 'system')?.content;
+        const chatMsgs = messages
+          .filter((m) => m.role !== 'system')
+          .map((m) => ({ role: m.role, content: [{ type: 'text', text: m.content }] }));
+        const body = JSON.stringify({
+          anthropic_version: 'bedrock-2023-05-31',
+          max_tokens: 4096,
+          temperature: 0,
+          ...(systemMsg ? { system: systemMsg } : {}),
+          ...(opts.format === 'json' ? { system: systemMsg ?? 'Return JSON only.' } : {}),
+          messages: chatMsgs,
+        });
+        const payload = await runBedrockRequest({
+          identifiers: getBedrockIdentifiers({ bedrockInferenceProfileId, bedrockModelId }),
+          apiBaseUrl,
+          apiPath,
+          awsRegion: awsRegion as string,
+          awsAccessKeyId: awsAccessKeyId as string,
+          awsSecretAccessKey: awsSecretAccessKey as string,
+          awsSessionToken,
+          body,
+          signal: controller.signal,
+        });
+        const content = extractBedrockText(payload);
+        if (!content.trim()) throw new ReviewError('E007', 'Cloud LLM returned an empty response');
+        return content.trim();
+      }
+
+      const request = resolveRequestConfig(
+        provider,
+        model as string,
+        apiBaseUrl,
+        apiPath,
+        apiKey as string,
+        apiVersion,
+      );
+      const apiMessages = messages.map((m) => ({ role: m.role, content: m.content }));
+      const body =
+        provider === 'google'
+          ? {
+              contents: apiMessages
+                .filter((m) => m.role !== 'system')
+                .map((m) => ({
+                  role: m.role === 'assistant' ? 'model' : 'user',
+                  parts: [{ text: m.content }],
+                })),
+              systemInstruction: messages.find((m) => m.role === 'system')
+                ? { parts: [{ text: messages.find((m) => m.role === 'system')?.content }] }
+                : undefined,
+              generationConfig: {
+                temperature: 0,
+                ...(opts.format === 'json' ? { responseMimeType: 'application/json' } : {}),
+              },
+            }
+          : provider === 'anthropic'
+            ? {
+                ...request.body,
+                system: messages.find((m) => m.role === 'system')?.content,
+                messages: apiMessages.filter((m) => m.role !== 'system'),
+                ...(opts.format === 'json' ? { tools: [] } : {}),
+              }
+            : {
+                ...request.body,
+                messages: apiMessages,
+                max_completion_tokens: 4096,
+                ...(opts.format === 'json' ? { response_format: { type: 'json_object' } } : {}),
+              };
+
+      const response = await fetch(request.url, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: request.headers,
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        throw new ReviewError('E007', `Cloud LLM request failed (${response.status}): ${text}`);
+      }
+      const payload = (await response.json()) as Record<string, unknown>;
+      const choices = payload.choices as Array<{ message: { content: string } }> | undefined;
+      const content =
+        choices?.[0]?.message?.content ??
+        extractAnthropicText(payload) ??
+        extractGoogleText(payload) ??
+        '';
+      if (!content.trim()) throw new ReviewError('E007', 'Cloud LLM returned an empty response');
+      return content.trim();
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   return {
     provider: 'cloud',
+    async generateMessages(
+      messages: ChatMessage[],
+      opts: { format?: 'json' | 'text' } = {},
+    ): Promise<string> {
+      return callTextGenerate(messages, opts);
+    },
+    async generateMessagesStructured(
+      messages: ChatMessage[],
+      opts: { format?: 'json' | 'text'; tools?: LLMToolDefinition[] } = {},
+    ): Promise<LLMGenerateResult> {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        if (provider === 'bedrock') {
+          const systemMsg = messages.find((m) => m.role === 'system')?.content;
+          const chatMsgs = messages
+            .filter((m) => m.role !== 'system')
+            .map((m) => ({ role: m.role, content: [{ type: 'text' as const, text: m.content }] }));
+          const anthropicTools = (opts.tools ?? []).map((t) => ({
+            name: t.name,
+            description: t.description,
+            input_schema: t.parameters,
+          }));
+          const body = JSON.stringify({
+            anthropic_version: 'bedrock-2023-05-31',
+            max_tokens: 4096,
+            temperature: 0,
+            ...(systemMsg ? { system: systemMsg } : {}),
+            messages: chatMsgs,
+            ...(anthropicTools.length > 0 ? { tools: anthropicTools } : {}),
+          });
+          const payload = await runBedrockRequest({
+            identifiers: getBedrockIdentifiers({ bedrockInferenceProfileId, bedrockModelId }),
+            apiBaseUrl,
+            apiPath,
+            awsRegion: awsRegion as string,
+            awsAccessKeyId: awsAccessKeyId as string,
+            awsSecretAccessKey: awsSecretAccessKey as string,
+            awsSessionToken,
+            body,
+            signal: controller.signal,
+          });
+          const contentBlocks = Array.isArray(payload.content)
+            ? (payload.content as Array<Record<string, unknown>>)
+            : [];
+          const textParts = contentBlocks
+            .filter((b) => b.type === 'text' && typeof b.text === 'string')
+            .map((b) => b.text as string);
+          const toolCalls: NativeToolCall[] = contentBlocks
+            .filter((b) => b.type === 'tool_use')
+            .map((b) => ({
+              id: String(b.id ?? ''),
+              name: String(b.name ?? ''),
+              arguments: Object.fromEntries(
+                Object.entries((b.input ?? {}) as Record<string, unknown>).map(([k, v]) => [
+                  k,
+                  typeof v === 'string' ? v : JSON.stringify(v),
+                ]),
+              ),
+            }));
+          return {
+            text: textParts.join(''),
+            toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+            rawAssistantContent: contentBlocks,
+          };
+        }
+
+        // OpenAI / Azure OpenAI path (native tool_calls)
+        // google / anthropic: delegate to callTextGenerate (text-only, no tool_calls)
+        if (provider !== 'openai' && provider !== 'azure-openai') {
+          const textResult = await callTextGenerate(messages, opts);
+          return { text: textResult };
+        }
+        const request = resolveRequestConfig(
+          provider,
+          model as string,
+          apiBaseUrl,
+          apiPath,
+          apiKey as string,
+          apiVersion,
+        );
+        const apiMessages = messages.map((m) => ({ role: m.role, content: m.content }));
+        const openaiTools = (opts.tools ?? []).map((t) => ({
+          type: 'function' as const,
+          function: { name: t.name, description: t.description, parameters: t.parameters },
+        }));
+        const bodyObj: Record<string, unknown> = {
+          ...request.body,
+          messages: apiMessages,
+          max_completion_tokens: 4096,
+          ...(opts.format === 'json' ? { response_format: { type: 'json_object' } } : {}),
+          ...(openaiTools.length > 0 ? { tools: openaiTools } : {}),
+        };
+        const response = await fetch(request.url, {
+          method: 'POST',
+          signal: controller.signal,
+          headers: request.headers,
+          body: JSON.stringify(bodyObj),
+        });
+        if (!response.ok) {
+          const text = await response.text().catch(() => '');
+          throw new ReviewError('E007', `Cloud LLM request failed (${response.status}): ${text}`);
+        }
+        const payload = (await response.json()) as Record<string, unknown>;
+        const choices = payload.choices as
+          | Array<{
+              message: {
+                content?: string;
+                tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
+              };
+            }>
+          | undefined;
+        const msg = choices?.[0]?.message;
+        const text = msg?.content ?? '';
+        const toolCalls: NativeToolCall[] = (msg?.tool_calls ?? []).map((tc) => {
+          let args: Record<string, string> = {};
+          try {
+            const parsed = JSON.parse(tc.function.arguments) as Record<string, unknown>;
+            args = Object.fromEntries(
+              Object.entries(parsed).map(([k, v]) => [
+                k,
+                typeof v === 'string' ? v : JSON.stringify(v),
+              ]),
+            );
+          } catch {
+            /* ignore */
+          }
+          return { id: tc.id, name: tc.function.name, arguments: args };
+        });
+        return {
+          text,
+          toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+        };
+      } finally {
+        clearTimeout(timer);
+      }
+    },
     async generate(prompt: string, opts = {}): Promise<string> {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
 
       try {
         if (provider === 'bedrock') {
-          const resolvedRegion = awsRegion as string;
-          const identifier = bedrockInferenceProfileId ?? bedrockModelId;
-          const baseUrl = apiBaseUrl || `https://bedrock-runtime.${resolvedRegion}.amazonaws.com`;
-          const path = `${apiPath.replace(/\/$/, '')}/model/${encodeURIComponent(
-            identifier as string,
-          )}/invoke`;
-          const url = new URL(path, baseUrl).toString();
           const body = JSON.stringify({
             anthropic_version: 'bedrock-2023-05-31',
             max_tokens: 4096,
@@ -395,28 +745,20 @@ export function createCloudReviewLLMService(options: CloudProviderOptions = {}):
             ],
           });
 
-          const headers = await signBedrockRequest({
-            url: new URL(url),
+          const payload = await runBedrockRequest({
+            identifiers: getBedrockIdentifiers({
+              bedrockInferenceProfileId,
+              bedrockModelId,
+            }),
+            apiBaseUrl,
+            apiPath,
+            awsRegion: awsRegion as string,
+            awsAccessKeyId: awsAccessKeyId as string,
+            awsSecretAccessKey: awsSecretAccessKey as string,
+            awsSessionToken,
             body,
-            accessKeyId: awsAccessKeyId as string,
-            secretAccessKey: awsSecretAccessKey as string,
-            sessionToken: awsSessionToken,
-            region: resolvedRegion,
-          });
-
-          const response = await fetch(url, {
-            method: 'POST',
             signal: controller.signal,
-            headers,
-            body,
           });
-
-          if (!response.ok) {
-            const text = await response.text().catch(() => '');
-            throw new ReviewError('E007', `Cloud LLM request failed (${response.status}): ${text}`);
-          }
-
-          const payload = (await response.json()) as Record<string, unknown>;
           const content = extractBedrockText(payload);
 
           if (!content.trim()) {

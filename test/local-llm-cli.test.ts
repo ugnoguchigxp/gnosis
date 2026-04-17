@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import fs from 'node:fs';
 import path from 'node:path';
+import { parseAlias, resolveLauncherPlan } from '../src/scripts/local-llm-cli.js';
 
 const ROOT_DIR = process.cwd();
 
@@ -20,11 +21,31 @@ describe('local LLM CLI launchers', () => {
   });
 
   test('root wrappers delegate to the canonical scripts', () => {
-    expect(readText('scripts/gemma4')).toContain('services/local-llm/scripts/gemma4');
-    expect(readText('scripts/bonsai')).toContain('services/local-llm/scripts/bonsai');
-    expect(readText('scripts/bedrock')).toContain('services/local-llm/scripts/bedrock');
-    expect(readText('scripts/openai')).toContain('services/local-llm/scripts/openai');
-    expect(readText('services/local-llm/scripts/openai')).toContain('--provider openai');
+    expect(readText('scripts/gemma4')).toContain('src/scripts/local-llm-cli.ts');
+    expect(readText('scripts/bonsai')).toContain('src/scripts/local-llm-cli.ts');
+    expect(readText('scripts/bedrock')).toContain('src/scripts/local-llm-cli.ts');
+    expect(readText('scripts/openai')).toContain('src/scripts/local-llm-cli.ts');
+    expect(readText('services/local-llm/scripts/openai')).toContain('--alias openai');
+    expect(readText('services/local-llm/scripts/bedrock')).toContain('--alias bedrock');
+  });
+
+  test('alias router resolves each launcher to the expected runtime', () => {
+    expect(parseAlias(['--alias', 'gemma4'])).toBe('gemma4');
+    expect(resolveLauncherPlan('gemma4', ['--prompt', 'hello']).command).toMatch(/python$/);
+    expect(resolveLauncherPlan('bonsai', ['--prompt', 'hello']).args).toContain('bonsai');
+    expect(resolveLauncherPlan('openai', ['--prompt', 'hello']).args.join(' ')).toContain(
+      '--provider openai',
+    );
+    expect(resolveLauncherPlan('bedrock', ['--prompt', 'hello']).args.join(' ')).toContain(
+      '--provider bedrock',
+    );
+    expect(
+      resolveLauncherPlan('openai', ['--session-id', 'sess_123456', '--mcp']).args.join(' '),
+    ).toContain('--session-id sess_123456');
+    expect(resolveLauncherPlan('bedrock', ['--no-mcp']).args.join(' ')).toContain('--no-mcp');
+    expect(resolveLauncherPlan('gemma4', ['--model', 'custom-model']).args.join(' ')).toContain(
+      'custom-model',
+    );
   });
 
   test('PATH helpers include all command names', () => {

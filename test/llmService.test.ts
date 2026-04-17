@@ -123,7 +123,7 @@ describe('llm service (legacy local LLM)', () => {
     it('parses distilled knowledge from LLM output', async () => {
       const payload = {
         memories: ['Bun is fast'],
-        entities: [{ id: 'bun', type: 'Tool', name: 'Bun', description: 'JS runtime' }],
+        entities: [{ id: 'bun', type: 'tool', name: 'Bun', description: 'JS runtime' }],
         relations: [],
       };
       const spawnSync = makeSpawnSync(JSON.stringify(payload));

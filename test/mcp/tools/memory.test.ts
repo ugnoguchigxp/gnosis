@@ -10,6 +10,7 @@ const mockSaveRelations = mock();
 
 mock.module('../../../src/services/memory.js', () => ({
   saveMemory: mockSaveMemory,
+  saveEpisodeMemory: mockSaveMemory,
   searchMemory: mockSearchMemory,
   deleteMemory: mockDeleteMemory,
 }));
@@ -54,7 +55,17 @@ describe('memory tool handlers', () => {
 
     const result = await storeHandler(args);
 
-    expect(mockSaveMemory).toHaveBeenCalledWith('s1', 'text contents', undefined, 'mock-tx');
+    expect(mockSaveMemory).toHaveBeenCalledWith(
+      {
+        sessionId: 's1',
+        content: 'text contents',
+        metadata: undefined,
+        memoryType: 'raw',
+        episodeAt: undefined,
+        importance: undefined,
+      },
+      'mock-tx',
+    );
     expect(mockSaveEntities).toHaveBeenCalledWith(args.entities, 'mock-tx');
     expect(mockSaveRelations).toHaveBeenCalledWith(args.relations, 'mock-tx');
     expect(result.content[0].text).toContain('Memory stored successfully with ID: mem-1');

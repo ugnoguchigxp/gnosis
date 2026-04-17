@@ -40,7 +40,12 @@ describe('synthesizeKnowledge', () => {
       memories: [],
       entities: [
         // 新形式: id なし、制御語彙の type。task にすることで learned_from 関係も生成される
-        { type: 'task', name: 'TypeScript を使う', description: 'JavaScriptに静的型付けを追加したAltJS。Microsoft製。型安全なコードを書くためのツール' },
+        {
+          type: 'task',
+          name: 'TypeScript を使う',
+          description:
+            'JavaScriptに静的型付けを追加したAltJS。Microsoft製。型安全なコードを書くためのツール',
+        },
       ],
       relations: [
         // 新形式: name ベース

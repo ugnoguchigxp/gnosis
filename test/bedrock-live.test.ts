@@ -14,9 +14,11 @@ const hasRequiredEnv = Boolean(
   env.accessKeyId && env.secretAccessKey && env.region && env.modelId && env.inferenceProfileId,
 );
 
+const shouldRunLive = process.env.GNOSIS_RUN_BEDROCK_LIVE === '1' && hasRequiredEnv;
+
 describe('Bedrock live integration', () => {
-  if (!hasRequiredEnv) {
-    test.skip('AWS Bedrock environment variables are not fully configured', () => {});
+  if (!shouldRunLive) {
+    test.skip('AWS Bedrock live test is not enabled or environment variables are not fully configured', () => {});
     return;
   }
 

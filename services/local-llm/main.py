@@ -194,8 +194,18 @@ async def main():
             print(response_text)
         return
 
-    print(f"\n--- Chat session started [Backend: {args.backend}] ---")
-    print("Commands: 'exit' to quit, 'reset' to clear history.\n")
+    backend_labels = {
+        "mlx": "Gemma 4",
+        "bonsai": "Bonsai",
+        "ollama": "Ollama",
+        "mock": "Mock",
+    }
+    model_label = f"{backend_labels.get(args.backend, args.backend)} ({model_path})"
+    print(f"\n=== Chat session started ===")
+    print(f"  Model   : {model_label}")
+    if session_id:
+        print(f"  Session : {session_id}")
+    print(f"  Commands: exit · reset · Ctrl+C to quit\n")
 
     # メインループ
     try:
