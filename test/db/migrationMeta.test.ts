@@ -33,6 +33,7 @@ describe('migrationMeta', () => {
       { expected: 1, actual: 2, tag: '0000_init' },
       { expected: 2, actual: 3, tag: '0003_add_users' },
     ]);
+    expect(result.latestJournalTagWithoutSnapshot).toBe('0003_add_users');
   });
 
   describe('buildExpectedMigrations', () => {

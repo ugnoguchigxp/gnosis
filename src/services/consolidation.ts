@@ -200,16 +200,36 @@ ${experiencesText}
     );
     const output = routed.output;
     const jsonMatch = output?.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('No JSON in LLM response');
+    if (!jsonMatch) {
+      console.error('Raw LLM output (no JSON found):', output);
+      throw new Error('No JSON in LLM response');
+    }
 
-    const parsed = JSON.parse(jsonMatch[0]) as {
-      story: string;
-      importance: number;
-      episodeAt: string;
-    };
+    let parsed = JSON.parse(jsonMatch[0]);
+
+    // CLI からのラッパー JSON (main.py 等) の場合は中の 'response' フィールドを取り出す
+    if (parsed && typeof parsed === 'object' && 'response' in parsed) {
+      const response = String(parsed.response);
+      if (response.includes('回答を生成できませんでした。')) {
+        throw new Error('LLM failed to generate a response (local engine error)');
+      }
+      const innerJsonMatch = response.match(/\{[\s\S]*\}/);
+      if (innerJsonMatch) {
+        parsed = JSON.parse(innerJsonMatch[0]);
+      } else {
+        // もしレスポンスの中にさらに JSON がなければ、そのまま使う（またはエラーにする）
+        // ここではフォールバックとしてパース済みオブジェクトをそのまま使う
+      }
+    }
+
     story = parsed.story;
     importance = typeof parsed.importance === 'number' ? parsed.importance : 0.5;
     episodeAt = parsed.episodeAt ? new Date(parsed.episodeAt) : new Date();
+
+    if (!story) {
+      console.error('Parsed result missing story field:', parsed);
+      throw new Error('LLM output missing required story field');
+    }
   } catch (err) {
     console.error('Failed to consolidate episodes:', err);
     throw err;

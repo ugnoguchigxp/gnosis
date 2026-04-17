@@ -13,6 +13,7 @@ export type MigrationMetaValidation = {
   orphanSqlWithoutJournal: string[];
   duplicateJournalTags: string[];
   nonContiguousIndexes: Array<{ expected: number; actual: number; tag: string }>;
+  latestJournalTagWithoutSnapshot: string | null;
 };
 
 export type ExpectedMigration = MigrationJournalEntry & {
@@ -23,10 +24,12 @@ export type ExpectedMigration = MigrationJournalEntry & {
 export type LoadMetaOptions = {
   journalPath?: string;
   migrationsDir?: string;
+  snapshotsDir?: string;
 };
 
 const defaultJournalPath = () => resolve(process.cwd(), 'drizzle/meta/_journal.json');
 const defaultMigrationsDir = () => resolve(process.cwd(), 'drizzle');
+const defaultSnapshotsDir = () => resolve(process.cwd(), 'drizzle/meta');
 
 export function sha256Hex(content: string): string {
   return createHash('sha256').update(content).digest('hex');
@@ -34,6 +37,11 @@ export function sha256Hex(content: string): string {
 
 export function toMigrationTag(fileName: string): string | null {
   return /^\d+_.+\.sql$/.test(fileName) ? fileName.replace(/\.sql$/, '') : null;
+}
+
+export function toSnapshotTag(fileName: string): string | null {
+  const matched = fileName.match(/^(\d+)_snapshot\.json$/);
+  return matched?.[1] ?? null;
 }
 
 export async function loadJournalEntries(
@@ -66,9 +74,18 @@ export async function loadSqlTags(migrationsDir = defaultMigrationsDir()): Promi
     .sort((a, b) => a.localeCompare(b));
 }
 
+export async function loadSnapshotIndexes(snapshotsDir = defaultSnapshotsDir()): Promise<string[]> {
+  const names = await readdir(snapshotsDir);
+  return names
+    .map(toSnapshotTag)
+    .filter((tag): tag is string => Boolean(tag))
+    .sort((a, b) => a.localeCompare(b));
+}
+
 export function validateMigrationMeta(
   journalEntries: MigrationJournalEntry[],
   sqlTags: string[],
+  snapshotIndexes: string[] = [],
 ): MigrationMetaValidation {
   const journalTags = journalEntries.map((entry) => entry.tag);
   const journalSet = new Set(journalTags);
@@ -97,11 +114,18 @@ export function validateMigrationMeta(
     .map((entry, index) => ({ expected: index, actual: entry.idx, tag: entry.tag }))
     .filter((entry) => entry.expected !== entry.actual);
 
+  const latestEntry = journalEntries.at(-1);
+  const latestJournalTagWithoutSnapshot =
+    latestEntry && !snapshotIndexes.includes(String(latestEntry.idx).padStart(4, '0'))
+      ? latestEntry.tag
+      : null;
+
   return {
     missingSqlForJournal,
     orphanSqlWithoutJournal,
     duplicateJournalTags,
     nonContiguousIndexes,
+    latestJournalTagWithoutSnapshot,
   };
 }
 

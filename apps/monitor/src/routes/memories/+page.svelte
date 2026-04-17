@@ -134,10 +134,15 @@ async function handleRegister(e: Event) {
   registerError = null;
   try {
     // 1. Raw memory を登録 (Fast!)
-    const output = await invoke<string>('monitor_register_episode', {
+    const result = await invoke<{
+      success: boolean;
+      sessionId?: string;
+      rawId?: string;
+      message?: string;
+      error?: string;
+    }>('monitor_register_episode', {
       content: registerContent.trim(),
     });
-    const result = JSON.parse(output);
 
     if (result.success) {
       const sessionId = result.sessionId;
@@ -149,9 +154,11 @@ async function handleRegister(e: Event) {
       isConsolidating = true;
 
       // 統合コマンドを投げる (await しない)
-      invoke<string>('monitor_consolidate_session', { sessionId })
-        .then((out) => {
-          const res = JSON.parse(out);
+      invoke<{ success: boolean; episodeId?: string; error?: string }>(
+        'monitor_consolidate_session',
+        { sessionId },
+      )
+        .then((res) => {
           if (res.success) {
             addToast('ストーリーが正常に統合・生成されました。', 'success');
             loadEpisodes();

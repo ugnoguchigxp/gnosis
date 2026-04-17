@@ -93,9 +93,7 @@ export const config = {
     process.env.GNOSIS_BEDROCK_SCRIPT || path.resolve(process.cwd(), 'scripts/bedrock'),
 
   // 現在使用する LLM スクリプト (デフォルト: gemma4)
-  llmScript:
-    process.env.GNOSIS_LLM_SCRIPT ||
-    path.resolve(process.cwd(), 'services/local-llm/scripts/gemma4'),
+  llmScript: process.env.GNOSIS_LLM_SCRIPT || path.resolve(process.cwd(), 'scripts/gemma4'),
 
   // モックRetrieverを使用するかどうか
   mockRetriever: envBoolean(process.env.GNOSIS_MOCK_RETRIEVER, false),

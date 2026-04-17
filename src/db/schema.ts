@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import {
   bigint,
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -47,6 +48,11 @@ export const vibeMemories = pgTable(
     sessionRawPendingIdx: index('vibe_memories_session_raw_pending_idx')
       .on(table.sessionId, table.sourceTask, table.createdAt)
       .where(sql`${table.memoryType} = 'raw' AND ${table.isSynthesized} = false`),
+    metadataGinIdx: index('vibe_memories_metadata_gin_idx').using('gin', table.metadata),
+    metadataKindIdx: index('vibe_memories_metadata_kind_idx').on(sql`(${table.metadata}->>'kind')`),
+    guidanceSessionCreatedIdx: index('vibe_memories_guidance_session_created_idx')
+      .on(table.sessionId, table.createdAt)
+      .where(sql`${table.metadata} @> '{"kind":"guidance"}'::jsonb`),
     embeddingHnswIdx: index('vibe_memories_embedding_hnsw_idx').using(
       'hnsw',
       table.embedding.op('vector_cosine_ops'),
@@ -54,6 +60,10 @@ export const vibeMemories = pgTable(
     sessionDedupeUnique: unique('vibe_memories_session_dedupe_key_unique').on(
       table.sessionId,
       table.dedupeKey,
+    ),
+    memoryTypeCheck: check(
+      'vibe_memories_memory_type_check',
+      sql`${table.memoryType} IN ('raw', 'episode')`,
     ),
   }),
 );
@@ -189,6 +199,12 @@ export const topicTasks = pgTable(
       table.priority,
       table.createdAt,
     ),
+    pendingPriorityCreatedIdx: index('topic_tasks_pending_priority_created_idx')
+      .on(table.priority, table.createdAt)
+      .where(sql`${table.status} = 'pending'`),
+    deferredNextRunPriorityCreatedIdx: index('topic_tasks_deferred_next_run_priority_created_idx')
+      .on(table.nextRunAt, table.priority, table.createdAt)
+      .where(sql`${table.status} = 'deferred' AND ${table.nextRunAt} IS NOT NULL`),
     runningUpdatedAtIdx: index('topic_tasks_running_updated_idx')
       .on(table.updatedAt)
       .where(sql`${table.status} = 'running'`),
@@ -313,6 +329,10 @@ export const reviewCases = pgTable(
     taskIdx: index('idx_review_cases_task').on(table.taskId),
     statusIdx: index('idx_review_cases_status').on(table.status),
     repoCreatedAtIdx: index('idx_review_cases_repo').on(table.repoPath, table.createdAt),
+    statusCheck: check(
+      'review_cases_status_check',
+      sql`${table.status} IN ('running', 'completed')`,
+    ),
   }),
 );
 
@@ -347,6 +367,10 @@ export const reviewOutcomes = pgTable(
     uniqueReviewFinding: unique('review_outcomes_case_finding_unique').on(
       table.reviewCaseId,
       table.findingId,
+    ),
+    outcomeTypeCheck: check(
+      'review_outcomes_outcome_type_check',
+      sql`${table.outcomeType} IN ('pending', 'adopted', 'ignored', 'dismissed', 'resolved')`,
     ),
   }),
 );

@@ -1,19 +1,25 @@
 import {
   buildExpectedMigrations,
   loadJournalEntries,
+  loadSnapshotIndexes,
   loadSqlTags,
   validateMigrationMeta,
 } from '../db/migrationMeta.js';
 
 async function main() {
-  const [journalEntries, sqlTags] = await Promise.all([loadJournalEntries(), loadSqlTags()]);
-  const validation = validateMigrationMeta(journalEntries, sqlTags);
+  const [journalEntries, sqlTags, snapshotIndexes] = await Promise.all([
+    loadJournalEntries(),
+    loadSqlTags(),
+    loadSnapshotIndexes(),
+  ]);
+  const validation = validateMigrationMeta(journalEntries, sqlTags, snapshotIndexes);
 
   const hasErrors =
     validation.missingSqlForJournal.length > 0 ||
     validation.orphanSqlWithoutJournal.length > 0 ||
     validation.duplicateJournalTags.length > 0 ||
-    validation.nonContiguousIndexes.length > 0;
+    validation.nonContiguousIndexes.length > 0 ||
+    Boolean(validation.latestJournalTagWithoutSnapshot);
 
   if (hasErrors) {
     console.error('Migration metadata is inconsistent.');
@@ -37,6 +43,11 @@ async function main() {
         .map((entry) => `${entry.tag}(expected ${entry.expected}, actual ${entry.actual})`)
         .join(', ');
       console.error(`- non-contiguous journal indexes: ${detail}`);
+    }
+    if (validation.latestJournalTagWithoutSnapshot) {
+      console.error(
+        `- latest journal tag has no snapshot in drizzle/meta: ${validation.latestJournalTagWithoutSnapshot}`,
+      );
     }
     process.exit(1);
   }

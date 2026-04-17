@@ -136,10 +136,8 @@ function buildRuntimeConfig(): MemoryLoopRuntimeConfig {
     gemma4:
       toSafeString(cfg.gemma4Script) ||
       toSafeString(cfg.llmScript) ||
-      path.resolve(process.cwd(), 'services/local-llm/scripts/gemma4'),
-    bonsai:
-      toSafeString(cfg.bonsaiScript) ||
-      path.resolve(process.cwd(), 'services/local-llm/scripts/bonsai'),
+      path.resolve(process.cwd(), 'scripts/gemma4'),
+    bonsai: toSafeString(cfg.bonsaiScript) || path.resolve(process.cwd(), 'scripts/bonsai'),
     openai: toSafeString(cfg.openaiScript) || path.resolve(process.cwd(), 'scripts/openai'),
     bedrock: toSafeString(cfg.bedrockScript) || path.resolve(process.cwd(), 'scripts/bedrock'),
   };

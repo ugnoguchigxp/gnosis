@@ -79,6 +79,20 @@ const renderGraph = (data: GraphSnapshot) => {
 
   const svg = d3.select(svgContainer);
 
+  // ズーム・パン挙動の定義
+  const zoom = d3
+    .zoom<SVGSVGElement, unknown>()
+    .scaleExtent([0.1, 4])
+    .on('zoom', (event) => {
+      mainContainer.attr('transform', event.transform);
+    });
+
+  // すべての要素を収めるメインコンテナ
+  const mainContainer = svg.append('g');
+
+  // svg にズーム機能を適用
+  svg.call(zoom);
+
   const nodes: GraphNode[] = data.entities.map((e) => ({ ...e }));
   const links: GraphLink[] = data.relations.map((r) => ({
     id: r.id,
@@ -95,29 +109,29 @@ const renderGraph = (data: GraphSnapshot) => {
       d3
         .forceLink<GraphNode, GraphLink>(links)
         .id((d) => d.id)
-        .distance(80),
+        .distance(100), // 少し余裕を持たせる
     )
-    .force('charge', d3.forceManyBody<GraphNode>().strength(-300))
+    .force('charge', d3.forceManyBody<GraphNode>().strength(-400))
     .force('center', d3.forceCenter<GraphNode>(width / 2, height / 2))
-    .force('collision', d3.forceCollide<GraphNode>().radius(30));
+    .force('collision', d3.forceCollide<GraphNode>().radius(40));
 
-  const link = svg
+  const link = mainContainer
     .append('g')
     .selectAll('line')
     .data(links)
     .enter()
     .append('line')
-    .attr('stroke', '#999')
+    .attr('stroke', '#94a3b8')
     .attr('stroke-opacity', 0.6)
-    .attr('stroke-width', (d) => Math.sqrt(d.weight));
+    .attr('stroke-width', (d) => Math.sqrt(d.weight) + 1);
 
-  const node = svg
+  const node = mainContainer
     .append('g')
     .selectAll('circle')
     .data(nodes)
     .enter()
     .append('circle')
-    .attr('r', (d) => 5 + Math.log(d.referenceCount + 1) * 3)
+    .attr('r', (d) => 6 + Math.log(d.referenceCount + 1) * 3)
     .attr('fill', (d) => {
       if (d.communityId) {
         const hash = d.communityId
@@ -125,10 +139,11 @@ const renderGraph = (data: GraphSnapshot) => {
           .reduce((acc: number, c: string) => acc + c.charCodeAt(0), 0);
         return COLORS[hash % COLORS.length];
       }
-      return '#69b3a2';
+      return '#3b82f6';
     })
     .attr('stroke', '#fff')
-    .attr('stroke-width', 1.5)
+    .attr('stroke-width', 2)
+    .style('cursor', 'grab')
     .call(
       d3
         .drag<SVGCircleElement, GraphNode>()
@@ -148,17 +163,19 @@ const renderGraph = (data: GraphSnapshot) => {
         }),
     );
 
-  const label = svg
+  const label = mainContainer
     .append('g')
     .selectAll('text')
     .data(nodes)
     .enter()
     .append('text')
     .text((d) => d.name)
-    .attr('font-size', 10)
-    .attr('dx', 12)
+    .attr('font-size', 11)
+    .attr('dx', 14)
     .attr('dy', 4)
-    .attr('fill', '#333');
+    .attr('fill', '#1e293b')
+    .style('pointer-events', 'none')
+    .style('font-weight', '500');
 
   node.append('title').text((d) => `${d.name}\n${d.type}\n${d.description || ''}`);
 

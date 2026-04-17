@@ -99,11 +99,19 @@ async function main(): Promise<void> {
   const plan = resolveLauncherPlan(alias, argv);
 
   const child = spawn(plan.command, plan.args, {
-    stdio: 'inherit',
+    stdio: ['inherit', 'pipe', 'pipe'],
     env: {
       ...process.env,
       HOME: process.env.HOME ?? os.homedir(),
     },
+  });
+
+  child.stdout?.on('data', (data) => {
+    process.stdout.write(data);
+  });
+
+  child.stderr?.on('data', (data) => {
+    process.stderr.write(data);
   });
 
   child.on('exit', (code) => process.exit(code ?? 1));

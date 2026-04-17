@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, lt, lte, ne, or } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, lt, lte, or } from 'drizzle-orm';
 import { db } from '../../../db/index.js';
 import { topicTasks } from '../../../db/schema.js';
 import { CreateTaskInputSchema, type TopicTask, TopicTaskSchema, createTask } from '../domain/task';
@@ -7,9 +7,7 @@ import type { QueueRepository } from './repository';
 import { parseTaskPayload, toTaskRowFields } from './taskRow';
 
 const ACTIVE_STATUSES = ['pending', 'running', 'deferred'] as const;
-const RUNNABLE_STATUSES = ['pending', 'deferred'] as const;
 const activeStatuses = [...ACTIVE_STATUSES];
-const runnableStatuses = [...RUNNABLE_STATUSES];
 
 type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -98,9 +96,9 @@ export class PgJsonbQueueRepository implements QueueRepository {
         .select({ id: topicTasks.id, payload: topicTasks.payload })
         .from(topicTasks)
         .where(
-          and(
-            inArray(topicTasks.status, runnableStatuses),
-            or(ne(topicTasks.status, 'deferred'), lte(topicTasks.nextRunAt, now)),
+          or(
+            eq(topicTasks.status, 'pending'),
+            and(eq(topicTasks.status, 'deferred'), lte(topicTasks.nextRunAt, now)),
           ),
         )
         .orderBy(desc(topicTasks.priority), asc(topicTasks.createdAt))

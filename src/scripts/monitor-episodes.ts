@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { config } from '../config.js';
 import { db } from '../db/index.js';
 import { entities, relations, vibeMemories } from '../db/schema.js';
 import { consolidateEpisodes } from '../services/consolidation.js';
@@ -77,11 +78,12 @@ async function main() {
     const sessionId = `manual-reg-${Date.now()}`;
 
     // 1. Raw memory として登録
+    console.error(`Registering raw memory for manual entry. content length: ${content.length}`);
     const [raw] = await db
       .insert(vibeMemories)
       .values({
         content,
-        embedding: new Array(384).fill(0),
+        embedding: new Array(config.embeddingDimension).fill(0),
         memoryType: 'raw',
         sessionId,
         isSynthesized: false,
@@ -101,8 +103,10 @@ async function main() {
     const result = await consolidateEpisodes(sessionId, { minRawCount: 1 });
 
     if (result) {
+      console.error(`Consolidation successful: ${result.episodeId}`);
       console.log(JSON.stringify({ success: true, ...result }));
     } else {
+      console.error('Consolidation result was null (skipped).');
       console.log(
         JSON.stringify({
           success: false,

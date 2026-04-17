@@ -158,6 +158,7 @@ describe('consolidateEpisodes', () => {
       embedText: mockEmbed,
       minRawCount: 5,
       getGuidance: mock().mockResolvedValue('Mocked guidance'),
+      withLock: (_name, fn) => fn(),
     });
 
     expect(result).not.toBeNull();
@@ -191,6 +192,7 @@ describe('consolidateEpisodes', () => {
         database: db as never,
         spawnSync: mockSpawn,
         minRawCount: 5,
+        withLock: (_name, fn) => fn(),
       }),
     ).rejects.toThrow();
   });
