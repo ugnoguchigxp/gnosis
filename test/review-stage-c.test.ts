@@ -82,6 +82,7 @@ describe('review stage C', () => {
       recalledPatterns: [guidance[2]],
       optionalSkills: [],
       pastSimilarFindings: ['過去の類似指摘 (security) src/auth.ts: Missing token check'],
+      pastSuccessBenchmarks: ['過去の成功実装 (secure-auth) Implementation using standard JWT helper'],
       outputSchema: {},
     });
 
@@ -140,6 +141,7 @@ describe('review stage C', () => {
       getAlwaysOnGuidance: async () => [rows[0]],
       getOnDemandGuidance: async () => [rows[1]],
       database,
+      searchMemory: async () => [], // Add mock for retrieving benchmarks
     });
 
     expect(result.principles.map((item) => item.id)).toContain('guide-1');

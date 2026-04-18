@@ -96,13 +96,15 @@ type ProcedureTask = {
   description: string;
   confidence: number;
   order: number;
-  episodes: Array<{ id: string; story: string }>;
+  episodes: Array<{ id: string; story: string; isSuccess: boolean }>;
+  isGoldenPath: boolean;
 };
 
 type ProcedureConstraint = {
   id: string;
   name: string;
   description: string;
+  severity: 'warning' | 'info';
 };
 
 export type ProcedureResult = {
@@ -201,7 +203,7 @@ function matchesApplicabilityFilter(
 
 /**
  * goal テキストから関連する task / constraint / episode を取得し、
- * トポロジカルソートされた手続き記憶を返す。
+ * 成功確率（Confidence）に基づいて重み付けされた手続き記憶を返す。
  */
 export async function queryProcedure(
   goalText: string,
@@ -360,17 +362,21 @@ export async function queryProcedure(
       : [];
 
   // episode プロキシ → vibe_memories.story マッピング
-  const episodeStories = new Map<string, string>();
+  const episodeInfos = new Map<string, { story: string; isSuccess: boolean }>();
   for (const ep of episodeEntities) {
     const memoryId = (ep.metadata as Record<string, unknown>)?.memoryId as string | undefined;
     if (memoryId) {
       const [mem] = await database
-        .select({ content: vibeMemories.content })
+        .select({ content: vibeMemories.content, metadata: vibeMemories.metadata })
         .from(vibeMemories)
         .where(eq(vibeMemories.id, memoryId));
-      if (mem) episodeStories.set(ep.id, mem.content);
+      if (mem) {
+        // メタデータまたは内容から成否を判定
+        const isSuccess = (mem.metadata as any)?.succeeded === true || mem.content.includes('succeeded=true');
+        episodeInfos.set(ep.id, { story: mem.content, isSuccess });
+      }
     } else {
-      episodeStories.set(ep.id, ep.description ?? '');
+      episodeInfos.set(ep.id, { story: ep.description ?? '', isSuccess: true });
     }
   }
 
@@ -403,10 +409,14 @@ export async function queryProcedure(
     const taskEpisodeIds = episodeRelations
       .filter((r) => r.sourceId === te.id)
       .map((r) => r.targetId);
-    const episodes = taskEpisodeIds.map((epId) => ({
-      id: epId,
-      story: episodeStories.get(epId) ?? '',
-    }));
+    const episodes = taskEpisodeIds.map((epId) => {
+      const info = episodeInfos.get(epId);
+      return {
+        id: epId,
+        story: info?.story ?? '',
+        isSuccess: info?.isSuccess ?? true,
+      };
+    });
 
     return {
       id: te.id,
@@ -415,23 +425,27 @@ export async function queryProcedure(
       confidence: conf,
       order: orderMap.get(te.id) ?? 999,
       episodes,
+      isGoldenPath: conf >= 0.7,
     };
   });
 
-  // confidence < 0.3 を末尾に分離
-  const mainTasks = tasks.filter((t) => t.confidence >= 0.3).sort((a, b) => a.order - b.order);
-  const lowTasks = tasks.filter((t) => t.confidence < 0.3).map((t) => ({ ...t, order: 9999 }));
+  // Confidence スコアに基づく最終分類・ソート
+  const highConfidenceTasks = tasks.filter((t) => t.confidence >= 0.7).sort((a, b) => a.order - b.order);
+  const normalTasks = tasks.filter((t) => t.confidence >= 0.3 && t.confidence < 0.7).sort((a, b) => a.order - b.order);
+  const lowConfidenceTasks = tasks.filter((t) => t.confidence < 0.3).map((t) => ({ ...t, order: 9999 }));
 
   return {
     goal: { id: goalEntity.id, name: goalEntity.name, description: goalEntity.description ?? '' },
-    tasks: [...mainTasks, ...lowTasks],
+    tasks: [...highConfidenceTasks, ...normalTasks, ...lowConfidenceTasks],
     constraints: constraintEntities.map((ce) => ({
       id: ce.id,
       name: ce.name,
       description: ce.description ?? '',
+      severity: (ce.confidence ?? 1.0) < 0.3 ? 'warning' : 'info',
     })),
   };
 }
+
 
 // ---------------------------------------------------------------------------
 // recordOutcome (Phase 5)

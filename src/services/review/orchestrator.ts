@@ -526,12 +526,14 @@ function buildKnowledgeContext(
   patterns: GuidanceItem[],
   skills: GuidanceItem[],
   pastSimilarFindings: string[],
+  pastSuccessBenchmarks: string[],
 ): {
   recalledPrinciples: GuidanceItem[];
   recalledHeuristics: GuidanceItem[];
   recalledPatterns: GuidanceItem[];
   optionalSkills: GuidanceItem[];
   pastSimilarFindings: string[];
+  pastSuccessBenchmarks: string[];
 } {
   return {
     recalledPrinciples: principles,
@@ -539,6 +541,7 @@ function buildKnowledgeContext(
     recalledPatterns: patterns,
     optionalSkills: skills,
     pastSimilarFindings,
+    pastSuccessBenchmarks,
   };
 }
 
@@ -586,6 +589,7 @@ export async function runReviewStageC(
     heuristics: [] as GuidanceItem[],
     patterns: [] as GuidanceItem[],
     skills: [] as GuidanceItem[],
+    benchmarks: [] as string[],
   };
   let pastSimilarFindings: string[] = [];
 
@@ -626,6 +630,7 @@ export async function runReviewStageC(
         knowledge.patterns,
         knowledge.skills,
         pastSimilarFindings,
+        knowledge.benchmarks,
       ),
       outputSchema: {},
     },
@@ -728,9 +733,7 @@ You are a highly skilled software engineer and an expert code reviewer. Perform 
 
 ### Gnosis Memory & Procedural Knowledge
 You have access to Gnosis, a sophisticated memory system. Before reaching conclusions:
-1. Use 'query_procedure' to fetch project-specific instructions, constraints, and past episodes related to "Code Review" for this project (${req.repoPath
-    .split('/')
-    .pop()}).
+1. Use 'query_procedure' to fetch project-specific instructions, constraints, and past episodes. Pay special attention to "Golden Paths" (tasks with high confidence) and "Success Implementation" episodes.
 2. Use 'recall_lessons' if you encounter patterns that might have caused issues in the past.
 3. Use 'query_graph' to understand the relationships and dependencies of the components you are auditing.
 

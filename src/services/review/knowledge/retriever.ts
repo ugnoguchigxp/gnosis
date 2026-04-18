@@ -23,6 +23,7 @@ export interface GuidanceRetrievalResult {
   heuristics: GuidanceItem[];
   patterns: GuidanceItem[];
   skills: GuidanceItem[];
+  benchmarks: string[];
 }
 
 interface RetrievalScore {
@@ -173,6 +174,34 @@ function formatSimilarFinding(content: string, metadata: Record<string, unknown>
   return `過去の類似指摘 (${category}) ${prefix}${heading}${content.slice(0, 200)}`;
 }
 
+function formatSuccessBenchmark(content: string, metadata: Record<string, unknown>): string {
+  const title = typeof metadata.title === 'string' ? metadata.title : 'Success Path';
+  const filePath = typeof metadata.filePath === 'string' ? metadata.filePath : undefined;
+  const prefix = filePath ? `[${filePath}] ` : '';
+  return `過去の成功実装 (Golden Path) ${prefix}${title}: ${content.slice(0, 300)}`;
+}
+
+export async function retrieveSuccessBenchmarks(
+  projectKey: string,
+  riskSignals: string[],
+  language: string,
+  deps: { searchMemory?: typeof searchMemory } = {},
+): Promise<string[]> {
+  const searchMem = deps.searchMemory ?? searchMemory;
+  
+  // 成功したエピソードのみを検索
+  const results = await searchMem(
+    `code-review-${projectKey}`,
+    `${riskSignals.join(' ')} ${language} success implementation`.trim(),
+    3,
+    { succeeded: true },
+  ).catch(() => []);
+
+  return results.map((memory) =>
+    formatSuccessBenchmark(memory.content, (memory.metadata as Record<string, unknown>) ?? {}),
+  );
+}
+
 export async function retrieveGuidance(
   projectKey: string,
   riskSignals: string[],
@@ -188,9 +217,10 @@ export async function retrieveGuidance(
     .join(' ')
     .trim();
 
-  const [alwaysOn, onDemand] = await Promise.all([
+  const [alwaysOn, onDemand, benchmarks] = await Promise.all([
     getAlways().catch(() => []),
     getDemand(signalQuery).catch(() => []),
+    retrieveSuccessBenchmarks(projectKey, riskSignals, language, deps),
   ]);
 
   const allRows = [...alwaysOn, ...onDemand] as GuidanceRow[];
@@ -244,6 +274,7 @@ export async function retrieveGuidance(
     heuristics: filterAndSlice('heuristic', 5),
     patterns: filterAndSlice('pattern', 5),
     skills: filterAndSlice('skill', 3),
+    benchmarks,
   };
 }
 

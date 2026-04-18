@@ -330,4 +330,5 @@ export interface ReviewContextV3 extends ReviewContextV2 {
   recalledPatterns: GuidanceItem[];
   optionalSkills: GuidanceItem[];
   pastSimilarFindings: string[];
+  pastSuccessBenchmarks: string[];
 }

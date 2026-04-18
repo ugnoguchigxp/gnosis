@@ -194,7 +194,7 @@ export function buildReviewPromptV3(context: ReviewContextV3): string {
   const parts: string[] = [
     '# Code Review Instructions',
     '',
-    'あなたは経験豊富なコードレビュアーです。静的解析、影響範囲解析、過去の類似指摘、Guidance を優先順位通りに参照してください。',
+    'あなたは経験豊富なコードレビュアーです。静的解析、影響範囲解析、過去の成功実装（Golden Path）、Guidance を優先順位通りに参照してください。',
     '',
     '## プロジェクト情報',
     `- Language: ${context.projectInfo.language}`,
@@ -213,6 +213,14 @@ export function buildReviewPromptV3(context: ReviewContextV3): string {
       : '## 影響範囲解析\n\n（Astmend MCP 未利用）\n',
   );
 
+  if (context.pastSuccessBenchmarks.length > 0) {
+    parts.push('## 過去の成功実装 (Golden Path)');
+    parts.push('以下の過去の成功例をベンチマークとして参照し、今回の実装が整合しているか、またはより良いアプローチを選択しているかを確認してください。');
+    parts.push('');
+    parts.push(...context.pastSuccessBenchmarks.map((entry) => `- ${entry}`));
+    parts.push('');
+  }
+
   parts.push(buildGuidanceSection('適用すべき原則 (Principles)', context.recalledPrinciples));
   parts.push(buildGuidanceSection('経験則 (Heuristics)', context.recalledHeuristics));
   parts.push(buildGuidanceSection('再発パターン (Patterns)', context.recalledPatterns));
@@ -222,7 +230,8 @@ export function buildReviewPromptV3(context: ReviewContextV3): string {
   }
 
   if (context.pastSimilarFindings.length > 0) {
-    parts.push('## 過去の類似指摘');
+    parts.push('## 過去の類似指摘 (Failure Cases)');
+    parts.push('過去に問題となった以下のケースを回避できているか確認してください。');
     parts.push('');
     parts.push(...context.pastSimilarFindings.map((entry) => `- ${entry}`));
     parts.push('');
@@ -238,13 +247,14 @@ export function buildReviewPromptV3(context: ReviewContextV3): string {
   parts.push('## レビュー優先順位');
   parts.push('');
   parts.push('1. 静的解析結果を最重視する（linter/type checker の指摘は必ず言及）');
-  parts.push('2. Guidance の内容は diff と突き合わせて根拠ベースで適用する');
-  parts.push('3. 過去の類似指摘は再発防止の観点で参照する');
-  parts.push('4. 影響範囲解析で外部参照が指摘されたシンボルは追従漏れを重点チェック');
-  parts.push('5. 事実ベースで差分を見る（推測・仮定を避ける）');
-  parts.push('6. 根拠がある指摘だけ返す（diff 本文を引用すること）');
-  parts.push('7. 新行番号 line_new が必須（削除行のみへの指摘は不可）');
-  parts.push('8. 不確実なものは severity: "info" に下げる');
+  parts.push('2. 過去の成功実装（Golden Path）をベンチマークとし、ベストプラクティスに従っているか評価する');
+  parts.push('3. Guidance の内容は diff と突き合わせて根拠ベースで適用する');
+  parts.push('4. 過去の類似指摘（失敗例）は再発防止の観点で参照する');
+  parts.push('5. 影響範囲解析で外部参照が指摘されたシンボルは追従漏れを重点チェック');
+  parts.push('6. 事実ベースで差分を見る（推測・仮定を避ける）');
+  parts.push('7. 根拠がある指摘だけ返す（diff 本文を引用すること）');
+  parts.push('8. 新行番号 line_new が必須（削除行のみへの指摘は不可）');
+  parts.push('9. 不確実なものは severity: "info" に下げる');
   parts.push('');
   parts.push('## Git Diff');
   parts.push('');
