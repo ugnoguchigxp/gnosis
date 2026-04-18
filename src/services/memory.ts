@@ -108,6 +108,8 @@ const parseEmbeddingVector = (output: string): number[] => {
   return vector;
 };
 
+import { withGlobalSemaphore } from '../utils/lock.js';
+
 /**
  * テキストからベクトルを生成します
  * ユーザー環境の埋め込みコマンドを利用します
@@ -120,8 +122,11 @@ export async function generateEmbedding(
 
   for (let i = 0; i < retries; i++) {
     try {
-      const { stdout } = await runEmbedCommand(config.embedCommand, text, config.embedTimeoutMs);
-      return parseEmbeddingVector(stdout);
+      // システム全体の重い処理（LLM/Embedding）の並行実行を2つに制限
+      return await withGlobalSemaphore('heavy-model', 2, async () => {
+        const { stdout } = await runEmbedCommand(config.embedCommand, text, config.embedTimeoutMs);
+        return parseEmbeddingVector(stdout);
+      });
     } catch (error) {
       lastError = error;
       if (i === retries - 1) {

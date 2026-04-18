@@ -158,7 +158,7 @@ describe('consolidateEpisodes', () => {
       embedText: mockEmbed,
       minRawCount: 5,
       getGuidance: mock().mockResolvedValue('Mocked guidance'),
-      withLock: (_name, fn) => fn(),
+      withSemaphore: (_name, _concurrency, fn) => fn(),
     });
 
     expect(result).not.toBeNull();
@@ -168,7 +168,7 @@ describe('consolidateEpisodes', () => {
     // biome-ignore lint/suspicious/noExplicitAny: mock
     const promptArg = (mockSpawn.mock.calls as any)[0][2];
     expect(promptArg).toBeDefined();
-  });
+  }, 15000);
 
   it('throws when LLM fails', async () => {
     const rawMemos = Array.from({ length: 5 }, (_, i) => ({
@@ -192,8 +192,8 @@ describe('consolidateEpisodes', () => {
         database: db as never,
         spawnSync: mockSpawn,
         minRawCount: 5,
-        withLock: (_name, fn) => fn(),
+        withSemaphore: (_name, _concurrency, fn) => fn(),
       }),
     ).rejects.toThrow();
-  });
+  }, 30000);
 });

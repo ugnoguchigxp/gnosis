@@ -4,7 +4,7 @@ import {
 } from 'node:child_process';
 import { z } from 'zod';
 import { config } from '../config.js';
-import { withGlobalLock } from '../utils/lock.js';
+import { withGlobalLock, withGlobalSemaphore } from '../utils/lock.js';
 
 import {
   DistilledKnowledgeSchema,
@@ -65,7 +65,7 @@ export async function extractEntitiesFromText(
 `.trim();
 
   try {
-    const result = await lockFn('local-llm', async () =>
+    const result = await withGlobalSemaphore('heavy-model', 2, async () =>
       spawnSync(llmScript, ['--output', 'text', '--prompt', prompt], {
         encoding: 'utf-8',
         env: { ...process.env },
@@ -131,7 +131,7 @@ ${context}
 `.trim();
 
   try {
-    const result = await lockFn('local-llm', async () =>
+    const result = await withGlobalSemaphore('heavy-model', 2, async () =>
       spawnSync(llmScript, ['--output', 'text', '--max-tokens', '512', '--prompt', prompt], {
         encoding: 'utf-8',
         env: { ...process.env },
@@ -227,7 +227,7 @@ ${transcript}
             : config.llm.defaultTimeoutMs * 2,
         maxTokens: 1500,
       },
-      { spawnSync, withLock: lockFn },
+      { spawnSync, withLock: (name, fn) => withGlobalSemaphore('heavy-model', 2, fn) },
     );
     output = routed.output;
   } catch (error) {
@@ -296,7 +296,7 @@ export async function judgeAndMergeEntities(
 `.trim();
 
   try {
-    const result = await lockFn('local-llm', async () =>
+    const result = await withGlobalSemaphore('heavy-model', 2, async () =>
       spawnSync(llmScript, ['--output', 'text', '--max-tokens', '800', '--prompt', prompt], {
         encoding: 'utf-8',
         env: { ...process.env },

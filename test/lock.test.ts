@@ -6,6 +6,7 @@ const mockOpenSync = mock();
 const mockCloseSync = mock();
 const mockUnlinkSync = mock();
 const mockExistsSync = mock(() => true);
+const mockStatSync = mock(() => ({ mtimeMs: Date.now() }));
 
 // node:fs をモック
 mock.module('node:fs', () => ({
@@ -13,9 +14,10 @@ mock.module('node:fs', () => ({
   closeSync: mockCloseSync,
   unlinkSync: mockUnlinkSync,
   existsSync: mockExistsSync,
+  statSync: mockStatSync,
 }));
 
-// 待機時間をゼロにする
+// 待機時間をゼロにするために setTimeout だけモック（プロミス版）
 mock.module('node:timers/promises', () => ({
   setTimeout: async () => {},
 }));

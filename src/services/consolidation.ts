@@ -30,6 +30,7 @@ export type ConsolidateEpisodesDeps = {
   llmScript?: string;
   llmTimeoutMs?: number;
   withLock?: <T>(name: string, fn: () => Promise<T>) => Promise<T>;
+  withSemaphore?: <T>(name: string, concurrency: number, fn: () => Promise<T>) => Promise<T>;
   embedText?: (text: string) => Promise<number[]>;
   minRawCount?: number;
   sourceTask?: string;
@@ -196,7 +197,11 @@ ${experiencesText}
             ? llmTimeoutMs
             : config.llm.defaultTimeoutMs,
       },
-      { spawnSync, withLock: lockFn },
+      {
+        spawnSync,
+        withLock: lockFn,
+        withSemaphore: deps.withSemaphore,
+      },
     );
     const output = routed.output;
     const jsonMatch = output?.match(/\{[\s\S]*\}/);

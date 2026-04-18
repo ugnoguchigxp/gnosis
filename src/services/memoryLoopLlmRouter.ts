@@ -4,7 +4,7 @@ import {
 } from 'node:child_process';
 import path from 'node:path';
 import { config } from '../config.js';
-import { withGlobalLock } from '../utils/lock.js';
+import { withGlobalLock, withGlobalSemaphore } from '../utils/lock.js';
 
 export type MemoryLoopAlias = 'gemma4' | 'bonsai' | 'openai' | 'bedrock';
 export type MemoryLoopTaskKind =
@@ -56,6 +56,7 @@ export type RunPromptOptions = {
 export type RunPromptDeps = {
   spawnSync?: SpawnSyncFn;
   withLock?: <T>(name: string, fn: () => Promise<T>) => Promise<T>;
+  withSemaphore?: <T>(name: string, concurrency: number, fn: () => Promise<T>) => Promise<T>;
 };
 
 const defaultSpawnSync: SpawnSyncFn = (command, args, options) =>
@@ -224,13 +225,16 @@ export async function runPromptWithMemoryLoopRouter(
       cloudEnabledForAttempt: false,
       reason: 'explicit-llm-script-override',
     };
-    const result = await lockFn('local-llm', async () =>
-      spawnSync(fixedRoute.script, buildPromptArgs(options.prompt, options.maxTokens), {
-        encoding: 'utf-8',
-        env: buildMemoryLoopSpawnEnv(fixedRoute.alias),
-        timeout: timeoutMs,
-      }),
-    );
+    const withSemaphore = deps.withSemaphore ?? withGlobalSemaphore;
+    const result = await withSemaphore('system-llm-pool', 3, async () => {
+      return await withSemaphore('heavy-model', 2, async () =>
+        spawnSync(fixedRoute.script, buildPromptArgs(options.prompt, options.maxTokens), {
+          encoding: 'utf-8',
+          env: buildMemoryLoopSpawnEnv(fixedRoute.alias),
+          timeout: timeoutMs,
+        }),
+      );
+    });
     if (result.error || result.status !== 0) {
       throw new Error(
         `LLM route failed alias=${fixedRoute.alias} reason=${fixedRoute.reason} status=${
@@ -255,13 +259,16 @@ export async function runPromptWithMemoryLoopRouter(
       qualityScore: options.qualityScore,
     });
 
-    const result = await lockFn('local-llm', async () =>
-      spawnSync(route.script, buildPromptArgs(options.prompt, options.maxTokens), {
-        encoding: 'utf-8',
-        env: buildMemoryLoopSpawnEnv(route.alias),
-        timeout: timeoutMs,
-      }),
-    );
+    const withSemaphore = deps.withSemaphore ?? withGlobalSemaphore;
+    const result = await withSemaphore('system-llm-pool', 3, async () => {
+      return await withSemaphore('heavy-model', 2, async () =>
+        spawnSync(route.script, buildPromptArgs(options.prompt, options.maxTokens), {
+          encoding: 'utf-8',
+          env: buildMemoryLoopSpawnEnv(route.alias),
+          timeout: timeoutMs,
+        }),
+      );
+    });
 
     if (!result.error && result.status === 0) {
       console.info(

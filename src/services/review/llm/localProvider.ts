@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { config } from '../../../config.js';
 import { type LocalLlmAlias, resolveLauncherPlan } from '../../../scripts/local-llm-cli.js';
+import { withGlobalSemaphore } from '../../../utils/lock.js';
 import { REVIEW_LIMITS, ReviewError } from '../errors.js';
 import type { ReviewLLMService } from './types.js';
 
@@ -158,12 +159,8 @@ export function createLocalReviewLLMService(options: LocalProviderOptions = {}):
         args: sanitizeArgs(plan.args),
       });
 
-      const result = await spawnCommand(
-        plan.command,
-        plan.args,
-        timeoutMs,
-        spawnEnv,
-        (childPid) => {
+      const result = await withGlobalSemaphore('system-llm-pool', 3, async () => {
+        return await spawnCommand(plan.command, plan.args, timeoutMs, spawnEnv, (childPid) => {
           pid = childPid;
           emitReviewDebugLog({
             event: 'local_provider_spawned',
@@ -172,8 +169,8 @@ export function createLocalReviewLLMService(options: LocalProviderOptions = {}):
             alias,
             pid,
           });
-        },
-      );
+        });
+      });
 
       const durationMs = Date.now() - startedAt;
       emitReviewDebugLog({
