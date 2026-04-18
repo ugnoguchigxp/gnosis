@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, mock } from 'bun:test';
 import { checkLlmHealth } from './healthCheck.js';
 
 describe('healthCheck', () => {
+  const originalFetch = global.fetch;
   const llmConfig = {
     apiBaseUrl: 'http://localhost:1234',
     apiPath: '/v1/chat',
@@ -28,10 +29,10 @@ describe('healthCheck', () => {
 
   afterEach(() => {
     mock.restore();
+    global.fetch = originalFetch;
   });
 
   it('should return ok: true if API is reachable', async () => {
-    const globalFetch = global.fetch;
     (global.fetch as unknown as () => Promise<unknown>) = mock().mockResolvedValue({ ok: true });
 
     const result = await checkLlmHealth(llmConfig, undefined, { exec: mockExec(false) });
@@ -39,8 +40,6 @@ describe('healthCheck', () => {
     expect(result.ok).toBe(true);
     expect(result.details.api?.ok).toBe(true);
     expect(result.details.cli?.ok).toBe(true);
-
-    global.fetch = globalFetch;
   });
 
   it('should return ok: false if both API and CLI fail', async () => {

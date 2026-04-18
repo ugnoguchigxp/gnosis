@@ -26,6 +26,8 @@ describe('worker loop', () => {
     clearStaleTasks: mock(),
   });
 
+  const noSleep = async () => {};
+
   it('runWorkerOnce should handle successful task', async () => {
     const repo = mockRepo();
     repo.dequeueAndLock = mock().mockResolvedValue(mockTask);
@@ -47,19 +49,29 @@ describe('worker loop', () => {
     repo.dequeueAndLock = mock().mockResolvedValue(mockTask);
     repo.applyFailureAction = mock().mockResolvedValue({ ...mockTask, status: 'deferred' });
 
-    // Handler that takes too long
-    const handler = async (task: TopicTask, signal?: AbortSignal) => {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      return { ok: true as const };
-    };
+    let capturedSignal: AbortSignal | undefined;
+    const handler = mock(async (_task: TopicTask, signal?: AbortSignal) => {
+      capturedSignal = signal;
+      return await new Promise<{ ok: true }>(() => {});
+    });
 
-    const result = await runWorkerOnce(repo, handler, { taskTimeoutMs: 10 });
+    const result = await runWorkerOnce(repo, handler, {
+      taskTimeoutMs: 10,
+      createTaskTimeout: (timeoutMs, abortController) => ({
+        promise: Promise.resolve().then(() => {
+          abortController.abort();
+          return { ok: false as const, error: `Task execution timed out after ${timeoutMs}ms` };
+        }),
+        cancel: () => {},
+      }),
+    });
 
     expect(result.processed).toBe(true);
     if (result.processed) {
       expect(result.status).toBe('deferred');
       expect(result.error).toContain('timed out');
     }
+    expect(capturedSignal?.aborted).toBe(true);
     expect(repo.applyFailureAction).toHaveBeenCalled();
   });
 
@@ -78,6 +90,7 @@ describe('worker loop', () => {
       intervalMs: 1,
       postTaskDelayMs: 1,
       logger,
+      sleep: noSleep,
     });
 
     // Check if circuit breaker event was logged
@@ -150,6 +163,7 @@ describe('worker loop', () => {
       intervalMs: 1,
       postTaskDelayMs: 1,
       logger,
+      sleep: noSleep,
     });
 
     const circuitBreakEvent = (logger.mock.calls as { event: string }[][]).find(
@@ -170,6 +184,7 @@ describe('worker loop', () => {
       intervalMs: 1,
       postTaskDelayMs: 1,
       logger,
+      sleep: noSleep,
     });
 
     const criticalEvents = (logger.mock.calls as { event: string }[][]).filter(
@@ -188,6 +203,7 @@ describe('worker loop', () => {
       intervalMs: 1,
       postTaskDelayMs: 1,
       logger,
+      sleep: noSleep,
     });
 
     const emptyEvents = (logger.mock.calls as { event: string }[][]).filter(

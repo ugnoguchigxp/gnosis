@@ -101,13 +101,19 @@ docker-compose up -d     # DB 起動
 bun run db:init          # DB 初期化・マイグレーション
 
 # 品質検証 & 実行
-bun run verify           # Lint/Typecheck/Test(逐次)/Smoke 一括検証
+bun run verify:fast      # 変更中の高速検証
+bun run verify           # 標準のローカル品質検証
+bun run verify:strict    # flaky-check / integration を含む厳格検証
 bun run start            # サーバー起動
 ```
 
 ### 便利コマンド
 - `bun run maintenance`: 異常終了したバックグラウンドタスクのクリーンアップなど。
-- `bun run verify`: コミット前の品質チェックに必須。全テストがパスすることを確認。
+- `bun run verify:fast`: format/lint/typecheck/failure-path の高速検証。
+- `bun run verify`: 標準のローカル品質チェック。
+- `bun run verify:strict`: flaky-check と integration を含む厳格なローカル検証。
+- `bun run test:failure-path`: timeout / retry / degraded path を重点確認。
+- `bun run test:integration:local`: ローカル PostgreSQL 接続時のみ統合テストを実行。
 
 ---
 
@@ -115,6 +121,7 @@ bun run start            # サーバー起動
 
 より詳細な情報は、`docs/` ディレクトリ配下のドキュメントを参照してください。
 
+- [エージェント活用ガイド (必読)](AGENT.md)
 - [アーキテクチャ詳細](docs/architecture.md)
 - [データレイヤー・アーキテクチャ](docs/data-layers.md)
 - [記憶リファクタリング計画](docs/memory-refactoring.md)

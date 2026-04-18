@@ -29,6 +29,14 @@ export type WorkerOptions = {
   taskTimeoutMs?: number;
   now?: () => number;
   logger?: StructuredLogger;
+  sleep?: (ms: number) => Promise<void>;
+  createTaskTimeout?: (
+    timeoutMs: number,
+    abortController: AbortController,
+  ) => {
+    promise: Promise<TaskExecutionResult>;
+    cancel: () => void;
+  };
 };
 
 export type RunOnceResult =
@@ -46,6 +54,30 @@ export const defaultTaskHandler: TaskHandler = async (task) => ({
   ok: true,
   summary: `Processed topic=${task.topic}`,
 });
+
+function createTaskTimeout(
+  timeoutMs: number,
+  abortController: AbortController,
+): {
+  promise: Promise<TaskExecutionResult>;
+  cancel: () => void;
+} {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  return {
+    promise: new Promise<TaskExecutionResult>((resolve) => {
+      timeoutId = setTimeout(() => {
+        abortController.abort();
+        resolve({ ok: false, error: `Task execution timed out after ${timeoutMs}ms` });
+      }, timeoutMs);
+    }),
+    cancel: () => {
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+        timeoutId = undefined;
+      }
+    },
+  };
+}
 
 export const runWorkerOnce = async (
   repository: QueueRepository,
@@ -78,14 +110,10 @@ export const runWorkerOnce = async (
 
   const abortController = new AbortController();
   const timeoutMs = options.taskTimeoutMs ?? config.knowflow.worker.taskTimeoutMs;
-
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  const timeoutPromise = new Promise<TaskExecutionResult>((resolve) => {
-    timeoutId = setTimeout(() => {
-      abortController.abort();
-      resolve({ ok: false, error: `Task execution timed out after ${timeoutMs}ms` });
-    }, timeoutMs);
-  });
+  const timeoutController = (options.createTaskTimeout ?? createTaskTimeout)(
+    timeoutMs,
+    abortController,
+  );
 
   const handleResult = async (result: TaskExecutionResult) => {
     const currentNow = options.now?.() ?? Date.now();
@@ -130,14 +158,18 @@ export const runWorkerOnce = async (
   };
 
   try {
-    const result = await Promise.race([handler(task, abortController.signal), timeoutPromise]);
-    clearTimeout(timeoutId);
+    const result = await Promise.race([
+      handler(task, abortController.signal),
+      timeoutController.promise,
+    ]);
+    timeoutController.cancel();
     return await handleResult(result);
   } catch (error) {
     const message = error instanceof Error ? `${error.message}\n${error.stack}` : String(error);
 
     return await handleResult({ ok: false, error: message });
   } finally {
+    timeoutController.cancel();
     abortController.abort();
   }
 };
@@ -163,6 +195,7 @@ export const runWorkerLoop = async (
     options.maxConsecutiveErrors ?? config.knowflow.worker.maxConsecutiveErrors;
   const logger = options.logger ?? defaultStructuredLogger;
   const runOnceWrapper = options.runOnceWrapper ?? ((fn) => fn());
+  const sleepFn = options.sleep ?? sleep;
 
   let iteration = 0;
   let consecutiveErrors = 0;
@@ -174,12 +207,12 @@ export const runWorkerLoop = async (
       const result = await runOnceWrapper(() => runWorkerOnce(repository, handler, options));
 
       if (!result.processed) {
-        await sleep(intervalMs);
+        await sleepFn(intervalMs);
         continue;
       }
 
       // タスク処理後のクールダウン (負荷集中回避)
-      await sleep(postTaskDelayMs);
+      await sleepFn(postTaskDelayMs);
 
       if (result.status === 'done') {
         consecutiveErrors = 0;
@@ -192,7 +225,7 @@ export const runWorkerLoop = async (
             message: `Circuit breaker triggered after ${consecutiveErrors} consecutive errors. Sleeping longer.`,
             level: 'error',
           });
-          await sleep(intervalMs * CIRCUIT_BREAKER_BACKOFF_MULTIPLIER);
+          await sleepFn(intervalMs * CIRCUIT_BREAKER_BACKOFF_MULTIPLIER);
           consecutiveErrors = 0;
         }
       }
@@ -203,7 +236,7 @@ export const runWorkerLoop = async (
         message: msg,
         level: 'error',
       });
-      await sleep(intervalMs * CRITICAL_ERROR_BACKOFF_MULTIPLIER);
+      await sleepFn(intervalMs * CRITICAL_ERROR_BACKOFF_MULTIPLIER);
     }
   }
 };
