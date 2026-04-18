@@ -3,6 +3,7 @@ import { runLlmTask } from '../../adapters/llm.js';
 import type { LlmLogEvent } from '../../adapters/llm.js';
 import { createLocalLlmRetriever } from '../../adapters/retriever/mcpRetriever.js';
 import { type BudgetConfig, type LlmClientConfig, config } from '../../config.js';
+import { db as defaultDb } from '../../db/index.js';
 import { searchKnowledgeClaims } from '../knowledge.js';
 import { type TaskMode, type TaskSource, createTask } from './domain/task';
 import { runEvalSuite } from './eval/runner';
@@ -65,7 +66,7 @@ const createHandler = (options: {
     });
   }
 
-  const repository = new PgKnowledgeRepository();
+  const repository = new PgKnowledgeRepository({}, defaultDb);
   let evidenceProvider: EvidenceProvider | undefined;
   if (options.localLlmPath) {
     const retriever = createLocalLlmRetriever(resolve(options.localLlmPath));
@@ -161,7 +162,7 @@ const run = async () => {
     };
 
     // PostgreSQL (Drizzle) backend is fixed.
-    const buildQueueRepository = () => new PgJsonbQueueRepository();
+    const buildQueueRepository = () => new PgJsonbQueueRepository(defaultDb);
 
     if (command === 'enqueue') {
       const topic = readStringFlag(args, 'topic');
@@ -334,8 +335,8 @@ const run = async () => {
         throw new Error('--topic is required for get-knowledge');
       }
 
-      const repository = new PgKnowledgeRepository();
-      const result = await repository.getByTopic(topic);
+      const knowledgeRepository = new PgKnowledgeRepository({}, defaultDb);
+      const result = await knowledgeRepository.getByTopic(topic);
       writeResult({
         command,
         runId: runLogger.runId,
@@ -369,7 +370,7 @@ const run = async () => {
         return;
       }
 
-      const repository = new PgKnowledgeRepository();
+      const repository = new PgKnowledgeRepository({}, defaultDb);
       const result = await repository.merge(input);
       writeResult({
         command,

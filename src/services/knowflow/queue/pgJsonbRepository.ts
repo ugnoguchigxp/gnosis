@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, inArray, lt, lte, or } from 'drizzle-orm';
-import { db } from '../../../db/index.js';
+import { db as defaultDb } from '../../../db/index.js';
 import { topicTasks } from '../../../db/schema.js';
 import { CreateTaskInputSchema, type TopicTask, TopicTaskSchema, createTask } from '../domain/task';
 import { type FailureAction, isRunnable } from '../scheduler/policy';
@@ -9,14 +9,19 @@ import { parseTaskPayload, toTaskRowFields } from './taskRow';
 const ACTIVE_STATUSES = ['pending', 'running', 'deferred'] as const;
 const activeStatuses = [...ACTIVE_STATUSES];
 
-type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+type DbTransaction = Parameters<Parameters<typeof defaultDb.transaction>[0]>[0];
 
 export class PgJsonbQueueRepository implements QueueRepository {
+  private database: typeof defaultDb;
+
+  constructor(database: typeof defaultDb = defaultDb) {
+    this.database = database;
+  }
   async enqueue(input: unknown): Promise<{ task: TopicTask; deduped: boolean }> {
     const parsed = CreateTaskInputSchema.parse(input);
     const task = createTask(parsed);
 
-    return db.transaction(async (tx: DbTransaction) => {
+    return this.database.transaction(async (tx: DbTransaction) => {
       // 重複チェック
       const existing = await tx
         .select({ id: topicTasks.id, payload: topicTasks.payload })
@@ -80,7 +85,7 @@ export class PgJsonbQueueRepository implements QueueRepository {
   }
 
   async list(): Promise<TopicTask[]> {
-    const rows = await db
+    const rows = await this.database
       .select({ payload: topicTasks.payload })
       .from(topicTasks)
       .orderBy(asc(topicTasks.createdAt));
@@ -89,7 +94,7 @@ export class PgJsonbQueueRepository implements QueueRepository {
   }
 
   async dequeueAndLock(workerId: string, now = Date.now()): Promise<TopicTask | null> {
-    return db.transaction(async (tx: DbTransaction) => {
+    return this.database.transaction(async (tx: DbTransaction) => {
       // 候補を選択
       // NOTE: status = ANY(...) は drizzle で any(column, values)
       const candidateRows = await tx
@@ -195,7 +200,7 @@ export class PgJsonbQueueRepository implements QueueRepository {
       return 0;
     }
 
-    await db.transaction(async (tx: DbTransaction) => {
+    await this.database.transaction(async (tx: DbTransaction) => {
       for (const task of tasks) {
         const row = toTaskRowFields(task);
         await tx
@@ -232,7 +237,7 @@ export class PgJsonbQueueRepository implements QueueRepository {
   async clearStaleTasks(timeoutMs: number, now = Date.now()): Promise<number> {
     const staleThreshold = new Date(now - timeoutMs);
 
-    const staleTasks = await db
+    const staleTasks = await this.database
       .select({ id: topicTasks.id, payload: topicTasks.payload })
       .from(topicTasks)
       .where(and(eq(topicTasks.status, 'running'), lt(topicTasks.updatedAt, staleThreshold)));
@@ -242,7 +247,7 @@ export class PgJsonbQueueRepository implements QueueRepository {
     }
 
     let clearedCount = 0;
-    await db.transaction(async (tx) => {
+    await this.database.transaction(async (tx) => {
       for (const row of staleTasks) {
         const task = parseTaskPayload(row.payload);
         const updated = TopicTaskSchema.parse({
@@ -277,7 +282,7 @@ export class PgJsonbQueueRepository implements QueueRepository {
     now: number,
     updater: (task: TopicTask) => TopicTask,
   ): Promise<TopicTask> {
-    return db.transaction(async (tx: DbTransaction) => {
+    return this.database.transaction(async (tx) => {
       const rows = await tx
         .select({ id: topicTasks.id, payload: topicTasks.payload })
         .from(topicTasks)

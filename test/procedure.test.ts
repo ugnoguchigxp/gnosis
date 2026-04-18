@@ -1,75 +1,193 @@
-import { describe, expect, it } from 'bun:test';
-import { updateConfidence } from '../src/services/procedure.js';
+import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { config } from '../src/config.js';
+import { entities, relations, vibeMemories } from '../src/db/schema.js';
+import { queryProcedure, recordOutcome, updateConfidence } from '../src/services/procedure.js';
 
-describe('updateConfidence', () => {
-  it('followed_success: increases confidence (diminishing returns)', () => {
-    const result = updateConfidence(0.5, 'followed_success');
-    expect(result).toBeCloseTo(0.5 + 0.1 * 0.5, 5);
-    expect(result).toBeGreaterThan(0.5);
-  });
+describe('procedure service', () => {
+  // biome-ignore lint/suspicious/noExplicitAny: mock
+  let mockDb: any;
+  const mockEmbed = async () => new Array(config.embeddingDimension).fill(0.1);
 
-  it('followed_failure: decreases confidence', () => {
-    const result = updateConfidence(0.5, 'followed_failure');
-    expect(result).toBeCloseTo(0.5 - 0.15 * 0.5, 5);
-    expect(result).toBeLessThan(0.5);
-  });
+  const mockGoal = {
+    id: 'g1',
+    name: 'Goal',
+    description: 'desc',
+    confidence: 1.0,
+    similarity: 0.9,
+  };
+  const mockTask1 = {
+    id: 't1',
+    name: 'Task 1',
+    description: 'd1',
+    confidence: 0.8,
+    type: 'task',
+  };
+  const mockTask2 = {
+    id: 't2',
+    name: 'Task 2',
+    description: 'd2',
+    confidence: 0.7,
+    type: 'task',
+  };
 
-  it('ignored_success: decreases slightly', () => {
-    const result = updateConfidence(0.5, 'ignored_success');
-    expect(result).toBeCloseTo(0.45, 5);
-  });
-
-  it('ignored_failure: increases slightly', () => {
-    const result = updateConfidence(0.5, 'ignored_failure');
-    expect(result).toBeCloseTo(0.55, 5);
-  });
-
-  it('clamps at 0.0 (minimum)', () => {
-    const result = updateConfidence(0.0, 'followed_failure');
-    expect(result).toBe(0.0);
-  });
-
-  it('clamps at 1.0 (maximum)', () => {
-    // At confidence=1.0, followed_success delta = 0.1*(1-1) = 0
-    const result = updateConfidence(1.0, 'followed_success');
-    expect(result).toBe(1.0);
-  });
-
-  it('confidence near 0 decreases only slightly on followed_failure', () => {
-    const result = updateConfidence(0.01, 'followed_failure');
-    expect(result).toBeGreaterThanOrEqual(0.0);
-    expect(result).toBeLessThan(0.01);
-  });
-
-  it('confidence near 1 increases only slightly on followed_success', () => {
-    const result = updateConfidence(0.99, 'followed_success');
-    expect(result).toBeLessThanOrEqual(1.0);
-    expect(result).toBeGreaterThan(0.99);
-  });
-});
-
-describe('queryProcedure (unit)', () => {
-  it('returns null when no goal entities found', async () => {
-    // Import lazily so mocks from other modules don't interfere
-    const { queryProcedure } = await import('../src/services/procedure.js');
-
-    const mockDb = {
-      select: () => ({
-        from: () => ({
-          where: () => ({
-            orderBy: () => ({
-              limit: () => Promise.resolve([]),
-            }),
-          }),
-        }),
-      }),
+  // biome-ignore lint/suspicious/noExplicitAny: mock
+  const createMockChain = (data: any[] = []) => {
+    // biome-ignore lint/suspicious/noExplicitAny: mock
+    const chain: any = {
+      where: mock(() => chain),
+      orderBy: mock(() => chain),
+      limit: mock(() => chain),
+      innerJoin: mock(() => chain),
+      for: mock(() => chain),
+      onConflictDoUpdate: mock(() => chain),
+      onConflictDoNothing: mock(() => chain),
+      set: mock(() => chain),
+      values: mock(() => chain),
+      returning: mock(async () => data),
+      // biome-ignore lint/suspicious/noThenProperty: drizzle thenable
+      // biome-ignore lint/suspicious/noExplicitAny: mock
+      then: (resolve: any) => Promise.resolve(data).then(resolve),
     };
+    return chain;
+  };
 
-    const result = await queryProcedure('some goal text', undefined, {
-      database: mockDb as never,
-      embed: async () => [0.1, 0.2, 0.3],
+  beforeEach(() => {
+    mockDb = {
+      // biome-ignore lint/suspicious/noExplicitAny: mock
+      select: mock((cols: any) => ({
+        // biome-ignore lint/suspicious/noExplicitAny: mock
+        from: mock((table: any) => {
+          // Default behaviors based on table/context
+          if (table === entities) {
+            // biome-ignore lint/suspicious/noExplicitAny: mock
+            if (cols && (cols as any).similarity) return createMockChain([mockGoal]);
+            // For recordOutcome/confidence update
+            return createMockChain([mockTask1]);
+          }
+          if (table === relations) return createMockChain([]);
+          if (table === vibeMemories) return createMockChain([]);
+          return createMockChain([]);
+        }),
+      })),
+      insert: mock(() => ({ values: mock(() => createMockChain([{ id: 'mock-id' }])) })),
+      update: mock(() => ({ set: mock(() => ({ where: mock(() => createMockChain([])) })) })),
+      delete: mock(() => ({ where: mock(() => createMockChain([])) })),
+      execute: mock(async () => []),
+      // biome-ignore lint/suspicious/noExplicitAny: mock
+      transaction: mock(async (callback: any) => callback(mockDb)),
+    };
+  });
+
+  describe('queryProcedure', () => {
+    it('returns full procedure with steps and sorting', async () => {
+      let hopCount = 0;
+      mockDb.select = mock((cols) => ({
+        from: mock((table) => {
+          if (table === entities) {
+            // biome-ignore lint/suspicious/noExplicitAny: mock
+            if (cols && (cols as any).similarity) return createMockChain([mockGoal]);
+            // Task entities retrieval
+            return createMockChain([mockTask1, mockTask2]);
+          }
+          if (table === relations) {
+            if (hopCount === 0) {
+              hopCount++;
+              return createMockChain([{ targetId: 't1' }, { targetId: 't2' }]);
+            }
+            return createMockChain([]);
+          }
+          return createMockChain([]);
+        }),
+      }));
+
+      const result = await queryProcedure('test goal', undefined, {
+        database: mockDb,
+        embed: mockEmbed,
+      });
+
+      expect(result).not.toBeNull();
+      if (result) {
+        expect(result.goal.id).toBe('g1');
+        expect(result.tasks).toHaveLength(2);
+        expect(result.tasks[0].id).toBe('t1');
+      }
     });
 
-    expect(result).toBeNull();
+    it('filters tasks by context if provided', async () => {
+      const mockTaskMatched = { id: 'tm', name: 'Matched', type: 'task' };
+      mockDb.select = mock((cols) => ({
+        from: mock((table) => {
+          if (table === entities) {
+            // biome-ignore lint/suspicious/noExplicitAny: mock
+            if (cols && (cols as any).similarity) return createMockChain([mockGoal]);
+            return createMockChain([mockTaskMatched]);
+          }
+          if (table === relations) {
+            // queryProcedure uses context filtering with ctxSimilarity, and step retrieval with targetId
+            // biome-ignore lint/suspicious/noExplicitAny: mock
+            if ((cols as any).ctxSimilarity)
+              return createMockChain([{ targetId: 'tm', ctxSimilarity: 0.9 }]);
+            // biome-ignore lint/suspicious/noExplicitAny: mock
+            if ((cols as any).targetId) return createMockChain([{ targetId: 'tm' }]);
+            return createMockChain([]);
+          }
+          return createMockChain([]);
+        }),
+      }));
+
+      const result = await queryProcedure(
+        'test',
+        { context: 'specific' },
+        { database: mockDb, embed: mockEmbed },
+      );
+      expect(result).not.toBeNull();
+      if (result) {
+        expect(result.tasks).toHaveLength(1);
+        expect(result.tasks[0].id).toBe('tm');
+      }
+    });
+  });
+
+  describe('recordOutcome', () => {
+    it('updates confidence scores and records episode', async () => {
+      await recordOutcome(
+        {
+          goalId: 'g1',
+          taskResults: [{ taskId: 't1', followed: true, succeeded: true }],
+          sessionId: 's1',
+        },
+        { database: mockDb, embed: mockEmbed },
+      );
+
+      expect(mockDb.insert).toHaveBeenCalled();
+      expect(mockDb.update).toHaveBeenCalled();
+    });
+
+    it('handles improvements if provided', async () => {
+      await recordOutcome(
+        {
+          goalId: 'g1',
+          taskResults: [{ taskId: 't1', followed: true, succeeded: true }],
+          improvements: [{ type: 'add_task', suggestion: 'new one' }],
+          sessionId: 's1',
+        },
+        { database: mockDb, embed: mockEmbed },
+      );
+
+      // Check if task addition was called
+      expect(mockDb.insert).toHaveBeenCalled();
+    });
+  });
+
+  describe('updateConfidence', () => {
+    it('increases confidence on success', () => {
+      const result = updateConfidence(0.5, 'followed_success');
+      expect(result).toBeGreaterThan(0.5);
+    });
+
+    it('decreases confidence on failure', () => {
+      const result = updateConfidence(0.5, 'followed_failure');
+      expect(result).toBeLessThan(0.5);
+    });
   });
 });

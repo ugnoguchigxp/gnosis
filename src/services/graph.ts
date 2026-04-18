@@ -13,9 +13,9 @@ import { generateEmbedding } from './memory.js';
 /**
  * データベースの情報から graphology のグラフインスタンスを構築します。
  */
-export async function buildGraph() {
-  const allEntities = await db.select().from(entities);
-  const allRelations = await db.select().from(relations);
+export async function buildGraph(database: DbClient = db) {
+  const allEntities = await database.select().from(entities);
+  const allRelations = await database.select().from(relations);
 
   const graph = new Graph();
   for (const entity of allEntities) {
@@ -202,19 +202,25 @@ export async function saveRelations(rawInputs: RelationInput[], database: DbClie
  * 指定されたエンティティを中心とした、周辺のグラフ構造（知識コンテキスト）を取得します
  * 階層関係 (is_a, part_of) と、所属するコミュニティの要約を含めます。
  */
-export async function queryGraphContext(entityId: string, maxDepth = 2, maxNodes = 20) {
+export async function queryGraphContext(
+  entityId: string,
+  maxDepth = 2,
+  maxNodes = 20,
+  database: DbClient = db,
+) {
   const visited = new Set<string>();
   const queue: { id: string; depth: number }[] = [{ id: entityId, depth: 0 }];
   const resultEntities: (typeof entities.$inferSelect)[] = [];
   const resultRelations: (typeof relations.$inferSelect)[] = [];
   let communitySummary: (typeof communities.$inferSelect)[] = [];
+  const dbClient = database as typeof db; // casting for full functionality if needed
 
   // 起点エンティティの取得とコミュニティ情報の確認
-  const [startEntity] = await db.select().from(entities).where(eq(entities.id, entityId));
+  const [startEntity] = await dbClient.select().from(entities).where(eq(entities.id, entityId));
   if (!startEntity) return { entities: [], relations: [], communities: [] };
 
   if (startEntity.communityId) {
-    communitySummary = await db
+    communitySummary = await dbClient
       .select()
       .from(communities)
       .where(eq(communities.id, startEntity.communityId));
@@ -226,14 +232,20 @@ export async function queryGraphContext(entityId: string, maxDepth = 2, maxNodes
     visited.add(current.id);
 
     // エンティティ情報の取得
-    const [entity] = await db.select().from(entities).where(eq(entities.id, current.id));
+    const [entity] = await dbClient.select().from(entities).where(eq(entities.id, current.id));
     if (entity) resultEntities.push(entity);
 
     if (current.depth >= maxDepth) continue;
 
     // 隣接ノードとリレーションの取得
-    const outgoing = await db.select().from(relations).where(eq(relations.sourceId, current.id));
-    const incoming = await db.select().from(relations).where(eq(relations.targetId, current.id));
+    const outgoing = await dbClient
+      .select()
+      .from(relations)
+      .where(eq(relations.sourceId, current.id));
+    const incoming = await dbClient
+      .select()
+      .from(relations)
+      .where(eq(relations.targetId, current.id));
 
     for (const rel of [...outgoing, ...incoming]) {
       if (!resultRelations.find((r) => r.id === rel.id)) {
@@ -248,7 +260,7 @@ export async function queryGraphContext(entityId: string, maxDepth = 2, maxNodes
 
   if (resultEntities.length > 0) {
     const entityIds = resultEntities.map((e) => e.id);
-    await db
+    await dbClient
       .update(entities)
       .set({
         referenceCount: sql`${entities.referenceCount} + 1`,
@@ -421,12 +433,16 @@ export async function deleteRelation(
  * 2つのエンティティ間のつながり（最短経路）を探索します。
  * 入力が文字列の場合は、ベクトル検索で最適なエンティティを特定してから探索を開始します。
  */
-export async function findPathBetweenEntities(queryA: string, queryB: string) {
-  const idA = await findEntityById(queryA).then(
-    async (id) => id || (await searchEntityByQuery(queryA)),
+export async function findPathBetweenEntities(
+  queryA: string,
+  queryB: string,
+  database: DbClient = db,
+) {
+  const idA = await findEntityById(queryA, database).then(
+    async (id) => id || (await searchEntityByQuery(queryA, database)),
   );
-  const idB = await findEntityById(queryB).then(
-    async (id) => id || (await searchEntityByQuery(queryB)),
+  const idB = await findEntityById(queryB, database).then(
+    async (id) => id || (await searchEntityByQuery(queryB, database)),
   );
 
   if (!idA || !idB) {
@@ -434,11 +450,11 @@ export async function findPathBetweenEntities(queryA: string, queryB: string) {
   }
 
   if (idA === idB) {
-    const [e] = await db.select().from(entities).where(eq(entities.id, idA));
+    const [e] = await database.select().from(entities).where(eq(entities.id, idA));
     return { entities: [e], relations: [] };
   }
 
-  const graph = await buildGraph();
+  const graph = await buildGraph(database);
   const maxHops = config.maxPathHops;
 
   // BFS による最短経路探索
@@ -455,7 +471,7 @@ export async function findPathBetweenEntities(queryA: string, queryB: string) {
 
     if (current.id === idB) {
       // 経路上のエンティティ詳細を取得
-      const entitiesInPath = await db
+      const entitiesInPath = await database
         .select()
         .from(entities)
         .where(inArray(entities.id, current.path));

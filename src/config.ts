@@ -200,6 +200,7 @@ export const config = {
     enabled: envBoolean(process.env.GNOSIS_BACKGROUND_WORKER_ENABLED, true),
     intervalMs: envNumber(process.env.GNOSIS_BACKGROUND_WORKER_INTERVAL_MS, 300_000), // 5 min
     minRawCount: envNumber(process.env.GNOSIS_BACKGROUND_WORKER_MIN_RAW_COUNT, 5),
+    maxConcurrency: envNumber(process.env.GNOSIS_BACKGROUND_WORKER_MAX_CONCURRENCY, 1),
   },
 
   llmharness: {

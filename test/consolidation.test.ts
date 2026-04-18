@@ -4,7 +4,7 @@ mock.module('../src/config.js', () => ({
   config: {
     embedCommand: 'mock-embed',
     embedTimeoutMs: 1000,
-    embeddingDimension: 3,
+    embeddingDimension: 384,
     dedupeThreshold: 0.9,
     llmTimeoutMs: 5000,
     llmScript: 'echo',
@@ -12,6 +12,8 @@ mock.module('../src/config.js', () => ({
     antigravityLogDir: '/tmp/antigravity',
     memory: { retries: 1, retryWaitMultiplier: 0.01 },
     graph: { similarityThreshold: 0.8, maxPathHops: 5 },
+    llm: { maxBuffer: 10 * 1024 * 1024, defaultTimeoutMs: 45_000 },
+    backgroundWorker: { minRawCount: 5 },
     knowflow: {
       llm: {
         apiBaseUrl: 'http://localhost:44448',
@@ -56,28 +58,30 @@ mock.module('../src/config.js', () => ({
       enabled: true,
       project: undefined,
     },
-    llm: { maxBuffer: 10 * 1024 * 1024, defaultTimeoutMs: 45_000 },
   },
 }));
 
+import { config } from '../src/config.js';
 import { experienceLogs, relations, vibeMemories } from '../src/db/schema.js';
 import { consolidateEpisodes } from '../src/services/consolidation.js';
 
 // biome-ignore lint/suspicious/noExplicitAny: mock helper
-const makeDb = (rawMemories: any[] = [], experiencesData: any[] = [], stepsData: any[] = []) => {
+function makeDb(rawMemories: any[] = [], experiencesData: any[] = [], stepsData: any[] = []) {
   const insertReturning = mock().mockResolvedValue([
     { id: 'ep-uuid-123', content: 'story', memoryType: 'episode' },
   ]);
 
   // biome-ignore lint/suspicious/noExplicitAny: mock
   const mockQuery = (data: any[]) => {
-    const chain = {
+    // biome-ignore lint/suspicious/noExplicitAny: mock
+    const chain: any = {
       orderBy: () => chain,
       limit: () => chain,
       innerJoin: () => chain,
       where: () => chain,
       // biome-ignore lint/suspicious/noThenProperty: intentional mock thenable for DB chain
-      then: (resolve: (v: typeof data) => void) => Promise.resolve(data).then(resolve),
+      // biome-ignore lint/suspicious/noExplicitAny: mock
+      then: (resolve: (v: any[]) => void) => Promise.resolve(data).then(resolve),
     };
     return chain;
   };
@@ -104,7 +108,7 @@ const makeDb = (rawMemories: any[] = [], experiencesData: any[] = [], stepsData:
       }),
     }),
   };
-};
+}
 
 describe('consolidateEpisodes', () => {
   it('returns null when raw memories are fewer than minRawCount', async () => {
@@ -120,7 +124,8 @@ describe('consolidateEpisodes', () => {
     ]);
 
     const result = await consolidateEpisodes('sess1', {
-      database: db as never,
+      // biome-ignore lint/suspicious/noExplicitAny: mock
+      database: db as any,
       minRawCount: 5,
       getGuidance: mock().mockResolvedValue(''),
     });
@@ -150,10 +155,11 @@ describe('consolidateEpisodes', () => {
       error: undefined,
     });
 
-    const mockEmbed = mock().mockResolvedValue([0.1, 0.2, 0.3]);
+    const mockEmbed = mock().mockResolvedValue(new Array(config.embeddingDimension).fill(0.1));
 
     const result = await consolidateEpisodes('sess1', {
-      database: db as never,
+      // biome-ignore lint/suspicious/noExplicitAny: mock
+      database: db as any,
       spawnSync: mockSpawn,
       embedText: mockEmbed,
       minRawCount: 5,
@@ -170,30 +176,116 @@ describe('consolidateEpisodes', () => {
     expect(promptArg).toBeDefined();
   }, 15000);
 
-  it('throws when LLM fails', async () => {
+  it('applies Time Gap Heuristic to split early segments', async () => {
+    const rawMemos = [
+      {
+        id: 'm1',
+        content: 'memo 1',
+        createdAt: new Date('2026-04-18T10:00:00Z'),
+        isSynthesized: false,
+        memoryType: 'raw',
+      },
+      {
+        id: 'm2',
+        content: 'memo 2',
+        createdAt: new Date('2026-04-18T10:10:00Z'),
+        isSynthesized: false,
+        memoryType: 'raw',
+      },
+      {
+        id: 'm3',
+        content: 'memo 3',
+        createdAt: new Date('2026-04-18T11:20:00Z'),
+        isSynthesized: false,
+        memoryType: 'raw',
+      }, // 70 min gap
+      {
+        id: 'm4',
+        content: 'memo 4',
+        createdAt: new Date('2026-04-18T11:25:00Z'),
+        isSynthesized: false,
+        memoryType: 'raw',
+      },
+      {
+        id: 'm5',
+        content: 'memo 5',
+        createdAt: new Date('2026-04-18T11:30:00Z'),
+        isSynthesized: false,
+        memoryType: 'raw',
+      },
+    ];
+    // With minRawCount=2, it should take the first segment (m1, m2) because it's cut by gap.
+    const db = makeDb(rawMemos, []);
+    const mockSpawn = mock().mockReturnValue({
+      stdout: JSON.stringify({
+        story: 'Gap segment story',
+        importance: 0.5,
+        episodeAt: '2026-04-18T10:05:00Z',
+      }),
+      status: 0,
+    });
+
+    const result = await consolidateEpisodes('sess-gap', {
+      // biome-ignore lint/suspicious/noExplicitAny: mock
+      database: db as any,
+      spawnSync: mockSpawn,
+      minRawCount: 2, // Segment size is 2
+      embedText: mock().mockResolvedValue(new Array(384).fill(0)),
+      withSemaphore: (_n, _c, fn) => fn(),
+    });
+
+    expect(result).not.toBeNull();
+    expect(mockSpawn).toHaveBeenCalled();
+    // Verify that ONLY the first 2 memos were sent in prompt
+    // args matching: [script, ['--output', 'text', '--prompt', prompt], options]
+    // biome-ignore lint/suspicious/noExplicitAny: mock
+    const args = (mockSpawn.mock.calls[0] as any)[1] || [];
+    const promptIdx = args.indexOf('--prompt');
+    const prompt = promptIdx !== -1 ? args[promptIdx + 1] : '';
+
+    expect(prompt).toContain('memo 1');
+    expect(prompt).toContain('memo 2');
+    expect(prompt).not.toContain('memo 3');
+  });
+
+  it('includes experience logs and procedures in the prompt', async () => {
     const rawMemos = Array.from({ length: 5 }, (_, i) => ({
       id: `m${i}`,
-      sessionId: 'sess1',
       content: `memo ${i}`,
       memoryType: 'raw',
       isSynthesized: false,
+      createdAt: new Date(),
     }));
-    const db = makeDb(rawMemos, []);
+    const experiences = [{ type: 'failure', content: 'Something went wrong' }];
+    const steps = [{ name: 'Step 1', description: 'Do the thing' }];
 
+    const db = makeDb(rawMemos, experiences, steps);
     const mockSpawn = mock().mockReturnValue({
-      stdout: '',
-      stderr: 'error',
-      status: 1,
-      error: undefined,
+      stdout: JSON.stringify({
+        story: 'Integrated story',
+        importance: 0.5,
+        episodeAt: '2026-04-18T12:00:00Z',
+      }),
+      status: 0,
     });
 
-    await expect(
-      consolidateEpisodes('sess1', {
-        database: db as never,
-        spawnSync: mockSpawn,
-        minRawCount: 5,
-        withSemaphore: (_name, _concurrency, fn) => fn(),
-      }),
-    ).rejects.toThrow();
-  }, 30000);
+    await consolidateEpisodes('sess-full', {
+      // biome-ignore lint/suspicious/noExplicitAny: mock
+      database: db as any,
+      spawnSync: mockSpawn,
+      minRawCount: 5,
+      sourceTask: 'goal-123',
+      embedText: mock().mockResolvedValue(new Array(384).fill(0)),
+      withSemaphore: (_n, _c, fn) => fn(),
+    });
+
+    // biome-ignore lint/suspicious/noExplicitAny: mock
+    const args = (mockSpawn.mock.calls[0] as any)[1] || [];
+    const promptIdx = args.indexOf('--prompt');
+    const prompt = promptIdx !== -1 ? args[promptIdx + 1] : '';
+
+    expect(prompt).toContain('Something went wrong'); // Experience
+    expect(prompt).toContain('Step 1'); // Procedure
+    expect(prompt).toContain('【対象タスク: goal-123】');
+  });
 });

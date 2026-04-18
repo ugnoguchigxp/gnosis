@@ -1,4 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+
+mock.module('../../src/config.js', () => ({
+  config: {
+    knowflow: {
+      budget: { userBudget: 12, cronBudget: 6, cronRunBudget: 30 },
+      worker: {
+        maxQueriesPerTask: 3,
+        cronRunWindowMs: 3600000,
+      },
+    },
+  },
+}));
+
+import { config } from '../../src/config.js';
 import type { TopicTask } from '../../src/services/knowflow/domain/task.js';
 import {
   createKnowFlowTaskHandler,

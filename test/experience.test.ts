@@ -1,9 +1,10 @@
 import { describe, expect, it, mock } from 'bun:test';
+import { config } from '../src/config.js';
 import { recallExperienceLessons, saveExperience } from '../src/services/experience';
 
 // memory.js の generateEmbedding をモック
 mock.module('../src/services/memory.js', () => ({
-  generateEmbedding: async (text: string) => [0.1, 0.2, 0.3],
+  generateEmbedding: async (text: string) => new Array(config.embeddingDimension).fill(0.1),
 }));
 
 describe('experience service', () => {
@@ -39,7 +40,7 @@ describe('experience service', () => {
       // biome-ignore lint/suspicious/noExplicitAny: <explanation>
       const insertArgs = (mockValues.mock.calls as any)[0][0];
       expect(insertArgs.content).toBe('success');
-      expect(insertArgs.embedding).toEqual([0.1, 0.2, 0.3]);
+      expect(insertArgs.embedding).toEqual(new Array(config.embeddingDimension).fill(0.1));
       expect(insertArgs.metadata).toEqual({ foo: 'bar' });
     });
 

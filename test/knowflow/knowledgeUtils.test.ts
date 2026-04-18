@@ -1,4 +1,12 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, mock } from 'bun:test';
+
+mock.module('../../src/config.js', () => ({
+  config: {
+    embeddingDimension: 384,
+  },
+}));
+
+import { config } from '../../src/config.js';
 import {
   canonicalizeTopic,
   uniqueNormalizedStrings,
@@ -60,7 +68,13 @@ describe('knowledge utils', () => {
   });
 
   it('computes cosine similarity when vectors are valid', () => {
-    const score = cosineSimilarity([1, 0, 0], [0.9, 0.1, 0]);
+    const v1 = new Array(config.embeddingDimension).fill(0);
+    v1[0] = 1;
+    const v2 = new Array(config.embeddingDimension).fill(0);
+    v2[0] = 0.9;
+    v2[1] = 0.1;
+
+    const score = cosineSimilarity(v1, v2);
     expect(score).not.toBeNull();
     expect(score as number).toBeGreaterThan(0.9);
   });
@@ -68,8 +82,14 @@ describe('knowledge utils', () => {
   it('merges claims by embedding when texts differ', () => {
     expect(
       shouldMergeClaim(
-        { text: 'TypeScript Compiler API', embedding: [0.1, 0.2, 0.3] },
-        { text: 'TS AST access APIs', embedding: [0.11, 0.21, 0.29] },
+        {
+          text: 'TypeScript Compiler API',
+          embedding: new Array(config.embeddingDimension).fill(0.1),
+        },
+        {
+          text: 'TS AST access APIs',
+          embedding: new Array(config.embeddingDimension).fill(0.11),
+        },
       ),
     ).toBe(true);
   });

@@ -1,4 +1,28 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, mock } from 'bun:test';
+
+mock.module('../../src/config.js', () => ({
+  config: {
+    knowflow: {
+      llm: {
+        apiBaseUrl: 'http://localhost:8080/v1',
+        apiPath: 'chat/completions',
+        apiKeyEnv: 'LOCAL_LLM_API_KEY',
+        model: 'model',
+        temperature: 0.1,
+        maxRetries: 3,
+        retryDelayMs: 100,
+        timeoutMs: 5000,
+        enableCliFallback: true,
+        cliCommand: 'echo test',
+        cliPromptMode: 'arg',
+        cliPromptPlaceholder: '{{prompt}}',
+      },
+    },
+    llm: {
+      maxBuffer: 1024 * 1024,
+    },
+  },
+}));
 import { extractJsonCandidate, parseLlmTaskOutputText, runLlmTask } from '../../src/adapters/llm';
 
 const noopLogger = () => {

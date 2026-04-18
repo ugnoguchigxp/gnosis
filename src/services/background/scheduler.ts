@@ -31,12 +31,16 @@ interface TaskRow {
 export class UnifiedTaskScheduler {
   private db: Database;
 
-  constructor(dbPath = 'gnosis-tasks.sqlite') {
-    const dir = path.dirname(dbPath);
-    if (dir !== '.' && !existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
+  constructor(dbOrPath: Database | string = 'gnosis-tasks.sqlite') {
+    if (typeof dbOrPath === 'string') {
+      const dir = path.dirname(dbOrPath);
+      if (dir !== '.' && !existsSync(dir)) {
+        mkdirSync(dir, { recursive: true });
+      }
+      this.db = new Database(dbOrPath);
+    } else {
+      this.db = dbOrPath;
     }
-    this.db = new Database(dbPath);
     this.init();
   }
 
@@ -57,6 +61,8 @@ export class UnifiedTaskScheduler {
     this.db.run(
       'CREATE INDEX IF NOT EXISTS idx_tasks_status_next ON background_tasks(status, next_run_at)',
     );
+    // 高速化と並列性の向上のために WAL モードを有効化
+    this.db.run('PRAGMA journal_mode = WAL');
   }
 
   async enqueue(
@@ -90,6 +96,43 @@ export class UnifiedTaskScheduler {
 
     if (!row) return null;
 
+    return this.mapRowToTask(row);
+  }
+
+  /**
+   * アトミックにタスクを取得して 'running' 状態にします。
+   * 複数のワーカーが同時に動作している場合に、同一タスクの重複実行を防ぎます。
+   */
+  async dequeueTask(): Promise<BackgroundTask | null> {
+    const now = Date.now();
+    let task: BackgroundTask | null = null;
+
+    // トランザクション内で取得と更新を同時に行う
+    this.db.transaction(() => {
+      const row = this.db
+        .query(
+          `SELECT * FROM background_tasks 
+           WHERE (status = 'pending' OR (status = 'failed' AND next_run_at <= ?)) 
+           AND (next_run_at IS NULL OR next_run_at <= ?)
+           ORDER BY priority DESC, created_at ASC
+           LIMIT 1`,
+        )
+        .get(now, now) as TaskRow | undefined;
+
+      if (row) {
+        this.db.run('UPDATE background_tasks SET status = ?, last_run_at = ? WHERE id = ?', [
+          'running',
+          now,
+          row.id,
+        ]);
+        task = this.mapRowToTask(row);
+      }
+    })();
+
+    return task;
+  }
+
+  private mapRowToTask(row: TaskRow): BackgroundTask {
     return {
       id: row.id,
       type: row.type,
@@ -103,7 +146,12 @@ export class UnifiedTaskScheduler {
     };
   }
 
-  updateTaskStatus(id: string, status: TaskStatus, errorMessage: string | null = null) {
+  updateTaskStatus(
+    id: string,
+    status: TaskStatus,
+    errorMessage: string | null = null,
+    nextRunAt: number | null = null,
+  ) {
     const now = Date.now();
     if (status === 'running') {
       this.db.run('UPDATE background_tasks SET status = ?, last_run_at = ? WHERE id = ?', [
@@ -112,11 +160,11 @@ export class UnifiedTaskScheduler {
         id,
       ]);
     } else {
-      this.db.run('UPDATE background_tasks SET status = ?, error_message = ? WHERE id = ?', [
-        status,
-        errorMessage,
-        id,
-      ]);
+      // エラーメッセージが提供された場合、もしあればスタックトレースを含めるなど詳細化を検討可能
+      this.db.run(
+        'UPDATE background_tasks SET status = ?, error_message = ?, next_run_at = COALESCE(?, next_run_at) WHERE id = ?',
+        [status, errorMessage, nextRunAt, id],
+      );
     }
   }
 
@@ -157,6 +205,17 @@ export class UnifiedTaskScheduler {
       count: number;
     };
     return row.count;
+  }
+
+  optimize() {
+    console.error('[Maintenance] Cleaning up stale tasks in UnifiedTaskScheduler...');
+    this.cleanupStaleTasks();
+    // SQLite の最適化
+    this.db.run('ANALYZE;');
+  }
+
+  close() {
+    this.db.close();
   }
 }
 

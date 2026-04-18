@@ -87,12 +87,11 @@ export const runWorkerOnce = async (
     }, timeoutMs);
   });
 
-  try {
-    const result = await Promise.race([handler(task, abortController.signal), timeoutPromise]);
-    clearTimeout(timeoutId);
+  const handleResult = async (result: TaskExecutionResult) => {
+    const currentNow = options.now?.() ?? Date.now();
 
     if (result.ok) {
-      await repository.markDone(task.id, result.summary, options.now?.() ?? Date.now());
+      await repository.markDone(task.id, result.summary, currentNow);
       logger({
         event: 'task.done',
         workerId,
@@ -100,17 +99,18 @@ export const runWorkerOnce = async (
         summary: result.summary,
         level: 'info',
       });
-      return { processed: true, taskId: task.id, status: 'done' };
+      return { processed: true, taskId: task.id, status: 'done' as const };
     }
 
     const error = result.error;
     const action = decideFailureAction(task, error, {
-      now: options.now?.() ?? Date.now(),
+      now: currentNow,
       maxAttempts: options.maxAttempts,
       baseBackoffMs: options.baseBackoffMs,
       maxBackoffMs: options.maxBackoffMs,
     });
-    await repository.applyFailureAction(task.id, action, options.now?.() ?? Date.now());
+
+    await repository.applyFailureAction(task.id, action, currentNow);
     logger({
       event: action.kind === 'fail' ? 'task.failed' : 'task.deferred',
       workerId,
@@ -120,36 +120,23 @@ export const runWorkerOnce = async (
       nextRunAt: action.kind === 'defer' ? action.nextRunAt : undefined,
       level: action.kind === 'fail' ? 'error' : 'warn',
     });
+
     return {
       processed: true,
       taskId: task.id,
-      status: action.kind === 'fail' ? 'failed' : 'deferred',
+      status: action.kind === 'fail' ? ('failed' as const) : ('deferred' as const),
       error,
     };
+  };
+
+  try {
+    const result = await Promise.race([handler(task, abortController.signal), timeoutPromise]);
+    clearTimeout(timeoutId);
+    return await handleResult(result);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const action = decideFailureAction(task, message, {
-      now: options.now?.() ?? Date.now(),
-      maxAttempts: options.maxAttempts,
-      baseBackoffMs: options.baseBackoffMs,
-      maxBackoffMs: options.maxBackoffMs,
-    });
-    await repository.applyFailureAction(task.id, action, options.now?.() ?? Date.now());
-    logger({
-      event: action.kind === 'fail' ? 'task.failed' : 'task.deferred',
-      workerId,
-      taskId: task.id,
-      error: message,
-      attempts: action.attempts,
-      nextRunAt: action.kind === 'defer' ? action.nextRunAt : undefined,
-      level: action.kind === 'fail' ? 'error' : 'warn',
-    });
-    return {
-      processed: true,
-      taskId: task.id,
-      status: action.kind === 'fail' ? 'failed' : 'deferred',
-      error: message,
-    };
+    const message = error instanceof Error ? `${error.message}\n${error.stack}` : String(error);
+
+    return await handleResult({ ok: false, error: message });
   } finally {
     abortController.abort();
   }
@@ -160,6 +147,8 @@ export type LoopOptions = WorkerOptions & {
   postTaskDelayMs?: number;
   maxIterations?: number;
   maxConsecutiveErrors?: number;
+  /** runWorkerOnce の実行をラップする関数 (セマフォ取得などに利用可能) */
+  runOnceWrapper?: (fn: () => Promise<RunOnceResult>) => Promise<RunOnceResult>;
 };
 
 export const runWorkerLoop = async (
@@ -173,6 +162,7 @@ export const runWorkerLoop = async (
   const maxConsecutiveErrors =
     options.maxConsecutiveErrors ?? config.knowflow.worker.maxConsecutiveErrors;
   const logger = options.logger ?? defaultStructuredLogger;
+  const runOnceWrapper = options.runOnceWrapper ?? ((fn) => fn());
 
   let iteration = 0;
   let consecutiveErrors = 0;
@@ -181,7 +171,7 @@ export const runWorkerLoop = async (
     iteration += 1;
 
     try {
-      const result = await runWorkerOnce(repository, handler, options);
+      const result = await runOnceWrapper(() => runWorkerOnce(repository, handler, options));
 
       if (!result.processed) {
         await sleep(intervalMs);

@@ -10,6 +10,7 @@ import {
   createMcpEvidenceProvider,
 } from '../services/knowflow/worker/knowFlowHandler.js';
 import { runWorkerLoop } from '../services/knowflow/worker/loop.js';
+import { withGlobalSemaphore } from '../utils/lock.js';
 
 async function main() {
   const runLogger = await createRunLogger({ runId: `worker-daemon-${Date.now()}` });
@@ -58,10 +59,27 @@ async function main() {
   }
 
   try {
+    // 常にループを回すが、LLMリソースの同時実行数は制限する
     await runWorkerLoop(queueRepository, handler, {
       workerId: `daemon-${process.pid}`,
       intervalMs: config.knowflow.worker.pollIntervalMs, // Configurable interval
       logger,
+      // runWorkerOnce の実行をラップして、独自プロセスでもセマフォを共有する
+      runOnceWrapper: async (fn) => {
+        try {
+          return await withGlobalSemaphore(
+            'background-task',
+            config.backgroundWorker.maxConcurrency,
+            fn,
+            1000, // タイムアウト時は次回のイテレーションに回す
+          );
+        } catch (err) {
+          if (err instanceof Error && err.message.includes('Global lock timeout')) {
+            return { processed: false }; // セマフォ取得失敗時は「未処理」として扱う
+          }
+          throw err;
+        }
+      },
     });
   } catch (error) {
     console.error('Worker Daemon Critical Error:', error);

@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'bun:test';
 import { spawnSync } from 'node:child_process';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import pkg from 'pg';
+const { Pool } = pkg;
 import { eq, inArray, sql } from 'drizzle-orm';
-import { db } from '../db/index.js';
+import { config } from '../config.js';
 import { entities, relations, vibeMemories } from '../db/schema.js';
+
+// Global mocks in other files often break the shared db instance.
+// For this integration test, we create a local isolated connection.
+const pool = new Pool({ connectionString: process.env.DATABASE_URL || config.databaseUrl });
+const localDb = drizzle(pool);
 
 describe('Episode Deletion Cascade', () => {
   it('should physically delete episode, raw memories, and associated graph data', async () => {
@@ -11,36 +19,50 @@ describe('Episode Deletion Cascade', () => {
     // 1. Create dummy raw memories
     const rawIds = [];
     for (let i = 0; i < 2; i++) {
-      const [raw] = await db
+      const [raw] = await localDb
         .insert(vibeMemories)
         .values({
           sessionId,
           content: `Raw memory ${i}`,
           memoryType: 'raw',
-          embedding: new Array(384).fill(0),
+          embedding: new Array(config.embeddingDimension || 384).fill(0),
+          dedupeKey: `test-raw-${i}-${Date.now()}`,
         })
         .returning();
+
+      if (!raw) {
+        throw new Error(
+          `Failed to insert raw memory ${i} (returning() was empty). SessionID: ${sessionId}`,
+        );
+      }
       rawIds.push(raw.id);
     }
 
     // 2. Create an episode record
-    const [episode] = await db
+    const [episode] = await localDb
       .insert(vibeMemories)
       .values({
         sessionId,
         content: 'Synthesized episode',
         memoryType: 'episode',
-        embedding: new Array(384).fill(0),
+        embedding: new Array(config.embeddingDimension || 384).fill(0),
         metadata: { sourceIds: rawIds },
+        dedupeKey: `test-episode-${Date.now()}`,
       })
       .returning();
+
+    if (!episode) {
+      throw new Error(
+        `Failed to insert episode memory (returning() was empty). SessionID: ${sessionId}`,
+      );
+    }
 
     const episodeId = episode.id;
     const episodeEntityId = `episode/${episodeId}`;
 
     // 3. Create graph data
     // (a) Proxies
-    await db.insert(entities).values({
+    await localDb.insert(entities).values({
       id: episodeEntityId,
       name: 'Episode Entity',
       type: 'episode',
@@ -49,7 +71,7 @@ describe('Episode Deletion Cascade', () => {
 
     // (b) Entity with metadata reference
     const metaEntityId = `entity-with-meta-${Date.now()}`;
-    await db.insert(entities).values({
+    await localDb.insert(entities).values({
       id: metaEntityId,
       name: 'Referenced Entity',
       type: 'concept',
@@ -57,7 +79,7 @@ describe('Episode Deletion Cascade', () => {
     });
 
     // (c) Relation
-    await db.insert(relations).values({
+    await localDb.insert(relations).values({
       sourceId: episodeEntityId,
       targetId: metaEntityId,
       relationType: 'learned_from',
@@ -93,26 +115,35 @@ describe('Episode Deletion Cascade', () => {
 
     // 5. Verify physical deletion
     // (a) Episode memory
-    const epCheck = await db.select().from(vibeMemories).where(eq(vibeMemories.id, episodeId));
+    const epCheck = await localDb.select().from(vibeMemories).where(eq(vibeMemories.id, episodeId));
     expect(epCheck.length).toBe(0);
 
     // (b) Raw memories
-    const rawCheck = await db.select().from(vibeMemories).where(inArray(vibeMemories.id, rawIds));
+    const rawCheck = await localDb
+      .select()
+      .from(vibeMemories)
+      .where(inArray(vibeMemories.id, rawIds));
     expect(rawCheck.length).toBe(0);
 
     // (c) Proxy entity
-    const proxyCheck = await db.select().from(entities).where(eq(entities.id, episodeEntityId));
+    const proxyCheck = await localDb
+      .select()
+      .from(entities)
+      .where(eq(entities.id, episodeEntityId));
     expect(proxyCheck.length).toBe(0);
 
     // (d) Meta entity (specifically deleted via metadata->>'memoryId')
-    const metaCheck = await db.select().from(entities).where(eq(entities.id, metaEntityId));
+    const metaCheck = await localDb.select().from(entities).where(eq(entities.id, metaEntityId));
     expect(metaCheck.length).toBe(0);
 
     // (e) Relations
-    const relCheck = await db
+    const relCheck = await localDb
       .select()
       .from(relations)
       .where(sql`source_id = ${episodeEntityId} OR target_id = ${episodeEntityId}`);
     expect(relCheck.length).toBe(0);
+
+    // Clean up
+    await pool.end();
   }, 15000); // 15s timeout for the test
 });

@@ -4,7 +4,7 @@ mock.module('../../../src/config.js', () => ({
   config: {
     embedCommand: 'mock-embed',
     embedTimeoutMs: 1000,
-    embeddingDimension: 3,
+    embeddingDimension: 384,
     dedupeThreshold: 0.9,
     llmTimeoutMs: 90_000,
     claudeLogDir: '/tmp/claude',

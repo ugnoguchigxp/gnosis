@@ -1,4 +1,17 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, mock } from 'bun:test';
+
+mock.module('../../src/config.js', () => ({
+  config: {
+    knowflow: {
+      worker: {
+        taskTimeoutMs: 30000,
+        pollIntervalMs: 1000,
+        postTaskDelayMs: 100,
+        maxConsecutiveErrors: 5,
+      },
+    },
+  },
+}));
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { config } from '../src/config.js';
 import {
   EntityInputSchema,
   LlmEntityDraftSchema,
@@ -62,15 +63,15 @@ const mockDb: MockDbClient = {
   delete: mock(() => mockDbDeleteWhere),
 };
 
-mock.module('../src/db/index.js', () => ({
-  db: mockDb,
-}));
+// mock.module('../src/db/index.js', () => ({
+//   db: mockDb,
+// }));
 
 mock.module('../src/config.js', () => ({
   config: {
     embedCommand: 'mock-embed',
     embedTimeoutMs: 1000,
-    embeddingDimension: 3,
+    embeddingDimension: 384,
     dedupeThreshold: 0.9,
     llmTimeoutMs: 90_000,
     claudeLogDir: '/tmp/claude',
@@ -168,7 +169,8 @@ describe('graph service', () => {
     mockSpawn.mockImplementation(() => ({
       stdout: {
         on: (event: string, cb: (chunk: Buffer) => void) => {
-          if (event === 'data') cb(Buffer.from('[0.1, 0.2, 0.3]'));
+          if (event === 'data')
+            cb(Buffer.from(JSON.stringify(new Array(config.embeddingDimension).fill(0.1))));
         },
       },
       stderr: { on: () => {} },
@@ -181,8 +183,8 @@ describe('graph service', () => {
 
   describe('buildGraph', () => {
     it('builds a graph instance from database records', async () => {
-      // db.select モックは global で定義されているものを利用（必要に応じて個別に設定）
-      const graph = await buildGraph();
+      // Pass the mockDb explicitly to avoid global leakage
+      const graph = await buildGraph(mockDb as unknown as SaveEntitiesDb);
       expect(graph).toBeDefined();
       expect(typeof graph.addNode).toBe('function');
     });
@@ -300,7 +302,7 @@ describe('graph service', () => {
 
   describe('queryGraphContext', () => {
     it('returns empty results if starting entity not found', async () => {
-      const result = await queryGraphContext('none');
+      const result = await queryGraphContext('none', 2, 20, mockDb as unknown as SaveEntitiesDb);
       expect(result.entities).toHaveLength(0);
       expect(result.relations).toHaveLength(0);
     });
@@ -338,7 +340,7 @@ describe('graph service', () => {
         return { from: mock(() => createMockQuery([])) };
       });
 
-      const result = await queryGraphContext('e1');
+      const result = await queryGraphContext('e1', 2, 20, mockDb as unknown as SaveEntitiesDb);
 
       // restore
       mockDb.select = mock(() => mockDbSelect);

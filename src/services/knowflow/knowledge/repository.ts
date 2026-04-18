@@ -76,16 +76,18 @@ const toEpochMs = (value: Date): number => value.getTime();
 export class PgKnowledgeRepository {
   private readonly claimSimilarityThreshold: number;
   private readonly claimEmbeddingSimilarityThreshold: number;
+  private readonly database: typeof db;
 
-  constructor(options: KnowledgeRepositoryOptions = {}) {
+  constructor(options: KnowledgeRepositoryOptions = {}, database: typeof db = db) {
     this.claimSimilarityThreshold = options.claimSimilarityThreshold ?? 0.85;
     this.claimEmbeddingSimilarityThreshold = options.claimEmbeddingSimilarityThreshold ?? 0.92;
+    this.database = database;
   }
 
   async getByTopic(topic: string): Promise<Knowledge | null> {
     const canonicalTopic = canonicalizeTopic(topic);
 
-    return db.transaction(async (tx) => {
+    return this.database.transaction(async (tx) => {
       const topicRows = await tx
         .select()
         .from(knowledgeTopics)
@@ -104,7 +106,7 @@ export class PgKnowledgeRepository {
   async searchTopics(query: string, limit = 10): Promise<Knowledge[]> {
     const keyword = `%${canonicalizeTopic(query)}%`;
 
-    return db.transaction(async (tx) => {
+    return this.database.transaction(async (tx) => {
       const result = await tx
         .select()
         .from(knowledgeTopics)
@@ -129,7 +131,7 @@ export class PgKnowledgeRepository {
     const parsed = KnowledgeUpsertInputSchema.parse(input);
     const canonicalTopic = canonicalizeTopic(parsed.topic);
 
-    return db.transaction(async (tx) => {
+    return this.database.transaction(async (tx) => {
       const existingTopics = await tx
         .select()
         .from(knowledgeTopics)

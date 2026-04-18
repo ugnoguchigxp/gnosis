@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { config } from '../src/config.js';
 
 // モック定義をインポートより前に行う（依存関係への適用を確実にするため）
 const mockSpawn = mock();
@@ -9,8 +10,8 @@ mock.module('node:child_process', () => ({
 mock.module('../src/config.js', () => ({
   config: {
     embedCommand: 'mock-embed',
-    embedTimeoutMs: 100,
-    embeddingDimension: 3,
+    embedTimeoutMs: 1000,
+    embeddingDimension: 384,
     dedupeThreshold: 0.9,
     llmTimeoutMs: 90_000,
     claudeLogDir: '/tmp/claude',
@@ -93,7 +94,9 @@ describe('memory service', () => {
       mockSpawn.mockImplementation(() => ({
         stdout: {
           // biome-ignore lint/suspicious/noExplicitAny: mock
-          on: (event: string, cb: any) => event === 'data' && cb(Buffer.from('[0.1, 0.2, 0.3]')),
+          on: (event: string, cb: any) =>
+            event === 'data' &&
+            cb(Buffer.from(JSON.stringify(new Array(config.embeddingDimension).fill(0.1)))),
         },
         stderr: { on: () => {} },
         // biome-ignore lint/suspicious/noExplicitAny: mock
@@ -104,7 +107,7 @@ describe('memory service', () => {
       }));
 
       const vector = await generateEmbedding('hello');
-      expect(vector).toEqual([0.1, 0.2, 0.3]);
+      expect(vector).toEqual(new Array(config.embeddingDimension).fill(0.1));
       expect(mockSpawn).toHaveBeenCalled();
     });
 
@@ -127,7 +130,9 @@ describe('memory service', () => {
         return {
           stdout: {
             // biome-ignore lint/suspicious/noExplicitAny: mock
-            on: (event: string, cb: any) => event === 'data' && cb(Buffer.from('[0.5, 0.6, 0.7]')),
+            on: (event: string, cb: any) =>
+              event === 'data' &&
+              cb(Buffer.from(JSON.stringify(new Array(config.embeddingDimension).fill(0.5)))),
           },
           stderr: { on: () => {} },
           // biome-ignore lint/suspicious/noExplicitAny: mock
@@ -137,7 +142,7 @@ describe('memory service', () => {
       });
 
       const vector = await generateEmbedding('hello');
-      expect(vector).toEqual([0.5, 0.6, 0.7]);
+      expect(vector).toEqual(new Array(config.embeddingDimension).fill(0.5));
       expect(calls).toBe(2);
     });
 
@@ -163,7 +168,9 @@ describe('memory service', () => {
       mockSpawn.mockImplementation(() => ({
         stdout: {
           // biome-ignore lint/suspicious/noExplicitAny: mock
-          on: (event: string, cb: any) => event === 'data' && cb(Buffer.from('[0.1, 0.1, 0.1]')),
+          on: (event: string, cb: any) =>
+            event === 'data' &&
+            cb(Buffer.from(JSON.stringify(new Array(config.embeddingDimension).fill(0.1)))),
         },
         stderr: { on: () => {} },
         // biome-ignore lint/suspicious/noExplicitAny: mock
@@ -177,7 +184,7 @@ describe('memory service', () => {
           content: 'test',
           metadata: {},
           sessionId: 's1',
-          embedding: [0.1, 0.1, 0.1],
+          embedding: new Array(config.embeddingDimension).fill(0.1),
           createdAt: new Date(),
           // biome-ignore lint/suspicious/noExplicitAny: mock
         } as any,
@@ -197,7 +204,7 @@ describe('memory service', () => {
       // biome-ignore lint/suspicious/noExplicitAny: mock
       const insertData = (mockValues.mock.calls as any)[0][0];
       expect(insertData.content).toBe('test content');
-      expect(insertData.embedding).toEqual([0.1, 0.1, 0.1]);
+      expect(insertData.embedding).toEqual(new Array(config.embeddingDimension).fill(0.1));
     });
   });
 
@@ -206,7 +213,9 @@ describe('memory service', () => {
       mockSpawn.mockImplementation(() => ({
         stdout: {
           // biome-ignore lint/suspicious/noExplicitAny: mock
-          on: (event: string, cb: any) => event === 'data' && cb(Buffer.from('[0, 0, 0]')),
+          on: (event: string, cb: any) =>
+            event === 'data' &&
+            cb(Buffer.from(JSON.stringify(new Array(config.embeddingDimension).fill(0)))),
         },
         stderr: { on: () => {} },
         // biome-ignore lint/suspicious/noExplicitAny: mock

@@ -1,0 +1,874 @@
+bun test v1.3.12 (700fc117)
+
+test/bedrock-live.test.ts:
+(skip) Bedrock live integration > AWS Bedrock live test is not enabled or environment variables are not fully configured
+
+test/ingest.test.ts:
+(pass) ingest service > normalizeIngestCursor > normalizes valid cursor [0.72ms]
+(pass) ingest service > normalizeIngestCursor > handles invalid values with defaults [0.75ms]
+(pass) ingest service > ingestClaudeLogs > ingests messages from JSONL files [1.59ms]
+(pass) ingest service > ingestClaudeLogs > respects cursor offset to avoid duplicates [1.95ms]
+(pass) ingest service > ingestAntigravityLogs > ingests messages from overview.txt [1.07ms]
+(pass) ingest service > ingestAntigravityLogs > skips missing optional files [0.57ms]
+
+test/errors.test.ts:
+(pass) domain/errors > GnosisError has correct properties
+(pass) domain/errors > NotFoundError has correct properties
+(pass) domain/errors > ValidationError has correct properties
+(pass) domain/errors > TimeoutError has correct properties
+(pass) domain/errors > isGnosisError returns true for GnosisError subclasses
+(pass) domain/errors > isGnosisError returns false for plain Error
+
+test/scheduler.test.ts:
+(pass) UnifiedTaskScheduler > initially has no tasks
+(pass) UnifiedTaskScheduler > can enqueue and retrieve a task [0.69ms]
+(pass) UnifiedTaskScheduler > retrieves the next available task based on priority [0.06ms]
+(pass) UnifiedTaskScheduler > retrieves the oldest task if priorities are equal
+(pass) UnifiedTaskScheduler > updates task status correctly [0.42ms]
+(pass) UnifiedTaskScheduler > deletes a task [0.13ms]
+(pass) UnifiedTaskScheduler > cleans up stale tasks [0.01ms]
+(pass) UnifiedTaskScheduler > does not retrieve tasks scheduled for the future [0.20ms]
+
+test/mcpContract.test.ts:
+(pass) mcp contract > exposes expected tool contracts via tools/list [0.53ms]
+(pass) mcp contract > returns isError=true for unknown tool and invalid arguments [2.55ms]
+
+test/consolidation.test.ts:
+(pass) consolidateEpisodes > returns null when raw memories are fewer than minRawCount [0.62ms]
+[MemoryLoopRouter] selectedAlias=gemma4 fallbackAttempt=0 cloudEnabled=false reason=primary-local-route
+(pass) consolidateEpisodes > calls LLM and creates episode when enough raw memories [0.91ms]
+(pass) consolidateEpisodes > throws when LLM fails
+
+test/review-stage-d.test.ts:
+(pass) review stage D > builds fix operations from metadata hints [0.31ms]
+(pass) review stage D > rejects fix operations with incomplete metadata [0.15ms]
+(pass) review stage D > generates a fix suggestion from Astmend output [0.81ms]
+(pass) review stage D > renders fix suggestions and KPI snapshots [0.27ms]
+
+test/monitorDetailFilter.test.ts:
+(pass) monitor detail log filter > matches only exact taskId
+(pass) monitor detail log filter > does not match entries without taskId
+
+test/local-llm-conversation.test.ts:
+(pass) local LLM conversation helpers > parses tool call syntax from model output [0.05ms]
+(pass) local LLM conversation helpers > sanitizes tool tags and preserves plain text
+(pass) local LLM conversation helpers > runs a tool loop and records the conversation history [0.28ms]
+(pass) local LLM conversation helpers > falls back to generate() when generateMessages is unavailable
+(pass) local LLM conversation helpers > preserves JSON when forceJson is enabled
+
+test/synthesis.test.ts:
+(pass) synthesizeKnowledge > returns count=0 when no pending memories [0.51ms]
+Synthesizing 2 memories...
+(pass) synthesizeKnowledge > distills memories and saves entities and relations [0.29ms]
+Synthesizing 1 memories...
+(pass) synthesizeKnowledge > skips saveEnts when no entities extracted [0.03ms]
+Synthesizing 1 memories...
+Synthesis failed: 107 |   });
+108 | 
+109 |   it('propagates errors from distillKnowledgeFromTranscript', async () => {
+110 |     const memories = [{ id: 'm1', sessionId: 's', content: 'text', isSynthesized: false }];
+111 |     const db = makeDb(memories);
+112 |     const mockDistill = mock().mockRejectedValue(new Error('LLM failed'));
+                                                       ^
+error: LLM failed
+      at <anonymous> (/Users/y.noguchi/Code/gnosis/test/synthesis.test.ts:112:50)
+
+(pass) synthesizeKnowledge > propagates errors from distillKnowledgeFromTranscript [0.33ms]
+(pass) synthesizeKnowledge > respects batchSize dep
+
+test/review-cloud-provider.test.ts:
+(pass) review cloud provider > uses the OpenAI API shape [0.87ms]
+(pass) review cloud provider > uses the Azure OpenAI API shape [0.11ms]
+(pass) review cloud provider > reads OPENAI_API_KEY and OPENAI_MODEL env vars when no options given [0.09ms]
+(pass) review cloud provider > uses the Bedrock API shape [1.14ms]
+(pass) review cloud provider > falls back to the Bedrock model id after a 404 on the inference profile id [0.42ms]
+(pass) review cloud provider > reads AZURE_OPENAI_API_KEY and AZURE_OPENAI_MODEL env vars [0.11ms]
+(pass) review cloud provider > throws E007 when API key is missing for openai provider [0.05ms]
+(pass) review cloud provider > bedrock ignores GNOSIS_REVIEW_LLM_API_BASE_URL so Azure URL does not leak [0.23ms]
+
+test/lock.test.ts:
+[Semaphore] Acquired slot 1/1 for: test
+[Semaphore] Released slot 1/1 for: test
+(pass) lock utility > acquires and releases a lock successfully [0.55ms]
+[Semaphore] Acquired slot 1/1 for: retry-test
+[Semaphore] Released slot 1/1 for: retry-test
+(pass) lock utility > retries if lock already exists (EEXIST) [0.08ms]
+(pass) lock utility > throws error if timeout is reached [9.21ms]
+[Semaphore] Acquired slot 1/1 for: error-test
+[Semaphore] Released slot 1/1 for: error-test
+(pass) lock utility > releases lock even if inner function fails [0.16ms]
+(pass) lock utility > rethrows unexpected errors from openSync
+
+test/community.test.ts:
+(pass) buildCommunities > returns early when graph has no entities [0.92ms]
+(pass) buildCommunities > deletes existing communities before rebuilding [1.16ms]
+(pass) buildCommunities > calls summarize for each detected community [0.15ms]
+(pass) buildCommunities > returns rebuilt result with community count [0.17ms]
+(pass) buildCommunities > uses default dependencies when none are provided (smoke test structure)
+
+test/procedure.test.ts:
+(pass) updateConfidence > followed_success: increases confidence (diminishing returns) [0.03ms]
+(pass) updateConfidence > followed_failure: decreases confidence [0.02ms]
+(pass) updateConfidence > ignored_success: decreases slightly
+(pass) updateConfidence > ignored_failure: increases slightly
+(pass) updateConfidence > clamps at 0.0 (minimum) [0.02ms]
+(pass) updateConfidence > clamps at 1.0 (maximum)
+(pass) updateConfidence > confidence near 0 decreases only slightly on followed_failure
+(pass) updateConfidence > confidence near 1 increases only slightly on followed_success
+(pass) queryProcedure (unit) > returns null when no goal entities found [0.68ms]
+
+test/review-foundation.test.ts:
+(pass) review foundation > validates allowed root within the configured boundary [0.31ms]
+(pass) review foundation > rejects project root outside the configured boundary [0.18ms]
+(pass) review foundation > validates session id format [0.03ms]
+(pass) review foundation > enforces hard limits for file and line counts [0.05ms]
+(pass) review foundation > masks common secret patterns
+(pass) review foundation > returns input unchanged when no secrets are present
+(pass) review foundation > validates review request and output schemas [0.47ms]
+
+test/review-stage-b.test.ts:
+(pass) stage B review flow > plans high risk changes and lowers low-risk changes [0.05ms]
+(pass) stage B review flow > runs the stage B flow with structured diff and MCP findings [2.42ms]
+
+test/guidanceImport.test.ts:
+(pass) importGuidanceArchives > skips re-import when zip hash is unchanged [0.60ms]
+(pass) importGuidanceArchives > updates existing archive and passes previous archive key for overwrite [0.46ms]
+(pass) importGuidanceArchives > falls back without manifest using filename title and directory tags [0.34ms]
+
+test/graph.test.ts:
+(pass) graph service > buildGraph > builds a graph instance from database records
+[Semaphore] Acquired slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/2 for: heavy-model
+(pass) graph service > saveEntities > saves a new entity without deduplication if similarity is low [1.90ms]
+[Semaphore] Acquired slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/2 for: heavy-model
+[Deduplication] High similarity detected: "new" vs "old" (0.950)
+[Deduplication] Merging "new" into existing entity "old"
+[Semaphore] Acquired slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/2 for: heavy-model
+(pass) graph service > saveEntities > merges entities if high similarity detected [2.50ms]
+(pass) graph service > saveRelations > inserts relations with weight handling [0.25ms]
+(pass) graph service > saveRelations > resolves name-based draft relations to entity IDs [0.09ms]
+(pass) graph service > findPathBetweenEntities > throws error if entity not found [11.17ms]
+(pass) graph service > queryGraphContext > returns empty results if starting entity not found [0.21ms]
+(pass) graph service > queryGraphContext > returns entity and community when found, traverses BFS [0.11ms]
+[Semaphore] Acquired slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/2 for: heavy-model
+(pass) graph service > searchEntitiesByText > returns empty results when db returns nothing [2.12ms]
+[Semaphore] Acquired slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/2 for: heavy-model
+(pass) graph service > searchEntitiesByText > returns entities and updates referenceCount when found [1.23ms]
+(pass) graph service > updateEntity > calls db.update with the given id and updates [0.17ms]
+(pass) graph service > deleteRelation > calls db.delete with correct conditions [0.02ms]
+(pass) graph service > digestTextIntelligence > extracts entities and finds existing candidates [0.17ms]
+(pass) graph service > digestTextIntelligence > filters candidates below similarity threshold
+(pass) graph service > digestTextIntelligence > returns empty when extractor returns no entities
+(pass) generateEntityId > generates slug from type and name [0.09ms]
+(pass) generateEntityId > normalizes multiple spaces to single hyphen
+(pass) generateEntityId > trims whitespace from name
+(pass) generateEntityId > is deterministic for the same input
+(pass) 制御語彙バリデーション > LlmEntityDraftSchema: 有効な type を受け入れる [0.04ms]
+(pass) 制御語彙バリデーション > LlmEntityDraftSchema: 制御語彙外の type を拒否する
+(pass) 制御語彙バリデーション > LlmRelationDraftSchema: 有効な relationType を受け入れる
+(pass) 制御語彙バリデーション > LlmRelationDraftSchema: 制御語彙外の relationType を拒否する [0.11ms]
+(pass) 制御語彙バリデーション > EntityInputSchema: id あり入力を受け入れる (後方互換) [0.01ms]
+(pass) 制御語彙バリデーション > EntityInputSchema: id なし入力を受け入れる (LLM ドラフト互換)
+(pass) 制御語彙バリデーション > RelationInputSchema: id ベース形式を受け入れる (後方互換)
+(pass) 制御語彙バリデーション > RelationInputSchema: name ベース形式を受け入れる (新形式)
+
+test/llmService.test.ts:
+[Semaphore] Acquired slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/2 for: heavy-model
+(pass) llm service (legacy local LLM) > extractEntitiesFromText > parses valid entity JSON from LLM output [0.26ms]
+[Semaphore] Acquired slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/2 for: heavy-model
+LLM Extraction failed: command failed
+(pass) llm service (legacy local LLM) > extractEntitiesFromText > returns empty array when LLM exits with non-zero code
+[Semaphore] Acquired slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/2 for: heavy-model
+Failed to find JSON in LLM response: Sorry, I cannot help with that.
+(pass) llm service (legacy local LLM) > extractEntitiesFromText > returns empty array when LLM output has no JSON array [0.17ms]
+[Semaphore] Acquired slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/2 for: heavy-model
+(pass) llm service (legacy local LLM) > extractEntitiesFromText > returns empty array when LLM output is empty
+[Semaphore] Acquired slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/2 for: heavy-model
+(pass) llm service (legacy local LLM) > summarizeCommunity > parses community summary from LLM output
+[Semaphore] Acquired slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/2 for: heavy-model
+Failed to summarize community: 143 |     );
+144 | 
+145 |     const output = result.stdout?.trim();
+146 |     if (!output) {
+147 |       if (result.error) console.error('LLM Summary Error:', result.error);
+148 |       throw new Error('Empty LLM response');
+                  ^
+error: Empty LLM response
+      at summarizeCommunity (/Users/y.noguchi/Code/gnosis/src/services/llm.ts:148:13)
+      at async <anonymous> (/Users/y.noguchi/Code/gnosis/test/llmService.test.ts:78:28)
+
+(pass) llm service (legacy local LLM) > summarizeCommunity > returns fallback on empty output
+[Semaphore] Acquired slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/2 for: heavy-model
+Failed to summarize community: 147 |       if (result.error) console.error('LLM Summary Error:', result.error);
+148 |       throw new Error('Empty LLM response');
+149 |     }
+150 | 
+151 |     const jsonMatch = output.match(/\{[\s\S]*\}/);
+152 |     if (!jsonMatch) throw new Error('No JSON found');
+                                ^
+error: No JSON found
+      at summarizeCommunity (/Users/y.noguchi/Code/gnosis/src/services/llm.ts:152:27)
+      at async <anonymous> (/Users/y.noguchi/Code/gnosis/test/llmService.test.ts:86:28)
+
+(pass) llm service (legacy local LLM) > summarizeCommunity > returns fallback when output has no JSON object
+[Semaphore] Acquired slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/2 for: heavy-model
+(pass) llm service (legacy local LLM) > judgeAndMergeEntities > returns shouldMerge: true when LLM says merge [0.53ms]
+[Semaphore] Acquired slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/2 for: heavy-model
+(pass) llm service (legacy local LLM) > judgeAndMergeEntities > returns shouldMerge: false when LLM says do not merge [0.02ms]
+[Semaphore] Acquired slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/2 for: heavy-model
+(pass) llm service (legacy local LLM) > judgeAndMergeEntities > returns shouldMerge: false when LLM output has no JSON
+[Semaphore] Acquired slot 1/3 for: system-llm-pool
+[Semaphore] Acquired slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/3 for: system-llm-pool
+[MemoryLoopRouter] selectedAlias=gemma4 fallbackAttempt=0 cloudEnabled=false reason=explicit-llm-script-override
+(pass) llm service (legacy local LLM) > distillKnowledgeFromTranscript > parses distilled knowledge from LLM output [0.30ms]
+[Semaphore] Acquired slot 1/3 for: system-llm-pool
+[Semaphore] Acquired slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/3 for: system-llm-pool
+LLM Distillation Error: 234 |           timeout: timeoutMs,
+235 |         }),
+236 |       );
+237 |     });
+238 |     if (result.error || result.status !== 0) {
+239 |       throw new Error(
+                  ^
+error: LLM route failed alias=gemma4 reason=explicit-llm-script-override status=1 stderr=command failed
+      at runPromptWithMemoryLoopRouter (/Users/y.noguchi/Code/gnosis/src/services/memoryLoopLlmRouter.ts:239:13)
+      at async distillKnowledgeFromTranscript (/Users/y.noguchi/Code/gnosis/src/services/llm.ts:219:26)
+      at <anonymous> (/Users/y.noguchi/Code/gnosis/test/llmService.test.ts:141:17)
+
+(pass) llm service (legacy local LLM) > distillKnowledgeFromTranscript > throws when LLM exits non-zero [0.08ms]
+[Semaphore] Acquired slot 1/3 for: system-llm-pool
+[Semaphore] Acquired slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/3 for: system-llm-pool
+[MemoryLoopRouter] selectedAlias=gemma4 fallbackAttempt=0 cloudEnabled=false reason=explicit-llm-script-override
+(pass) llm service (legacy local LLM) > distillKnowledgeFromTranscript > throws when LLM output is empty [0.09ms]
+[Semaphore] Acquired slot 1/3 for: system-llm-pool
+[Semaphore] Acquired slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/3 for: system-llm-pool
+[MemoryLoopRouter] selectedAlias=gemma4 fallbackAttempt=0 cloudEnabled=false reason=explicit-llm-script-override
+LLM Distillation raw output: no json
+(pass) llm service (legacy local LLM) > distillKnowledgeFromTranscript > throws when LLM output has no JSON [0.07ms]
+
+test/review-stage-c.test.ts:
+(pass) review stage C > filters guidance by applicability and builds V3 prompts
+(pass) review stage C > retrieves and ranks guidance entries from stored metadata [0.73ms]
+(pass) review stage C > persists review case, experience, and findings memory [0.31ms]
+
+test/ask-llm.test.ts:
+(pass) cloud CLI argument parsing > defaults to bedrock and enables MCP by default [0.19ms]
+(pass) cloud CLI argument parsing > parses openai interactive mode and session flags [0.01ms]
+(pass) cloud CLI argument parsing > allows explicit mcp override and positional prompt input
+(pass) cloud CLI argument parsing > does not treat option values as positional prompts
+(pass) cloud CLI argument parsing > parses bedrock-specific options [0.05ms]
+
+test/local-llm-cli.test.ts:
+(pass) local LLM CLI launchers > package scripts expose the four command wrappers [0.20ms]
+(pass) local LLM CLI launchers > root wrappers delegate to the canonical scripts [0.37ms]
+(pass) local LLM CLI launchers > alias router resolves each launcher to the expected runtime [0.10ms]
+(pass) local LLM CLI launchers > PATH helpers include all command names
+(pass) local LLM CLI launchers > setup guidance references all four launchers [0.15ms]
+
+test/memory.test.ts:
+[Semaphore] Acquired slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/2 for: heavy-model
+(pass) memory service > generateEmbedding > generates embedding successfully [10.92ms]
+[Semaphore] Acquired slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/2 for: heavy-model
+[Semaphore] Acquired slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/2 for: heavy-model
+(pass) memory service > generateEmbedding > retries on failure [28.63ms]
+[Semaphore] Acquired slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/2 for: heavy-model
+[Semaphore] Acquired slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/2 for: heavy-model
+(pass) memory service > generateEmbedding > throws GnosisError on parse failure [23.16ms]
+[Semaphore] Acquired slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/2 for: heavy-model
+(pass) memory service > saveMemory > validates input and saves with embedding [11.77ms]
+[Semaphore] Acquired slot 1/2 for: heavy-model
+[Semaphore] Released slot 1/2 for: heavy-model
+(pass) memory service > searchMemory > performs semantic search with similarity calculation [11.10ms]
+(pass) memory service > listMemoriesByMetadata > lists memories by metadata without generating embedding
+(pass) memory service > deleteMemory > deletes memory by id
+
+test/experience.test.ts:
+(pass) experience service > saveExperience > saves a success event with embedding
+(pass) experience service > saveExperience > uses empty metadata if not provided
+(pass) experience service > recallExperienceLessons > returns empty array if no similar failures found [0.57ms]
+(pass) experience service > recallExperienceLessons > recalls failures and their related solutions
+(pass) experience service > recallExperienceLessons > handles boundary values for limit [0.31ms]
+
+test/review-stage-a.test.ts:
+(pass) stage A review flow > renders markdown with degraded mode and no findings [0.07ms]
+(pass) stage A review flow > runs the stage A flow and filters hallucinated findings [0.70ms]
+
+test/config.test.ts:
+(pass) config helpers > envBoolean > returns true for "1", "true", "yes"
+(pass) config helpers > envBoolean > returns false for "0", "false", "no"
+(pass) config helpers > envBoolean > returns fallback for undefined or empty string
+(pass) config helpers > envNumber > parses valid number strings
+(pass) config helpers > envNumber > returns fallback for invalid number strings
+(pass) config helpers > envNumber > returns fallback for undefined
+(pass) config schemas > LlmClientConfigSchema > validates full config [0.53ms]
+(pass) config schemas > LlmClientConfigSchema > rejects invalid URL [0.13ms]
+(pass) config schemas > BudgetConfigSchema > validates budget
+(pass) config schemas > BudgetConfigSchema > rejects negative numbers
+(pass) config schemas > WorkerConfigSchema > validates worker config
+
+test/memoryLoopLlmRouter.test.ts:
+(pass) routeMemoryLoopLlm > uses local primary route for first attempt
+(pass) routeMemoryLoopLlm > uses light local alias for classification task at first attempt
+(pass) routeMemoryLoopLlm > falls back to secondary local alias on retry
+(pass) routeMemoryLoopLlm > does not select cloud alias when allowCloud=false
+(pass) routeMemoryLoopLlm > selects cloud alias when allowCloud=true and retries exceeded
+(pass) routeMemoryLoopLlm > forces safe MLX mode in seatbelt for local alias
+(pass) routeMemoryLoopLlm > keeps override for cloud alias
+(pass) routeMemoryLoopLlm > allows unsafe MLX only with explicit memory-loop escape hatch
+
+test/review-local-provider.test.ts:
+(pass) review local provider env safety > forces safe MLX mode in seatbelt for gemma4
+(pass) review local provider env safety > keeps unsafe override only when explicit review escape hatch is enabled
+(pass) review local provider env safety > does not touch MLX override outside seatbelt
+
+test/secretFilter.test.ts:
+(pass) secretFilter > filterSensitiveData > removes export PASSWORD= lines [0.30ms]
+(pass) secretFilter > filterSensitiveData > removes export TOKEN= lines
+(pass) secretFilter > filterSensitiveData > removes bearer tokens
+(pass) secretFilter > filterSensitiveData > removes Slack tokens
+(pass) secretFilter > filterSensitiveData > removes GitHub tokens
+(pass) secretFilter > filterSensitiveData > removes lines containing password keyword [0.03ms]
+(pass) secretFilter > filterSensitiveData > removes lines containing secret_key keyword [0.01ms]
+(pass) secretFilter > filterSensitiveData > removes lines containing auth_token keyword
+(pass) secretFilter > filterSensitiveData > removes PEM private key header
+(pass) secretFilter > filterSensitiveData > preserves normal content
+(pass) secretFilter > containsSecret > detects bearer token
+(pass) secretFilter > containsSecret > detects password assignment
+(pass) secretFilter > containsSecret > returns false for normal line
+
+src/scripts/monitor-episodes.test.ts:
+Executing deletion for test episode: 37bb1cdd-8d42-4c64-add5-a1aa1f9440a3
+Script Output: {"success":true,"id":"37bb1cdd-8d42-4c64-add5-a1aa1f9440a3","message":"Physical deletion completed successfully"}
+
+Script Error: Starting atomic physical cleanup for episode: 37bb1cdd-8d42-4c64-add5-a1aa1f9440a3
+Deleted 2 raw memories.
+
+(pass) Episode Deletion Cascade > should physically delete episode, raw memories, and associated graph data [93.18ms]
+
+src/services/graph.spec.ts:
+(skip) Graph Engine Services > (unnamed)
+(skip) Graph Engine Services > should save entities and relations
+(skip) Graph Engine Services > should update entity
+(skip) Graph Engine Services > should delete relation
+(skip) Graph Engine Services > (unnamed)
+
+src/services/memory.spec.ts:
+(skip) Vibe Memory Services > (unnamed)
+(skip) Vibe Memory Services > should save a memory and search it via vector similarity
+(skip) Vibe Memory Services > (unnamed)
+
+test/scripts/graph-snapshot.test.ts:
+(pass) graph-snapshot script > returns valid JSON structure [68.84ms]
+(pass) graph-snapshot script > stats show database totals vs displayed totals [64.35ms]
+(pass) graph-snapshot script > respects environment variable limits [62.49ms]
+
+test/scripts/enqueue-task.test.ts:
+(pass) enqueue-task script validation > requires topic argument [34.65ms]
+(pass) enqueue-task script validation > rejects topic with invalid characters [33.97ms]
+(pass) enqueue-task script validation > rejects topic exceeding max length [33.61ms]
+(pass) enqueue-task script validation > rejects invalid mode [32.91ms]
+(pass) enqueue-task script validation > rejects priority out of range [34.34ms]
+
+test/db/migrationMeta.test.ts:
+(pass) migrationMeta > calculates SHA-256 hash for migration content
+(pass) migrationMeta > validates journal/sql metadata consistency [0.21ms]
+(pass) migrationMeta > buildExpectedMigrations > loads entries from journal and computes hashes from SQL files [1.00ms]
+
+test/knowflow/profile.test.ts:
+(pass) knowflow profile loader > resolves named profile to profiles directory
+(pass) knowflow profile loader > resolves absolute path as-is
+(pass) knowflow profile loader > resolves relative path with slash [0.11ms]
+(pass) knowflow profile loader > throws when profile path is empty
+(pass) knowflow profile loader > returns null when profileInput is undefined [0.04ms]
+(pass) knowflow profile loader > loads profile from explicit path and parses values [0.45ms]
+(pass) knowflow profile loader > parses boolean and number values in TOML [0.73ms]
+(pass) knowflow profile loader > parses quoted string values in TOML [0.26ms]
+(pass) mergeLlmConfig > returns base config when no override
+(pass) mergeLlmConfig > merges override fields into base [0.05ms]
+(pass) mergeLlmConfig > returns original base when override is undefined
+(pass) mergeBudgetConfig > returns base config when no override
+(pass) mergeBudgetConfig > merges override fields into base
+(pass) mergeBudgetConfig > returns original base when override is undefined
+
+test/knowflow/evidenceExtractor.test.ts:
+(pass) extractEvidenceFromText > maps LLM claims to FlowEvidence claims with sourceId [0.47ms]
+(pass) extractEvidenceFromText > attaches source with URL and domain derived from input [0.11ms]
+(pass) extractEvidenceFromText > includes normalizedSources with title [0.04ms]
+(pass) extractEvidenceFromText > maps LLM relations to FlowEvidence relations
+(pass) extractEvidenceFromText > handles empty claims and relations gracefully
+(pass) extractEvidenceFromText > uses Date.now() as fetchedAt when now is not provided [0.12ms]
+(pass) extractEvidenceFromText > uses claim sourceId that links to source id [0.04ms]
+
+test/knowflow/outputUtils.test.ts:
+(pass) knowflow output utils > resolves default output format to json
+(pass) knowflow output utils > resolves table output format [0.41ms]
+(pass) knowflow output utils > rejects mutually exclusive format flags [0.02ms]
+(pass) knowflow output utils > renders table output with flattened fields [0.10ms]
+
+test/knowflow/policy.test.ts:
+(pass) scheduler policy > compareTaskPriority sorts by priority desc then createdAt asc
+(pass) scheduler policy > isRunnable only allows pending or due deferred tasks
+(pass) scheduler policy > decideFailureAction defers first and fails at max attempts
+
+test/knowflow/knowFlowHandler.test.ts:
+{"ts":"2026-04-18T08:01:26.751Z","level":"info","event":"retriever.mcp.start","taskId":"task-1","topic":"TypeScript"}
+{"ts":"2026-04-18T08:01:26.751Z","level":"warn","event":"retriever.mcp.skipped","taskId":"task-1","topic":"TypeScript","message":"LLM degraded, skipping MCP search to avoid connection errors"}
+(pass) createMcpEvidenceProvider > returns empty evidence when LLM is degraded
+{"ts":"2026-04-18T08:01:26.751Z","level":"info","event":"retriever.mcp.start","taskId":"task-1","topic":"TypeScript"}
+(pass) createMcpEvidenceProvider > searches and fetches URLs when LLM returns queries
+{"ts":"2026-04-18T08:01:26.751Z","level":"info","event":"retriever.mcp.start","taskId":"task-1","topic":"TypeScript"}
+{"ts":"2026-04-18T08:01:26.751Z","level":"warn","event":"retriever.mcp.fetch_error","taskId":"task-1","url":"https://example.com/ts-errors","message":"network error"}
+(pass) createMcpEvidenceProvider > skips URL on fetch error and continues [0.79ms]
+{"ts":"2026-04-18T08:01:26.752Z","level":"info","event":"retriever.mcp.start","taskId":"task-1","topic":"TypeScript"}
+{"ts":"2026-04-18T08:01:26.752Z","level":"warn","event":"retriever.mcp.search_error","taskId":"task-1","query":"bad query","message":"search failed"}
+(pass) createMcpEvidenceProvider > skips query on search error and continues [0.11ms]
+{"ts":"2026-04-18T08:01:26.752Z","level":"info","event":"task.flow.start","taskId":"task-1","topic":"TypeScript","source":"user","mode":"directed"}
+{"ts":"2026-04-18T08:01:26.753Z","level":"info","event":"task.flow.done","taskId":"task-1","source":"user","changed":true,"acceptedClaims":1,"rejectedClaims":0,"conflicts":0,"gaps":4,"reportSummary":"Accepted 1 claims, rejected 0, conflicts 0, gaps 4"}
+(pass) createKnowFlowTaskHandler > uses defaultEvidenceProvider when none provided [1.47ms]
+{"ts":"2026-04-18T08:01:26.753Z","level":"info","event":"task.flow.start","taskId":"task-1","topic":"TypeScript","source":"cron","mode":"directed"}
+{"ts":"2026-04-18T08:01:26.753Z","level":"info","event":"task.flow.done","taskId":"task-1","source":"cron","changed":true,"acceptedClaims":1,"rejectedClaims":0,"conflicts":0,"gaps":4,"cronRunConsumed":2}
+(pass) createKnowFlowTaskHandler > handles cron source tasks [0.12ms]
+(pass) createKnowFlowTaskHandler > returns ok=false and logs error when evidenceProvider throws [0.09ms]
+
+test/knowflow/verifier.test.ts:
+(pass) verifier > returns accepted/rejected/conflicts from deterministic rules [0.26ms]
+(pass) verifier > builds summary for queue resultSummary
+(pass) verifier > derives domain from source url and accepts high-quality recent claim
+(pass) verifier > rejects stale low-quality evidence with explicit reasons [0.03ms]
+
+test/knowflow/explorationReport.test.ts:
+(pass) exploration report > builds a structured report with normalized budget and conflict strings [0.52ms]
+
+test/knowflow/args.test.ts:
+(pass) parseArgMap > parses key=value style args
+(pass) parseArgMap > parses boolean flag with no following value [0.12ms]
+(pass) parseArgMap > treats arg as boolean when followed by another --flag [0.01ms]
+(pass) parseArgMap > ignores non-flag tokens before flags [0.01ms]
+(pass) parseArgMap > returns empty object for empty args
+(pass) parseArgMap > handles trailing boolean flag
+(pass) parseArgMap > handles multiple key-value pairs
+(pass) readStringFlag > returns string value when present [0.04ms]
+(pass) readStringFlag > returns undefined for boolean flag
+(pass) readStringFlag > returns undefined for missing key
+(pass) readNumberFlag > parses a numeric string to number
+(pass) readNumberFlag > parses a float string
+(pass) readNumberFlag > returns undefined for non-numeric string
+(pass) readNumberFlag > returns undefined for boolean flag
+(pass) readNumberFlag > returns undefined for missing key
+(pass) readBooleanFlag > returns true when flag is boolean true
+(pass) readBooleanFlag > returns false when flag is a string value
+(pass) readBooleanFlag > returns false when key is missing
+
+test/knowflow/knowledgeSearch.integration.test.ts:
+(skip) knowledge search integration > (unnamed)
+(skip) knowledge search integration > returns FTS-ranked results with score
+(skip) knowledge search integration > falls back to LIKE when FTS has no hit
+(skip) knowledge search integration > (unnamed)
+
+test/knowflow/mcpRetriever.test.ts:
+(pass) mcp retriever > extracts text content from MCP tool response
+(pass) mcp retriever > throws when MCP tool marks response as error
+(pass) mcp retriever > throws for unexpected MCP response shape
+(pass) mcp retriever > throws when isError is true with no message
+(pass) mcp retriever > disconnect closes transport and resets client [0.36ms]
+(pass) MockRetriever > search returns mock result [0.02ms]
+(pass) MockRetriever > fetch returns mock content
+
+test/knowflow/flows.e2e.test.ts:
+(pass) Phase5/6 e2e > returns exploration report for user flow and no report for cron flow [0.29ms]
+(pass) Phase5/6 e2e > enforces cron run budget
+{"ts":"2026-04-18T08:01:26.760Z","level":"info","event":"task.dequeue.locked","workerId":"w-1","taskId":"e4462bdf-f83d-4b7f-a179-df0b4e1110ba","topic":"user topic","source":"user","attempts":0}
+{"ts":"2026-04-18T08:01:26.760Z","level":"info","event":"task.flow.start","taskId":"e4462bdf-f83d-4b7f-a179-df0b4e1110ba","topic":"user topic","source":"user","mode":"directed"}
+{"ts":"2026-04-18T08:01:26.760Z","level":"info","event":"task.flow.done","taskId":"e4462bdf-f83d-4b7f-a179-df0b4e1110ba","source":"user","changed":true,"acceptedClaims":1,"rejectedClaims":0,"conflicts":0,"gaps":4,"reportSummary":"Accepted 1 claims, rejected 0, conflicts 0, gaps 4"}
+{"ts":"2026-04-18T08:01:26.761Z","level":"info","event":"task.done","workerId":"w-1","taskId":"e4462bdf-f83d-4b7f-a179-df0b4e1110ba","summary":"accepted=1, rejected=0, conflicts=0, blocking=0; report=Accepted 1 claims, rejected 0, conflicts 0, gaps 4"}
+{"ts":"2026-04-18T08:01:26.761Z","level":"info","event":"task.dequeue.locked","workerId":"w-1","taskId":"bf906269-6381-4d73-9fd7-77780712cfeb","topic":"cron topic","source":"cron","attempts":0}
+{"ts":"2026-04-18T08:01:26.761Z","level":"info","event":"task.flow.start","taskId":"bf906269-6381-4d73-9fd7-77780712cfeb","topic":"cron topic","source":"cron","mode":"directed"}
+{"ts":"2026-04-18T08:01:26.761Z","level":"info","event":"task.flow.done","taskId":"bf906269-6381-4d73-9fd7-77780712cfeb","source":"cron","changed":true,"acceptedClaims":1,"rejectedClaims":0,"conflicts":0,"gaps":4,"cronRunConsumed":1}
+{"ts":"2026-04-18T08:01:26.761Z","level":"info","event":"task.done","workerId":"w-1","taskId":"bf906269-6381-4d73-9fd7-77780712cfeb","summary":"accepted=1, rejected=0, conflicts=0, blocking=0; cronRunConsumed=1"}
+(pass) Phase5/6 e2e > updates task resultSummary through knowflow handler [3.73ms]
+{"ts":"2026-04-18T08:01:26.763Z","level":"info","event":"task.dequeue.locked","workerId":"cron-worker","taskId":"067de314-2dbb-4391-b143-01d0798bf428","topic":"cron-window-a","source":"cron","attempts":0}
+{"ts":"2026-04-18T08:01:26.763Z","level":"info","event":"task.flow.start","taskId":"067de314-2dbb-4391-b143-01d0798bf428","topic":"cron-window-a","source":"cron","mode":"directed"}
+{"ts":"2026-04-18T08:01:26.763Z","level":"info","event":"task.flow.done","taskId":"067de314-2dbb-4391-b143-01d0798bf428","source":"cron","changed":true,"acceptedClaims":1,"rejectedClaims":0,"conflicts":0,"gaps":5,"cronRunConsumed":2}
+{"ts":"2026-04-18T08:01:26.764Z","level":"info","event":"task.done","workerId":"cron-worker","taskId":"067de314-2dbb-4391-b143-01d0798bf428","summary":"accepted=1, rejected=0, conflicts=0, blocking=0; cronRunConsumed=2"}
+{"ts":"2026-04-18T08:01:26.765Z","level":"info","event":"task.dequeue.locked","workerId":"cron-worker","taskId":"e3542010-a972-492b-b3d0-e4fa47022851","topic":"cron-window-b","source":"cron","attempts":0}
+{"ts":"2026-04-18T08:01:26.765Z","level":"info","event":"task.flow.start","taskId":"e3542010-a972-492b-b3d0-e4fa47022851","topic":"cron-window-b","source":"cron","mode":"directed"}
+{"ts":"2026-04-18T08:01:26.765Z","level":"error","event":"task.flow.error","taskId":"e3542010-a972-492b-b3d0-e4fa47022851","source":"cron","message":"CRON_RUN_BUDGET exceeded: used=4, limit=2"}
+{"ts":"2026-04-18T08:01:26.765Z","level":"warn","event":"task.deferred","workerId":"cron-worker","taskId":"e3542010-a972-492b-b3d0-e4fa47022851","error":"CRON_RUN_BUDGET exceeded: used=4, limit=2","attempts":1,"nextRunAt":1500}
+{"ts":"2026-04-18T08:01:26.765Z","level":"info","event":"task.dequeue.locked","workerId":"cron-worker","taskId":"e3542010-a972-492b-b3d0-e4fa47022851","topic":"cron-window-b","source":"cron","attempts":1}
+{"ts":"2026-04-18T08:01:26.765Z","level":"info","event":"task.flow.start","taskId":"e3542010-a972-492b-b3d0-e4fa47022851","topic":"cron-window-b","source":"cron","mode":"directed"}
+{"ts":"2026-04-18T08:01:26.765Z","level":"info","event":"task.flow.done","taskId":"e3542010-a972-492b-b3d0-e4fa47022851","source":"cron","changed":true,"acceptedClaims":1,"rejectedClaims":0,"conflicts":0,"gaps":5,"cronRunConsumed":2}
+{"ts":"2026-04-18T08:01:26.766Z","level":"info","event":"task.done","workerId":"cron-worker","taskId":"e3542010-a972-492b-b3d0-e4fa47022851","summary":"accepted=1, rejected=0, conflicts=0, blocking=0; cronRunConsumed=2"}
+(pass) Phase5/6 e2e > resets cron run budget window to avoid permanent cron starvation [4.04ms]
+
+test/knowflow/metricsCollector.test.ts:
+(pass) metrics collector > returns zero snapshot when no samples were recorded
+(pass) metrics collector > aggregates totals and KPI values from recorded samples
+
+test/knowflow/mergeEngine.test.ts:
+(pass) merge engine > normalizes and dedupes merge input deterministically
+(pass) merge engine > delegates normalized payload to repository.merge [0.34ms]
+
+test/knowflow/llmAdapter.test.ts:
+(pass) llm adapter > extracts JSON from complex responses
+(pass) llm adapter > throws on schema violations in parseLlmTaskOutputText [0.36ms]
+(pass) llm adapter > throws on malformed JSON in parseLlmTaskOutputText
+(pass) llm adapter > returns API output when schema-valid [0.11ms]
+(pass) llm adapter > falls back to CLI when API fails [0.60ms]
+(pass) llm adapter > returns degraded output when all backends fail
+[Semaphore] Acquired slot 1/1 for: local-llm
+[Semaphore] Released slot 1/1 for: local-llm
+(pass) llm adapter > respects maxRetries=1 (no retries) [3.52ms]
+
+test/knowflow/queueFactory.test.ts:
+(pass) queue factory > uses file backend when explicitly requested [0.09ms]
+(pass) queue factory > defaults to postgres backend
+(pass) queue factory > creates postgres backend when requested
+(pass) queue factory > fails when postgres backend is selected without connection string [0.09ms]
+(pass) queue factory > validates backend value
+
+test/knowflow/queuePostgres.integration.test.ts:
+[33m[skip] Skipping PostgreSQL integration tests. Set KNOWFLOW_RUN_INTEGRATION=1 and DATABASE_URL to run them.[0m
+(skip) postgres queue integration > (unnamed)
+(skip) postgres queue integration > locks different tasks for concurrent workers using SKIP LOCKED
+(skip) postgres queue integration > (unnamed)
+
+test/knowflow/knowledgeUtils.test.ts:
+(pass) knowledge utils > canonicalizes topics [0.29ms]
+(pass) knowledge utils > normalizes and deduplicates aliases
+(pass) knowledge utils > does not collapse unrelated non-ascii aliases [0.33ms]
+(pass) knowledge utils > generates stable fingerprint
+(pass) knowledge utils > computes jaccard similarity [0.04ms]
+(pass) knowledge utils > decides claim merge by similarity or exact fingerprint [0.02ms]
+(pass) knowledge utils > computes cosine similarity when vectors are valid [0.08ms]
+(pass) knowledge utils > merges claims by embedding when texts differ [0.08ms]
+(pass) knowledge utils > accepts upsert input claims without id [0.07ms]
+
+test/knowflow/taskRow.test.ts:
+(pass) queue task row mapping > maps task to db row fields [0.45ms]
+(pass) queue task row mapping > parses payload into validated task
+
+test/knowflow/evalRunner.test.ts:
+(pass) eval runner > runs local eval suite in mock mode with deterministic success [0.62ms]
+(pass) eval runner > throws when maxDegradedRate is out of range [0.02ms]
+(pass) eval runner > throws when suite root is not an object [0.03ms]
+(pass) eval runner > throws when suite name is missing [0.01ms]
+(pass) eval runner > throws when cases is not an array
+(pass) eval runner > throws when a case is not an object
+(pass) eval runner > throws when case id is empty
+(pass) eval runner > throws when case task is not a string
+(pass) eval runner > throws when case context is not an object
+(pass) eval runner > throws when case task is an unsupported value [0.20ms]
+(pass) eval runner > runs live mode with injected runLlmTask
+(pass) eval runner > records failure when runLlmTask throws [0.26ms]
+(pass) eval runner > throws when maxDegradedRate is exceeded
+(pass) eval runner > includes latency stats for zero-case suite
+(pass) eval runner > includes warning case rate when task has warnings
+
+test/knowflow/gapDetector.test.ts:
+(pass) gap detector > combines rule-based gaps and llm gaps [0.63ms]
+(pass) gap detector > avoids false positive rule gaps when evidence is sufficiently complete
+(pass) gap detector > keeps llm-only gap origin when no matching rule gap exists
+
+test/knowflow/phase1.test.ts:
+(pass) Phase1: queue/scheduler/worker > dedupes enqueue by dedupeKey for active tasks [1.35ms]
+(pass) Phase1: queue/scheduler/worker > prioritizes user tasks over cron tasks when locking [1.54ms]
+{"ts":"2026-04-18T08:01:26.783Z","level":"info","event":"task.dequeue.locked","workerId":"worker-84642","taskId":"b6c6bb45-ce63-4cdf-8463-fdad33ff66f6","topic":"retry topic","source":"cron","attempts":0}
+{"ts":"2026-04-18T08:01:26.783Z","level":"warn","event":"task.deferred","workerId":"worker-84642","taskId":"b6c6bb45-ce63-4cdf-8463-fdad33ff66f6","error":"temporary failure","attempts":1,"nextRunAt":10500}
+(pass) Phase1: queue/scheduler/worker > defers failed tasks with exponential backoff [1.33ms]
+(pass) Phase1: queue/scheduler/worker > marks task failed when maxAttempts is reached [1.12ms]
+(pass) Phase1: queue/scheduler/worker > backoff has cap [0.02ms]
+
+test/services/sync.test.ts:
+(pass) sync service > syncAllAgentLogs > exports syncAllAgentLogs function [0.02ms]
+(pass) sync service > syncAllAgentLogs > handles empty ingestion gracefully
+
+test/services/knowledge.test.ts:
+(pass) knowledge service > searchKnowledgeClaims > returns empty array for empty query
+(pass) knowledge service > searchKnowledgeClaims > returns empty array for whitespace-only query
+(pass) knowledge service > searchKnowledgeClaims > normalizes limit to positive integer [18.46ms]
+Error in getKnowledgeByTopic: Error: Failed query: select "id", "canonical_topic", "aliases", "confidence", "coverage", "version", "created_at", "updated_at" from "knowledge_topics" where "knowledge_topics"."canonical_topic" = $1 limit $2
+params: nonexistent-topic-12345,1
+(pass) knowledge service > getKnowledgeByTopic > returns null for non-existent topic [3.25ms]
+Error in getKnowledgeByTopic: Error: Failed query: select "id", "canonical_topic", "aliases", "confidence", "coverage", "version", "created_at", "updated_at" from "knowledge_topics" where "knowledge_topics"."canonical_topic" = $1 limit $2
+params: test topic,1
+(pass) knowledge service > getKnowledgeByTopic > normalizes topic name with trim and lowercase [2.78ms]
+
+test/mcp/tools/queryProcedure.test.ts:
+(pass) query_procedure MCP tool > passes expanded applicability filters to service [0.21ms]
+
+test/mcp/tools/knowflow.test.ts:
+(pass) knowflow MCP tools > enqueue_knowledge_task > enqueues a task and returns taskId and deduped status [0.08ms]
+(pass) knowflow MCP tools > enqueue_knowledge_task > reports deduped=true when task already exists [0.13ms]
+{"ts":"2026-04-18T08:01:26.812Z","level":"info","event":"task.dequeue.locked","workerId":"worker-84642","taskId":"task-xyz","topic":"TypeScript","source":"user","attempts":0}
+{"ts":"2026-04-18T08:01:26.812Z","level":"info","event":"task.done","workerId":"worker-84642","taskId":"task-xyz","summary":"done"}
+(pass) knowflow MCP tools > run_knowledge_worker > returns task processed message when task is processed [0.14ms]
+{"ts":"2026-04-18T08:01:26.812Z","level":"debug","event":"task.dequeue.empty","workerId":"worker-84642"}
+(pass) knowflow MCP tools > run_knowledge_worker > returns no pending tasks message when queue is empty
+
+test/mcp/tools/sync.test.ts:
+(pass) sync MCP tools > sync_agent_logs > calls syncAllAgentLogs and returns JSON result
+(pass) sync MCP tools > sync_agent_logs > handles empty sync result [0.26ms]
+(pass) sync MCP tools > reflect_on_memories > calls synthesizeKnowledge and returns JSON result [0.04ms]
+(pass) sync MCP tools > reflect_on_memories > handles no pending memories result
+
+test/mcp/tools/guidance.test.ts:
+(pass) guidance MCP tools > register_guidance > calls saveGuidance and returns success message
+(pass) guidance MCP tools > register_guidance > passes optional fields through to saveGuidance
+(pass) guidance MCP tools > register_guidance > throws on invalid input schema
+
+test/mcp/tools/knowledge.test.ts:
+(pass) knowledge MCP tools > search_knowledge > calls searchKnowledgeClaims with query and returns results
+(pass) knowledge MCP tools > search_knowledge > uses default limit of 5 when not specified
+(pass) knowledge MCP tools > get_knowledge > returns JSON knowledge when topic exists
+(pass) knowledge MCP tools > get_knowledge > returns not-found message when topic does not exist
+(pass) knowledge MCP tools > search_unified > mode=fts calls searchKnowledgeClaims
+(pass) knowledge MCP tools > search_unified > mode=kg calls findEntityById then queryGraphContext when found [0.53ms]
+(pass) knowledge MCP tools > search_unified > mode=kg falls back to searchEntityByQuery when no exact match [0.02ms]
+(pass) knowledge MCP tools > search_unified > mode=kg returns not-found when no entity exists
+(pass) knowledge MCP tools > search_unified > mode=semantic calls searchMemory
+(pass) knowledge MCP tools > search_unified > mode=semantic uses default sessionId when not specified [0.11ms]
+
+test/mcp/tools/graph.test.ts:
+(pass) graph MCP tools > query_graph > returns entity context when found by exact id [0.18ms]
+(pass) graph MCP tools > query_graph > falls back to search when no exact id match
+(pass) graph MCP tools > query_graph > returns not-found message when no entity matches [0.11ms]
+(pass) graph MCP tools > digest_text > returns intelligence results as JSON [0.03ms]
+(pass) graph MCP tools > update_graph > updates entity and returns success message [0.11ms]
+(pass) graph MCP tools > update_graph > throws when update_entity is called without entity.id [0.04ms]
+(pass) graph MCP tools > update_graph > deletes relation and returns success message [0.02ms]
+(pass) graph MCP tools > update_graph > throws when delete_relation is called without relation [0.04ms]
+(pass) graph MCP tools > find_path > returns path result as JSON [0.02ms]
+(pass) graph MCP tools > build_communities > returns community rebuild result as JSON [0.11ms]
+
+test/mcp/tools/memory.test.ts:
+(pass) memory tool handlers > store_memory: saves memory, entities and relations within a transaction [0.44ms]
+(pass) memory tool handlers > search_memory: calls search service
+(pass) memory tool handlers > delete_memory: calls delete service
+
+test/mcp/tools/experience.test.ts:
+(pass) experience tool handlers > record_experience: calls service and returns success message
+(pass) experience tool handlers > record_experience: throws Zod error for invalid input
+(pass) experience tool handlers > recall_lessons: calls service and returns results as JSON
+
+src/services/review/tools/index.spec.ts:
+(pass) ReviewerToolRegistry > should register and execute a tool [0.17ms]
+(pass) ReviewerToolRegistry > should throw error for unknown tool [0.02ms]
+(pass) ReviewerToolRegistry > should return error message when handler fails
+(pass) ReviewerToolRegistry > should convert to LLM tool definitions
+
+src/services/review/llm/pseudoToolReviewer.spec.ts:
+(pass) reviewWithPseudoTools > should handle a successful tool call loop [0.45ms]
+(pass) reviewWithPseudoTools > should handle malformed JSON args in tool call [0.10ms]
+(pass) reviewWithPseudoTools > should terminate after max rounds [0.03ms]
+
+src/services/review/llm/agenticReviewer.spec.ts:
+(pass) reviewWithNativeTools > should handle native tool use loop [0.22ms]
+(pass) reviewWithNativeTools > should throw if llm does not support structured calls [0.05ms]
+
+src/services/knowflow/ops/healthCheck.test.ts:
+{"ts":"2026-04-18T08:01:26.821Z","level":"info","event":"worker.health_check.ok","details":{"api":{"ok":true,"message":"Connected to http://localhost:1234"},"cli":{"ok":true,"message":"Command 'any_command' is available."}}}
+(pass) healthCheck > should return ok: true if API is reachable [0.35ms]
+{"ts":"2026-04-18T08:01:26.821Z","level":"error","event":"worker.health_check.failed","details":{"api":{"ok":false,"message":"Could not connect to http://localhost:1234"},"cli":{"ok":false,"message":"CLI command check failed: Error: command not found"}}}
+(pass) healthCheck > should return ok: false if both API and CLI fail
+{"ts":"2026-04-18T08:01:26.821Z","level":"info","event":"worker.health_check.ok","details":{"api":{"ok":false,"message":"Could not connect to http://localhost:1234"},"cli":{"ok":true,"message":"Command 'any_command' is available."}}}
+(pass) healthCheck > should return ok: true if API fails but CLI is ok (fallback)
+{"ts":"2026-04-18T08:01:26.821Z","level":"error","event":"worker.health_check.failed","details":{"api":{"ok":false,"message":"Could not connect to http://localhost:1234"}}}
+(pass) healthCheck > should return ok: false when cliFallback is disabled and API fails
+{"ts":"2026-04-18T08:01:26.821Z","level":"info","event":"worker.health_check.ok","details":{"api":{"ok":false,"message":"TypeError [ERR_INVALID_URL]: \"/v1\" cannot be parsed as a URL against \"not-a-url\""},"cli":{"ok":true,"message":"Command 'any_command' is available."}}}
+(pass) healthCheck > covers api catch block when URL construction throws
+
+src/services/knowflow/worker/loop.test.ts:
+{"ts":"2026-04-18T08:01:26.821Z","level":"info","event":"task.dequeue.locked","workerId":"worker-84642","taskId":"test-1","topic":"test","source":"user","attempts":0}
+{"ts":"2026-04-18T08:01:26.822Z","level":"info","event":"task.done","workerId":"worker-84642","taskId":"test-1","summary":"done"}
+(pass) worker loop > runWorkerOnce should handle successful task [0.14ms]
+{"ts":"2026-04-18T08:01:26.822Z","level":"info","event":"task.dequeue.locked","workerId":"worker-84642","taskId":"test-1","topic":"test","source":"user","attempts":0}
+{"ts":"2026-04-18T08:01:26.833Z","level":"warn","event":"task.deferred","workerId":"worker-84642","taskId":"test-1","error":"Task execution timed out after 10ms","attempts":1,"nextRunAt":1776499316833}
+(pass) worker loop > runWorkerOnce should handle timeout [11.10ms]
+(pass) worker loop > runWorkerLoop should trigger circuit breaker on consecutive errors
+(pass) worker loop > runWorkerOnce returns processed=false when queue is empty
+{"ts":"2026-04-18T08:01:26.833Z","level":"info","event":"task.dequeue.locked","workerId":"worker-84642","taskId":"test-1","topic":"test","source":"user","attempts":0}
+{"ts":"2026-04-18T08:01:26.833Z","level":"error","event":"task.failed","workerId":"worker-84642","taskId":"test-1","error":"unexpected crash","attempts":1}
+(pass) worker loop > runWorkerOnce handles handler that throws exception
+(pass) worker loop > defaultTaskHandler returns ok=true with summary
+(pass) worker loop > runWorkerLoop resets consecutiveErrors on successful task
+(pass) worker loop > runWorkerLoop handles critical error from runWorkerOnce
+(pass) worker loop > runWorkerLoop sleeps when no task is available
+
+apps/monitor/src/lib/monitor/detailRequestGuard.test.ts:
+(pass) detail request guard > accepts only the latest request sequence
+(pass) detail request guard > invalidates in-flight requests when closed
+
+16 tests skipped:
+(skip) Bedrock live integration > AWS Bedrock live test is not enabled or environment variables are not fully configured
+(skip) Graph Engine Services > (unnamed)
+(skip) Graph Engine Services > should save entities and relations
+(skip) Graph Engine Services > should update entity
+(skip) Graph Engine Services > should delete relation
+(skip) Graph Engine Services > (unnamed)
+(skip) Vibe Memory Services > (unnamed)
+(skip) Vibe Memory Services > should save a memory and search it via vector similarity
+(skip) Vibe Memory Services > (unnamed)
+(skip) knowledge search integration > (unnamed)
+(skip) knowledge search integration > returns FTS-ranked results with score
+(skip) knowledge search integration > falls back to LIKE when FTS has no hit
+(skip) knowledge search integration > (unnamed)
+(skip) postgres queue integration > (unnamed)
+(skip) postgres queue integration > locks different tasks for concurrent workers using SKIP LOCKED
+(skip) postgres queue integration > (unnamed)
+----------------------------------------------------|---------|---------|-------------------
+File                                                | % Funcs | % Lines | Uncovered Line #s
+----------------------------------------------------|---------|---------|-------------------
+All files                                           |   72.94 |   75.39 |
+ apps/monitor/src/lib/monitor/detailRequestGuard.ts |  100.00 |  100.00 | 
+ src/adapters/llm.ts                                |   64.29 |   57.99 | 55-59,73-93,97,100-142,156,159,172,179-226,230-231,240,262,296-309,312-318,330-342,349-351
+ src/adapters/retriever/mcpRetriever.ts             |   82.35 |   68.93 | 76-98,140-148
+ src/config.ts                                      |  100.00 |  100.00 | 
+ src/db/index.ts                                    |  100.00 |  100.00 | 
+ src/db/migrationMeta.ts                            |   60.71 |   86.60 | 38,42-43,69-73,77-81
+ src/db/schema.ts                                   |   61.11 |  100.00 | 
+ src/domain/errors.ts                               |  100.00 |  100.00 | 
+ src/domain/schemas.ts                              |  100.00 |  100.00 | 
+ src/mcp/server.ts                                  |   83.33 |   66.22 | 15-34,73-77
+ src/mcp/tools/experience.ts                        |  100.00 |  100.00 | 
+ src/mcp/tools/graph.ts                             |  100.00 |   99.22 | 
+ src/mcp/tools/guidance.ts                          |  100.00 |  100.00 | 
+ src/mcp/tools/index.ts                             |  100.00 |  100.00 | 
+ src/mcp/tools/knowflow.ts                          |  100.00 |  100.00 | 
+ src/mcp/tools/knowledge.ts                         |  100.00 |   98.84 | 
+ src/mcp/tools/memory.ts                            |   88.89 |   87.12 | 131-147
+ src/mcp/tools/queryProcedure.ts                    |  100.00 |   93.02 | 44-46
+ src/mcp/tools/recordOutcome.ts                     |    0.00 |   63.04 | 36-52
+ src/mcp/tools/review.ts                            |    0.00 |   16.35 | 36-37,41-42,46-48,52-119,129-227
+ src/mcp/tools/sync.ts                              |  100.00 |  100.00 | 
+ src/scripts/ask-llm.ts                             |   15.00 |   18.27 | 49-65,107-109,113,117,121-150,154-158,162,166-186,219-227,231-261,265-271,275-295,299-302,306-369,373-464,468-479,484-485
+ src/scripts/llmConversation.ts                     |   76.92 |   64.86 | 39-52,58-61,82,90-92,95-97,100-105,119,126-129,144-145,149-150,156-159,164,182,190-194,221,227-231,280-283,285,287-296,299-303,330-331,333-340,342-343,345
+ src/scripts/local-llm-cli.ts                       |   66.67 |   72.64 | 34,96-120,125-126
+ src/scripts/localMcpClient.ts                      |    0.00 |   17.86 | 8-17,22-34
+ src/scripts/monitor-detail.ts                      |   12.50 |   10.06 | 40,44-46,50-63,72-93,98-148,152-217,222-224
+ src/scripts/webTools.ts                            |    0.00 |    0.00 | 6-157
+ src/services/background/scheduler.ts               |  100.00 |  100.00 | 
+ src/services/community.ts                          |   83.33 |   91.76 | 119-125
+ src/services/consolidation.ts                      |   57.14 |   80.87 | 40,72,96-97,103-106,122-129,131-135,209-210,217-224,235-236,238-239
+ src/services/experience.ts                         |  100.00 |  100.00 | 
+ src/services/graph.ts                              |   77.14 |   79.15 | 22-24,27-29,251-257,282-298,449-450,452-455,457-458,461-464,466-468,470,472,474-477,480-482,484-488,490,493-505
+ src/services/guidance/chunking.ts                  |   87.50 |   75.00 | 4-9,50,65-73,78-80
+ src/services/guidance/import.ts                    |   78.95 |   77.06 | 68-72,170-179,183-217,221-222,271-278,318-325,398-404
+ src/services/guidance/index.ts                     |  100.00 |  100.00 | 
+ src/services/guidance/register.ts                  |    0.00 |    4.67 | 22-123
+ src/services/guidance/search.ts                    |    0.00 |    8.86 | 7-28,32-59,63-84
+ src/services/guidance/types.ts                     |  100.00 |  100.00 | 
+ src/services/guidance/zip.ts                       |   33.33 |   20.27 | 6-50,64-68,72-73,77-83
+ src/services/ingest.ts                             |   94.74 |   82.61 | 49,81-82,98-104,118-126,193-194,202-203,217-218,224,227-228,235,240-241,290-291,296,299-300,310-311,315-316
+ src/services/knowflow/domain/task.ts               |  100.00 |  100.00 | 
+ src/services/knowflow/eval/runner.ts               |  100.00 |  100.00 | 
+ src/services/knowflow/flows/cronFlow.ts            |  100.00 |   97.73 | 
+ src/services/knowflow/flows/userFlow.ts            |  100.00 |   97.83 | 
+ src/services/knowflow/gap/detector.ts              |  100.00 |   97.81 | 125,186-187
+ src/services/knowflow/knowledge/canonicalize.ts    |  100.00 |  100.00 | 
+ src/services/knowflow/knowledge/repository.ts      |    0.00 |    4.28 | 41-44,48,52-58,62-70,80-248,252-419
+ src/services/knowflow/knowledge/similarity.ts      |  100.00 |   94.12 | 69,73,88,106
+ src/services/knowflow/knowledge/types.ts           |  100.00 |  100.00 | 
+ src/services/knowflow/merge/index.ts               |   83.33 |  100.00 | 
+ src/services/knowflow/ops/evidenceExtractor.ts     |  100.00 |  100.00 | 
+ src/services/knowflow/ops/healthCheck.ts           |   75.00 |  100.00 | 
+ src/services/knowflow/ops/logger.ts                |  100.00 |  100.00 | 
+ src/services/knowflow/ops/metrics.ts               |   91.67 |  100.00 | 
+ src/services/knowflow/queue/factory.ts             |  100.00 |  100.00 | 
+ src/services/knowflow/queue/pgJsonbRepository.ts   |    0.00 |    3.22 | 14-314
+ src/services/knowflow/queue/repository.ts          |   93.94 |   88.27 | 171-191
+ src/services/knowflow/queue/taskRow.ts             |  100.00 |  100.00 | 
+ src/services/knowflow/report/explorationReport.ts  |  100.00 |  100.00 | 
+ src/services/knowflow/scheduler/policy.ts          |  100.00 |  100.00 | 
+ src/services/knowflow/schemas/llm.ts               |  100.00 |   97.39 | 141,145-146
+ src/services/knowflow/utils/args.ts                |  100.00 |  100.00 | 
+ src/services/knowflow/utils/output.ts              |  100.00 |   82.86 | 28-36,42,58
+ src/services/knowflow/utils/profile.ts             |  100.00 |   93.65 | 23,29,51,55,64,73,79
+ src/services/knowflow/verifier/index.ts            |  100.00 |   96.79 | 72-73,75,81,95,105
+ src/services/knowflow/worker/knowFlowHandler.ts    |  100.00 |  100.00 | 
+ src/services/knowflow/worker/loop.ts               |  100.00 |  100.00 | 
+ src/services/knowledge.ts                          |   66.67 |   60.75 | 43,90-91,93-118,120-132
+ src/services/llm.ts                                |   85.71 |   94.22 | 37,80-81,104-105,255-256,315-316
+ src/services/memory.ts                             |   85.19 |   79.75 | 43-44,56,74,88,93-96,102-105,141,143-144,176-205,282-284
+ src/services/memoryLoopLlmRouter.ts                |   94.12 |   94.83 | 62,278,280-285
+ src/services/procedure.ts                          |   19.23 |   14.68 | 150-155,158-161,165-198,235,238-250,253-267,269-275,278-282,284-294,296-301,304-307,309-318,320-322,325-341,344-360,363-373,375,378-390,393-398,401-417,419,422-423,425-432,443-637
+ src/services/review/diff/merge.ts                  |   81.82 |   88.89 | 58-68
+ src/services/review/diff/normalizer.ts             |   94.12 |   92.23 | 9-13,37-38
+ src/services/review/errors.ts                      |  100.00 |  100.00 | 
+ src/services/review/foundation/allowedRoots.ts     |  100.00 |   88.89 | 13-14
+ src/services/review/foundation/gitDiff.ts          |    0.00 |    7.14 | 5-17
+ src/services/review/foundation/hardLimit.ts        |  100.00 |   80.00 | 28-31,45-48
+ src/services/review/foundation/secretMask.ts       |  100.00 |   87.88 | 36,50-52
+ src/services/review/foundation/sessionId.ts        |  100.00 |  100.00 | 
+ src/services/review/knowledge/evolution.ts         |    0.00 |    7.55 | 17-18,22-24,28-30,34-79,93-117,132-133,137-138,142-146,150-208
+ src/services/review/knowledge/fixSuggester.ts      |  100.00 |   71.30 | 36-41,47-52,69-85,133-134
+ src/services/review/knowledge/index.ts             |  100.00 |  100.00 | 
+ src/services/review/knowledge/persister.ts         |   80.00 |   79.26 | 174-205,209-215
+ src/services/review/knowledge/retriever.ts         |   87.88 |   86.36 | 41,84-86,130,134,167-172,250-264
+ src/services/review/llm/agenticReviewer.ts         |  100.00 |   86.96 | 13,59,61-64
+ src/services/review/llm/cloudProvider.ts           |   77.78 |   50.35 | 66-68,70-72,74-76,81-98,102-105,115,117-119,128-130,202,255-258,279-291,295-308,381,383,385-389,437,440-443,446-449,467-478,482-485,490-585,591-725,765,787-792,795-798,814-815,822,826-830
+ src/services/review/llm/hallucinator.ts            |   80.00 |   70.45 | 29,33,37,41,53-61
+ src/services/review/llm/localProvider.ts           |   33.33 |   18.40 | 41-51,55-94,98-99,103-108,112,116-124,128-129,139-200
+ src/services/review/llm/promptBuilder.ts           |  100.00 |   93.24 | 31,76,82-85,154,163,167-170,221,262
+ src/services/review/llm/pseudoToolReviewer.ts      |   75.00 |   98.08 | 
+ src/services/review/llm/reviewer.ts                |   66.67 |   43.95 | 24-42,46-51,58,64,66-67,92,133-137,145-239,258-261,269-273
+ src/services/review/mcp/caller.ts                  |  100.00 |   80.00 | 14-15
+ src/services/review/memoryIntegration.ts           |    0.00 |   14.29 | 14-33,40-61
+ src/services/review/metrics/calculator.ts          |    0.00 |    3.16 | 5-6,10-55,59-79,83-105
+ src/services/review/orchestrator.ts                |   62.86 |   28.21 | 80-81,86-87,90-105,144-153,175-176,180-184,186-193,195-197,221-232,236-254,258-276,293,298,307,309,311-320,322-328,330-342,344-348,350,383,442,447,462,464-488,490-500,502-514,516,519,523-541,545-666,670-688,692-826,831-835,839-843,847-852
+ src/services/review/planner/riskScorer.ts          |  100.00 |   89.23 | 54,56-60
+ src/services/review/render/markdown.ts             |  100.00 |   95.42 | 77-81
+ src/services/review/static/astmend.ts              |  100.00 |   97.87 | 118,160
+ src/services/review/static/classifier.ts           |    0.00 |   30.77 | 7,11-14,18-21
+ src/services/review/static/diffguard.ts            |  100.00 |   95.52 | 22,89-90
+ src/services/review/static/runner.ts               |    0.00 |   10.60 | 24-32,37-38,42-69,74-131,135-150,154-155,160-186,190-194,198-200,204-207,211-249
+ src/services/review/tools/getSymbols.ts            |    0.00 |   26.67 | 17-60
+ src/services/review/tools/gitTools.ts              |    0.00 |   50.39 | 22-39,56-69,88-102,122-137
+ src/services/review/tools/gnosisTools.ts           |    0.00 |   61.33 | 19-29,48-58,76-83,101-106,127-139,159-167
+ src/services/review/tools/index.ts                 |   88.89 |  100.00 | 
+ src/services/review/tools/readFile.ts              |   60.00 |   76.56 | 32,63-76
+ src/services/review/tools/searchCode.ts            |    0.00 |   34.04 | 17-47
+ src/services/review/tools/staticAnalysis.ts        |    0.00 |   54.10 | 18-32,52-64
+ src/services/review/tools/webSearch.ts             |    0.00 |   56.00 | 15-25
+ src/services/review/types.ts                       |  100.00 |  100.00 | 
+ src/services/sync.ts                               |    0.00 |    5.04 | 22-23,27-54,58-64,68-80,84-103,107-109,113-117,121-123,127-146,153-277
+ src/services/synthesis.ts                          |  100.00 |  100.00 | 
+ src/utils/crypto.ts                                |  100.00 |  100.00 | 
+ src/utils/entityId.ts                              |  100.00 |  100.00 | 
+ src/utils/lock.ts                                  |  100.00 |   96.83 | 29
+ src/utils/secretFilter.ts                          |  100.00 |  100.00 | 
+ src/utils/time.ts                                  |  100.00 |  100.00 | 
+----------------------------------------------------|---------|---------|-------------------
+
+ 384 pass
+ 16 skip
+ 0 fail
+ 914 expect() calls
+Ran 400 tests across 72 files. [857.00ms]

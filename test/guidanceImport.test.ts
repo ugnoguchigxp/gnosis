@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+import { config } from '../src/config.js';
 import { importGuidanceArchives } from '../src/services/guidance';
 import type { PersistImportInput } from '../src/services/guidance';
 
@@ -25,7 +26,7 @@ describe('importGuidanceArchives', () => {
         computeFileHash: async () => 'same-hash',
         listZipEntries: async () => ['rules.md'],
         readZipEntryText: async () => '# Rules\n\nAlways log safely.',
-        generateEmbedding: async () => [0.1, 0.2, 0.3],
+        generateEmbedding: async () => new Array(config.embeddingDimension).fill(0.1),
         repository: {
           getState: async (id: string) =>
             id === stateId
@@ -73,7 +74,7 @@ describe('importGuidanceArchives', () => {
         computeFileHash: async () => 'new-hash',
         listZipEntries: async () => ['rules.md'],
         readZipEntryText: async () => '# Updated Rules\n\nDo not leak tokens.',
-        generateEmbedding: async () => [0.9, 0.8, 0.7],
+        generateEmbedding: async () => new Array(config.embeddingDimension).fill(0.9),
         repository: {
           getState: async (id: string) =>
             id === stateId
@@ -123,7 +124,7 @@ describe('importGuidanceArchives', () => {
         computeFileHash: async () => 'react-hash',
         listZipEntries: async () => ['frontend/react-best.md'],
         readZipEntryText: async () => '# React Best\n\nPrefer small composable hooks.',
-        generateEmbedding: async () => [0.2, 0.3, 0.4],
+        generateEmbedding: async () => new Array(config.embeddingDimension).fill(0.2),
         repository: {
           getState: async () => null,
           persistImport: async (input: PersistImportInput) => {
