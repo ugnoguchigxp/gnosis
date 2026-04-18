@@ -188,7 +188,7 @@ export async function retrieveSuccessBenchmarks(
   deps: { searchMemory?: typeof searchMemory } = {},
 ): Promise<string[]> {
   const searchMem = deps.searchMemory ?? searchMemory;
-  
+
   // 成功したエピソードのみを検索
   const results = await searchMem(
     `code-review-${projectKey}`,

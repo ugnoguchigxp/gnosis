@@ -215,7 +215,9 @@ export function buildReviewPromptV3(context: ReviewContextV3): string {
 
   if (context.pastSuccessBenchmarks.length > 0) {
     parts.push('## 過去の成功実装 (Golden Path)');
-    parts.push('以下の過去の成功例をベンチマークとして参照し、今回の実装が整合しているか、またはより良いアプローチを選択しているかを確認してください。');
+    parts.push(
+      '以下の過去の成功例をベンチマークとして参照し、今回の実装が整合しているか、またはより良いアプローチを選択しているかを確認してください。',
+    );
     parts.push('');
     parts.push(...context.pastSuccessBenchmarks.map((entry) => `- ${entry}`));
     parts.push('');
@@ -247,7 +249,9 @@ export function buildReviewPromptV3(context: ReviewContextV3): string {
   parts.push('## レビュー優先順位');
   parts.push('');
   parts.push('1. 静的解析結果を最重視する（linter/type checker の指摘は必ず言及）');
-  parts.push('2. 過去の成功実装（Golden Path）をベンチマークとし、ベストプラクティスに従っているか評価する');
+  parts.push(
+    '2. 過去の成功実装（Golden Path）をベンチマークとし、ベストプラクティスに従っているか評価する',
+  );
   parts.push('3. Guidance の内容は diff と突き合わせて根拠ベースで適用する');
   parts.push('4. 過去の類似指摘（失敗例）は再発防止の観点で参照する');
   parts.push('5. 影響範囲解析で外部参照が指摘されたシンボルは追従漏れを重点チェック');

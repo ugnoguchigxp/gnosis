@@ -372,7 +372,9 @@ export async function queryProcedure(
         .where(eq(vibeMemories.id, memoryId));
       if (mem) {
         // メタデータまたは内容から成否を判定
-        const isSuccess = (mem.metadata as any)?.succeeded === true || mem.content.includes('succeeded=true');
+        const isSuccess =
+          (mem.metadata as Record<string, unknown>)?.succeeded === true ||
+          mem.content.includes('succeeded=true');
         episodeInfos.set(ep.id, { story: mem.content, isSuccess });
       }
     } else {
@@ -430,9 +432,15 @@ export async function queryProcedure(
   });
 
   // Confidence スコアに基づく最終分類・ソート
-  const highConfidenceTasks = tasks.filter((t) => t.confidence >= 0.7).sort((a, b) => a.order - b.order);
-  const normalTasks = tasks.filter((t) => t.confidence >= 0.3 && t.confidence < 0.7).sort((a, b) => a.order - b.order);
-  const lowConfidenceTasks = tasks.filter((t) => t.confidence < 0.3).map((t) => ({ ...t, order: 9999 }));
+  const highConfidenceTasks = tasks
+    .filter((t) => t.confidence >= 0.7)
+    .sort((a, b) => a.order - b.order);
+  const normalTasks = tasks
+    .filter((t) => t.confidence >= 0.3 && t.confidence < 0.7)
+    .sort((a, b) => a.order - b.order);
+  const lowConfidenceTasks = tasks
+    .filter((t) => t.confidence < 0.3)
+    .map((t) => ({ ...t, order: 9999 }));
 
   return {
     goal: { id: goalEntity.id, name: goalEntity.name, description: goalEntity.description ?? '' },
@@ -445,7 +453,6 @@ export async function queryProcedure(
     })),
   };
 }
-
 
 // ---------------------------------------------------------------------------
 // recordOutcome (Phase 5)

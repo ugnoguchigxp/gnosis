@@ -82,7 +82,9 @@ describe('review stage C', () => {
       recalledPatterns: [guidance[2]],
       optionalSkills: [],
       pastSimilarFindings: ['過去の類似指摘 (security) src/auth.ts: Missing token check'],
-      pastSuccessBenchmarks: ['過去の成功実装 (secure-auth) Implementation using standard JWT helper'],
+      pastSuccessBenchmarks: [
+        '過去の成功実装 (secure-auth) Implementation using standard JWT helper',
+      ],
       outputSchema: {},
     });
 
