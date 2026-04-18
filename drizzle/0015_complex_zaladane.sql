@@ -1,0 +1,1 @@
+ALTER TABLE "topic_tasks" ADD CONSTRAINT "topic_tasks_priority_check" CHECK ("topic_tasks"."priority" >= 1);

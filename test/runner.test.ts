@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { processQueue, runTask } from '../src/services/background/runner.js';
 
 // Mock worker functions
@@ -6,6 +6,7 @@ const mockConsolidation = mock(async () => {});
 const mockEmbedding = mock(async () => {});
 const mockSynthesis = mock(async () => {});
 const mockRunWorkerOnce = mock(async () => {});
+const mockRunKeywordSeederOnce = mock(async () => {});
 
 mock.module('../src/services/background/tasks/consolidationTask.js', () => ({
   consolidationTask: mockConsolidation,
@@ -66,12 +67,18 @@ describe('background runner', () => {
     testDeps = {
       database: mockDb,
       runWorkerOnce: mockRunWorkerOnce,
+      runKeywordSeederOnce: mockRunKeywordSeederOnce,
     };
 
     mockConsolidation.mockClear();
     mockEmbedding.mockClear();
     mockSynthesis.mockClear();
     mockRunWorkerOnce.mockClear();
+    mockRunKeywordSeederOnce.mockClear();
+  });
+
+  afterAll(() => {
+    mock.restore();
   });
 
   describe('runTask', () => {
@@ -88,6 +95,11 @@ describe('background runner', () => {
     it('executes knowflow task via DI', async () => {
       await runTask('knowflow', {}, testDeps);
       expect(mockRunWorkerOnce).toHaveBeenCalled();
+    });
+
+    it('executes knowflow_keyword_seed task', async () => {
+      await runTask('knowflow_keyword_seed', {}, testDeps);
+      expect(mockRunKeywordSeederOnce).toHaveBeenCalled();
     });
 
     it('throws error for unknown task', async () => {

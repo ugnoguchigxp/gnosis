@@ -17,6 +17,7 @@ const REQUIRED_TABLES = [
   'communities',
   'experience_logs',
   'topic_tasks',
+  'knowflow_keyword_evaluations',
   'knowledge_topics',
   'knowledge_claims',
   'knowledge_relations',

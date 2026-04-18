@@ -59,6 +59,22 @@ export const WorkerConfigSchema = z
 
 export type WorkerConfig = z.infer<typeof WorkerConfigSchema>;
 
+export const KeywordEvalAliasSchema = z.enum(['bonsai', 'gemma4', 'bedrock', 'openai']);
+export type KeywordEvalAlias = z.infer<typeof KeywordEvalAliasSchema>;
+
+export const KeywordCronConfigSchema = z
+  .object({
+    enabled: z.boolean(),
+    maxTopics: z.number().int().positive(),
+    minResearchScore: z.number().min(0).max(10),
+    lookbackHours: z.number().int().positive(),
+    evalModelAlias: KeywordEvalAliasSchema,
+    evalFallbackAlias: KeywordEvalAliasSchema.optional(),
+  })
+  .strict();
+
+export type KeywordCronConfig = z.infer<typeof KeywordCronConfigSchema>;
+
 export const MemoryLoopConfigSchema = z
   .object({
     allowCloud: z.boolean(),
@@ -158,6 +174,18 @@ export const config = {
       maxConsecutiveErrors: envNumber(process.env.KNOWFLOW_WORKER_MAX_CONSECUTIVE_ERRORS, 5),
       maxQueriesPerTask: envNumber(process.env.KNOWFLOW_WORKER_MAX_QUERIES_PER_TASK, 10),
       cronRunWindowMs: envNumber(process.env.KNOWFLOW_WORKER_CRON_RUN_WINDOW_MS, 3_600_000),
+    }),
+    keywordCron: KeywordCronConfigSchema.parse({
+      enabled: envBoolean(process.env.KNOWFLOW_KEYWORD_CRON_ENABLED, true),
+      maxTopics: Math.max(1, envNumber(process.env.KNOWFLOW_KEYWORD_CRON_MAX_TOPICS, 10)),
+      minResearchScore: envNumber(process.env.KNOWFLOW_KEYWORD_CRON_MIN_RESEARCH_SCORE, 6.5),
+      lookbackHours: Math.max(1, envNumber(process.env.KNOWFLOW_KEYWORD_CRON_LOOKBACK_HOURS, 24)),
+      evalModelAlias: KeywordEvalAliasSchema.parse(
+        process.env.KNOWFLOW_KEYWORD_EVAL_MODEL_ALIAS ?? 'gemma4',
+      ),
+      evalFallbackAlias: process.env.KNOWFLOW_KEYWORD_EVAL_MODEL_FALLBACK_ALIAS
+        ? KeywordEvalAliasSchema.parse(process.env.KNOWFLOW_KEYWORD_EVAL_MODEL_FALLBACK_ALIAS)
+        : undefined,
     }),
     healthCheck: {
       timeoutMs: envNumber(process.env.KNOWFLOW_HEALTH_CHECK_TIMEOUT_MS, 5_000),

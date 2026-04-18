@@ -33,6 +33,11 @@ export function startBackgroundWorkers(): void {
         { id: 'periodic-embedding', priority: 20 },
       );
       await scheduler.enqueue('knowflow', {}, { id: 'periodic-knowflow', priority: 5 });
+      await scheduler.enqueue(
+        'knowflow_keyword_seed',
+        {},
+        { id: 'periodic-knowflow-keyword-seed', priority: 1 },
+      );
 
       // キューを消化
       await processQueue();

@@ -209,6 +209,79 @@ export const topicTasks = pgTable(
       .on(table.updatedAt)
       .where(sql`${table.status} = 'running'`),
     dedupeKeyIdx: index('topic_tasks_dedupe_key_idx').on(table.dedupeKey),
+    priorityCheck: check('topic_tasks_priority_check', sql`${table.priority} >= 1`),
+  }),
+);
+
+export const knowflowKeywordEvaluations = pgTable(
+  'knowflow_keyword_evaluations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    runId: uuid('run_id').notNull(),
+    sourceType: text('source_type').notNull(), // episode | experience
+    sourceId: text('source_id').notNull(),
+    topic: text('topic').notNull(),
+    category: text('category').notNull(),
+    whyResearch: text('why_research').notNull(),
+    searchScore: real('search_score').notNull(),
+    termDifficultyScore: real('term_difficulty_score').notNull(),
+    uncertaintyScore: real('uncertainty_score').notNull(),
+    threshold: real('threshold').default(6.5).notNull(),
+    decision: text('decision').notNull(), // enqueued | skipped
+    enqueuedTaskId: uuid('enqueued_task_id').references(() => topicTasks.id, {
+      onDelete: 'set null',
+    }),
+    modelAlias: text('model_alias').notNull(), // bonsai | gemma4 | bedrock | openai
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    runDecisionCreatedIdx: index('knowflow_keyword_eval_run_decision_created_idx').on(
+      table.runId,
+      table.decision,
+      table.createdAt,
+    ),
+    sourceCreatedIdx: index('knowflow_keyword_eval_source_created_idx').on(
+      table.sourceType,
+      table.sourceId,
+      table.createdAt,
+    ),
+    topicCreatedIdx: index('knowflow_keyword_eval_topic_created_idx').on(
+      table.topic,
+      table.createdAt,
+    ),
+    enqueuedTaskIdx: index('knowflow_keyword_eval_enqueued_task_idx')
+      .on(table.enqueuedTaskId)
+      .where(sql`${table.enqueuedTaskId} IS NOT NULL`),
+    uniqueRunSourceTopic: unique('knowflow_keyword_eval_run_source_topic_unique').on(
+      table.runId,
+      table.sourceType,
+      table.sourceId,
+      table.topic,
+    ),
+    sourceTypeCheck: check(
+      'knowflow_keyword_eval_source_type_check',
+      sql`${table.sourceType} IN ('episode', 'experience')`,
+    ),
+    decisionCheck: check(
+      'knowflow_keyword_eval_decision_check',
+      sql`${table.decision} IN ('enqueued', 'skipped')`,
+    ),
+    modelAliasCheck: check(
+      'knowflow_keyword_eval_model_alias_check',
+      sql`${table.modelAlias} IN ('bonsai', 'gemma4', 'bedrock', 'openai')`,
+    ),
+    searchScoreCheck: check(
+      'knowflow_keyword_eval_search_score_check',
+      sql`${table.searchScore} >= 0 AND ${table.searchScore} <= 10`,
+    ),
+    termDifficultyScoreCheck: check(
+      'knowflow_keyword_eval_term_difficulty_score_check',
+      sql`${table.termDifficultyScore} >= 0 AND ${table.termDifficultyScore} <= 10`,
+    ),
+    uncertaintyScoreCheck: check(
+      'knowflow_keyword_eval_uncertainty_score_check',
+      sql`${table.uncertaintyScore} >= 0 AND ${table.uncertaintyScore} <= 10`,
+    ),
   }),
 );
 

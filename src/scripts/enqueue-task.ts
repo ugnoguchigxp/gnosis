@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import type { TaskMode, TaskSource } from '../services/knowflow/domain/task.js';
-import { PgJsonbQueueRepository } from '../services/knowflow/queue/pgJsonbRepository.js';
 
 // 入力バリデーションスキーマ
 const topicSchema = z
@@ -55,6 +54,9 @@ async function main() {
   }
 
   try {
+    const { PgJsonbQueueRepository } = await import(
+      '../services/knowflow/queue/pgJsonbRepository.js'
+    );
     const repository = new PgJsonbQueueRepository();
     const result = await repository.enqueue({
       topic,

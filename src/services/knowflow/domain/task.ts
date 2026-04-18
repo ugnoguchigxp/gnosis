@@ -16,7 +16,7 @@ export const TopicTaskSchema = z
     mode: TaskModeSchema,
     source: TaskSourceSchema,
 
-    priority: z.number(),
+    priority: z.number().min(1),
     status: TaskStatusSchema,
 
     dedupeKey: z.string().min(1),
@@ -32,6 +32,16 @@ export const TopicTaskSchema = z
     nextRunAt: z.number().int().nonnegative().optional(),
 
     resultSummary: z.string().min(1).optional(),
+    evaluation: z
+      .object({
+        category: z.string().min(1),
+        whyResearch: z.string().min(1),
+        searchScore: z.number().min(0).max(10),
+        termDifficultyScore: z.number().min(0).max(10),
+        uncertaintyScore: z.number().min(0).max(10),
+        scoreEvaluatedAt: z.string().min(1),
+      })
+      .optional(),
   })
   .strict();
 
@@ -42,9 +52,19 @@ export const CreateTaskInputSchema = z
     topic: z.string().min(1),
     mode: TaskModeSchema.default('directed'),
     source: TaskSourceSchema.default('user'),
-    priority: z.number().optional(),
+    priority: z.number().min(1).optional(),
     requestedBy: z.string().min(1).optional(),
     sourceGroup: z.string().min(1).optional(),
+    evaluation: z
+      .object({
+        category: z.string().min(1),
+        whyResearch: z.string().min(1),
+        searchScore: z.number().min(0).max(10),
+        termDifficultyScore: z.number().min(0).max(10),
+        uncertaintyScore: z.number().min(0).max(10),
+        scoreEvaluatedAt: z.string().min(1),
+      })
+      .optional(),
   })
   .strict();
 
@@ -79,6 +99,7 @@ export const createTask = (input: CreateTaskInput, now = Date.now()): TopicTask 
     status: 'pending',
     dedupeKey,
     requestedBy: parsed.requestedBy,
+    evaluation: parsed.evaluation,
     attempts: 0,
     createdAt: now,
     updatedAt: now,

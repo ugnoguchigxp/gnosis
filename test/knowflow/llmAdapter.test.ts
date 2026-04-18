@@ -1,4 +1,4 @@
-import { describe, expect, it, mock } from 'bun:test';
+import { afterAll, describe, expect, it, mock } from 'bun:test';
 
 mock.module('../../src/config.js', () => ({
   config: {
@@ -30,6 +30,10 @@ const noopLogger = () => {
 };
 
 describe('llm adapter', () => {
+  afterAll(() => {
+    mock.restore();
+  });
+
   it('extracts JSON from complex responses', () => {
     // Fenced with json tag
     expect(extractJsonCandidate('```json\n{"a":1}\n```')).toBe('{"a":1}');
@@ -144,12 +148,18 @@ describe('llm adapter', () => {
     const result = await runLlmTask(
       { task: 'summarize', context: {} },
       {
-        config: { maxRetries: 1 },
+        config: {
+          maxRetries: 1,
+          enableCliFallback: false,
+        },
         deps: {
           loadPromptTemplate: async () => 'template',
           invokeApi: async () => {
             apiCalls++;
             throw new Error('fail');
+          },
+          invokeCli: async () => {
+            throw new Error('cli should not run');
           },
           logger: noopLogger,
         },

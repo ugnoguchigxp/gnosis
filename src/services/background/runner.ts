@@ -8,6 +8,7 @@ import { synthesisTask } from './tasks/synthesisTask.js';
 import { createLocalLlmRetriever } from '../../adapters/retriever/mcpRetriever.js';
 // KnowFlow 関連のインポート (Port from scripts/worker.ts)
 import { config } from '../../config.js';
+import { runKeywordSeederOnce } from '../knowflow/cron/keywordSeeder.js';
 import { PgKnowledgeRepository } from '../knowflow/knowledge/repository.js';
 import { PgJsonbQueueRepository } from '../knowflow/queue/pgJsonbRepository.js';
 import {
@@ -27,7 +28,11 @@ interface TaskPayload {
 export async function runTask(
   type: string,
   payload: TaskPayload,
-  deps: { database: typeof defaultDb; runWorkerOnce?: typeof runWorkerOnce } = {
+  deps: {
+    database: typeof defaultDb;
+    runWorkerOnce?: typeof runWorkerOnce;
+    runKeywordSeederOnce?: typeof runKeywordSeederOnce;
+  } = {
     database: defaultDb,
   },
 ): Promise<void> {
@@ -48,6 +53,9 @@ export async function runTask(
 
     case 'knowflow':
       await runKnowFlowIteration(deps.database, deps.runWorkerOnce);
+      break;
+    case 'knowflow_keyword_seed':
+      await runKnowFlowKeywordSeedIteration(deps.database, deps.runKeywordSeederOnce);
       break;
 
     default:
@@ -81,6 +89,14 @@ async function runKnowFlowIteration(
   await runOnce(queueRepository, handler, {
     workerId: `background-manager-${process.pid}`,
   });
+}
+
+async function runKnowFlowKeywordSeedIteration(
+  database: typeof defaultDb = defaultDb,
+  customRunKeywordSeederOnce?: typeof runKeywordSeederOnce,
+) {
+  const runSeeder = customRunKeywordSeederOnce ?? runKeywordSeederOnce;
+  await runSeeder({ database });
 }
 
 /**
