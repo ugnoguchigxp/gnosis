@@ -4,7 +4,7 @@ import {
 } from 'node:child_process';
 import path from 'node:path';
 import { config } from '../config.js';
-import { withGlobalLock, withGlobalSemaphore } from '../utils/lock.js';
+import { withGlobalLock } from '../utils/lock.js';
 
 export type MemoryLoopAlias = 'gemma4' | 'bonsai' | 'openai' | 'bedrock';
 export type MemoryLoopTaskKind =
@@ -212,6 +212,9 @@ export async function runPromptWithMemoryLoopRouter(
 ): Promise<{ output: string; route: MemoryLoopRoute; attempts: number }> {
   const spawnSync = deps.spawnSync ?? defaultSpawnSync;
   const lockFn = deps.withLock ?? withGlobalLock;
+  const semaphoreFn =
+    deps.withSemaphore ??
+    ((name: string, _concurrency: number, fn: () => Promise<SpawnSyncResult>) => lockFn(name, fn));
   const timeoutMs =
     options.llmTimeoutMs ?? (config as { llmTimeoutMs?: number }).llmTimeoutMs ?? 90_000;
   const runtime = buildRuntimeConfig();
@@ -225,8 +228,7 @@ export async function runPromptWithMemoryLoopRouter(
       cloudEnabledForAttempt: false,
       reason: 'explicit-llm-script-override',
     };
-    const withSemaphore = deps.withSemaphore ?? withGlobalSemaphore;
-    const result = await withSemaphore('llm-pool', config.llm.concurrencyLimit, async () =>
+    const result = await semaphoreFn('llm-pool', config.llm.concurrencyLimit, async () =>
       spawnSync(fixedRoute.script, buildPromptArgs(options.prompt, options.maxTokens), {
         encoding: 'utf-8',
         env: buildMemoryLoopSpawnEnv(fixedRoute.alias),
@@ -257,8 +259,7 @@ export async function runPromptWithMemoryLoopRouter(
       qualityScore: options.qualityScore,
     });
 
-    const withSemaphore = deps.withSemaphore ?? withGlobalSemaphore;
-    const result = await withSemaphore('llm-pool', config.llm.concurrencyLimit, async () =>
+    const result = await semaphoreFn('llm-pool', config.llm.concurrencyLimit, async () =>
       spawnSync(route.script, buildPromptArgs(options.prompt, options.maxTokens), {
         encoding: 'utf-8',
         env: buildMemoryLoopSpawnEnv(route.alias),

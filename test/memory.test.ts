@@ -7,6 +7,14 @@ mock.module('node:child_process', () => ({
   spawn: mockSpawn,
 }));
 
+mock.module('../src/utils/lock.js', () => ({
+  withGlobalSemaphore: async <T>(
+    _name: string,
+    _concurrency: number,
+    fn: () => Promise<T>,
+  ): Promise<T> => fn(),
+}));
+
 mock.module('../src/config.js', () => ({
   config: {
     embedCommand: 'mock-embed',

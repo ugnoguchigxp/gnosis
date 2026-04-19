@@ -287,7 +287,11 @@ export const runKeywordSeederOnce = async (
   let deduped = 0;
   let fallbackAliasUsed: KeywordEvalAlias | undefined;
 
-  const maxParallel = config.knowflow.keywordCron.maxParallelEvaluations;
+  const rawMaxParallel = config.knowflow.keywordCron.maxParallelEvaluations;
+  const maxParallel =
+    typeof rawMaxParallel === 'number' && Number.isFinite(rawMaxParallel) && rawMaxParallel > 0
+      ? Math.max(1, Math.trunc(rawMaxParallel))
+      : 1;
   const sourceQueue = [...sources];
 
   const processSource = async (source: KeywordSource) => {
