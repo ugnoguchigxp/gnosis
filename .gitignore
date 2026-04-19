@@ -31,3 +31,6 @@ services/**/*.egg-info/
 
 # SQLite
 data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
