@@ -12,7 +12,7 @@ mock.module('../../src/config.js', () => ({
 }));
 
 import {
-  type SpawnSyncFn,
+  type SpawnFn,
   parseJsonFromLlmText,
   runPromptWithAlias,
 } from '../../src/services/knowflow/cron/llmRouter.js';
@@ -20,7 +20,7 @@ import {
 describe('keyword model router', () => {
   it('routes prompt to gemma4 script', async () => {
     const commands: string[] = [];
-    const spawn: SpawnSyncFn = (command) => {
+    const spawn: SpawnFn = async (command) => {
       commands.push(command);
       return {
         status: 0,
@@ -31,8 +31,8 @@ describe('keyword model router', () => {
 
     const result = await runPromptWithAlias(
       'prompt-text',
-      { alias: 'gemma4' },
-      { spawnSync: spawn },
+      { alias: 'gemma4', maxRetries: 0 },
+      { spawn },
     );
 
     expect(result.aliasUsed).toBe('gemma4');
@@ -44,7 +44,7 @@ describe('keyword model router', () => {
 
   it('routes prompt to openai script', async () => {
     const commands: string[] = [];
-    const spawn: SpawnSyncFn = (command) => {
+    const spawn: SpawnFn = async (command) => {
       commands.push(command);
       return {
         status: 0,
@@ -55,8 +55,8 @@ describe('keyword model router', () => {
 
     const result = await runPromptWithAlias(
       'prompt-text',
-      { alias: 'openai' },
-      { spawnSync: spawn },
+      { alias: 'openai', maxRetries: 0 },
+      { spawn },
     );
 
     expect(result.aliasUsed).toBe('openai');
@@ -69,7 +69,7 @@ describe('keyword model router', () => {
   it('falls back to openai when primary alias fails', async () => {
     const commands: string[] = [];
     let count = 0;
-    const spawn: SpawnSyncFn = (command) => {
+    const spawn: SpawnFn = async (command) => {
       commands.push(command);
       count += 1;
       if (count === 1) {
@@ -88,8 +88,8 @@ describe('keyword model router', () => {
 
     const result = await runPromptWithAlias(
       'prompt-text',
-      { alias: 'gemma4', fallbackAlias: 'openai' },
-      { spawnSync: spawn },
+      { alias: 'gemma4', fallbackAlias: 'openai', maxRetries: 0 },
+      { spawn },
     );
 
     expect(result.aliasUsed).toBe('openai');

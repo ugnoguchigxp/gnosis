@@ -39,6 +39,16 @@ type SaveEntitiesDeps = {
   judgeAndMerge?: EntityMergeJudge;
 };
 
+type FindPathDeps = {
+  findEntityById?: typeof findEntityById;
+  searchEntityByQuery?: typeof searchEntityByQuery;
+  buildGraph?: typeof buildGraph;
+};
+
+type SearchEntitiesDeps = {
+  embeddingGenerator?: EmbeddingGenerator;
+};
+
 /**
  * エンティティ群を保存または更新します。
  * 保存前に意味的な類似度をチェックし、既存のエンティティと重複（類似度 > config.dedupeThreshold）している場合は
@@ -322,8 +332,9 @@ export async function searchEntitiesByText(
   query: string,
   limit = 5,
   database: Pick<typeof db, 'select' | 'update'> = db,
+  deps: SearchEntitiesDeps = {},
 ) {
-  const embedding = await generateEmbedding(query);
+  const embedding = await (deps.embeddingGenerator ?? generateEmbedding)(query);
   const embeddingStr = JSON.stringify(embedding);
 
   const similarity = sql<number>`1 - (${entities.embedding} <=> ${embeddingStr}::vector)`;
@@ -437,12 +448,17 @@ export async function findPathBetweenEntities(
   queryA: string,
   queryB: string,
   database: DbClient = db,
+  deps: FindPathDeps = {},
 ) {
-  const idA = await findEntityById(queryA, database).then(
-    async (id) => id || (await searchEntityByQuery(queryA, database)),
+  const findById = deps.findEntityById ?? findEntityById;
+  const searchByQuery = deps.searchEntityByQuery ?? searchEntityByQuery;
+  const buildGraphFromDb = deps.buildGraph ?? buildGraph;
+
+  const idA = await findById(queryA, database).then(
+    async (id) => id || (await searchByQuery(queryA, database)),
   );
-  const idB = await findEntityById(queryB, database).then(
-    async (id) => id || (await searchEntityByQuery(queryB, database)),
+  const idB = await findById(queryB, database).then(
+    async (id) => id || (await searchByQuery(queryB, database)),
   );
 
   if (!idA || !idB) {
@@ -454,7 +470,7 @@ export async function findPathBetweenEntities(
     return { entities: [e], relations: [] };
   }
 
-  const graph = await buildGraph(database);
+  const graph = await buildGraphFromDb(database);
   const maxHops = config.maxPathHops;
 
   // BFS による最短経路探索

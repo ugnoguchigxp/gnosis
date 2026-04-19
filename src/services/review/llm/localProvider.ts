@@ -159,18 +159,22 @@ export function createLocalReviewLLMService(options: LocalProviderOptions = {}):
         args: sanitizeArgs(plan.args),
       });
 
-      const result = await withGlobalSemaphore('system-llm-pool', 3, async () => {
-        return await spawnCommand(plan.command, plan.args, timeoutMs, spawnEnv, (childPid) => {
-          pid = childPid;
-          emitReviewDebugLog({
-            event: 'local_provider_spawned',
-            callId,
-            invoker,
-            alias,
-            pid,
+      const result = await withGlobalSemaphore(
+        'llm-pool',
+        config.llm.concurrencyLimit,
+        async () => {
+          return await spawnCommand(plan.command, plan.args, timeoutMs, spawnEnv, (childPid) => {
+            pid = childPid;
+            emitReviewDebugLog({
+              event: 'local_provider_spawned',
+              callId,
+              invoker,
+              alias,
+              pid,
+            });
           });
-        });
-      });
+        },
+      );
 
       const durationMs = Date.now() - startedAt;
       emitReviewDebugLog({

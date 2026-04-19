@@ -1,4 +1,4 @@
-import { COLORS, printCoverageSummary, runCommand } from './lib/quality.js';
+import { COLORS, loadLocalEnv, printCoverageSummary, runCommand } from './lib/quality.js';
 
 type VerifyMode = 'fast' | 'standard' | 'strict';
 
@@ -43,6 +43,8 @@ function buildSteps(mode: VerifyMode, bun: string): Step[] {
 }
 
 const run = async () => {
+  loadLocalEnv();
+
   const bun = process.argv[0];
   const mode = resolveMode(process.argv[2]);
   const steps = buildSteps(mode, bun);

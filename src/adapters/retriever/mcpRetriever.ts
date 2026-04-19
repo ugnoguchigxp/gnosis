@@ -135,16 +135,20 @@ export class McpRetriever implements Retriever {
 }
 
 /**
- * localLlmのMCPサーバーを起動するためのヘルパー
+ * 本プロジェクトの Bun 版 MCP サーバーを起動するためのヘルパー
  */
 export const createLocalLlmRetriever = (baseDir: string): Retriever => {
   if (config.mockRetriever) {
     return new MockRetriever();
   }
-  const pythonPath = resolve(baseDir, '.venv/bin/python');
-  const serverScriptPath = resolve(baseDir, 'mcp/tools_server.py');
+
+  // NOTE: Python 版 (services/local-llm/mcp/tools_server.py) は廃止されました。
+  // 新しい Bun 版 (src/scripts/mcpToolsServer.ts) を使用します。
+  const command = process.execPath;
+  const serverScriptPath = resolve(process.cwd(), 'src/scripts/mcpToolsServer.ts');
+
   return new McpRetriever({
-    pythonPath,
+    pythonPath: command, // フィールド名は便宜上 pythonPath のまま
     serverScriptPath,
   });
 };

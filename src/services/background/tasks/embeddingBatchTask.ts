@@ -1,7 +1,6 @@
 import { and, isNull, sql } from 'drizzle-orm';
 import { db } from '../../../db/index.js';
 import { entities, experienceLogs, vibeMemories } from '../../../db/schema.js';
-import { withGlobalSemaphore } from '../../../utils/lock.js';
 import { generateEmbedding } from '../../memory.js';
 
 /**
@@ -18,11 +17,9 @@ export async function embeddingBatchTask(batchSize = 20): Promise<{ processed: n
     .limit(batchSize);
 
   for (const mem of pendingMemories) {
-    await withGlobalSemaphore('heavy-model', 2, async () => {
-      const embedding = await generateEmbedding(mem.content);
-      await db.update(vibeMemories).set({ embedding }).where(sql`id = ${mem.id}`);
-      totalProcessed++;
-    });
+    const embedding = await generateEmbedding(mem.content);
+    await db.update(vibeMemories).set({ embedding }).where(sql`id = ${mem.id}`);
+    totalProcessed++;
   }
 
   // 2. Entities の欠損確認
@@ -33,12 +30,10 @@ export async function embeddingBatchTask(batchSize = 20): Promise<{ processed: n
     .limit(batchSize);
 
   for (const ent of pendingEntities) {
-    await withGlobalSemaphore('heavy-model', 2, async () => {
-      const text = `${ent.name}: ${ent.description || ''}`;
-      const embedding = await generateEmbedding(text);
-      await db.update(entities).set({ embedding }).where(sql`id = ${ent.id}`);
-      totalProcessed++;
-    });
+    const text = `${ent.name}: ${ent.description || ''}`;
+    const embedding = await generateEmbedding(text);
+    await db.update(entities).set({ embedding }).where(sql`id = ${ent.id}`);
+    totalProcessed++;
   }
 
   // 3. Experience Logs の欠損確認
@@ -49,11 +44,9 @@ export async function embeddingBatchTask(batchSize = 20): Promise<{ processed: n
     .limit(batchSize);
 
   for (const log of pendingLogs) {
-    await withGlobalSemaphore('heavy-model', 2, async () => {
-      const embedding = await generateEmbedding(log.content);
-      await db.update(experienceLogs).set({ embedding }).where(sql`id = ${log.id}`);
-      totalProcessed++;
-    });
+    const embedding = await generateEmbedding(log.content);
+    await db.update(experienceLogs).set({ embedding }).where(sql`id = ${log.id}`);
+    totalProcessed++;
   }
 
   return { processed: totalProcessed };

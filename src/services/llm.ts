@@ -4,7 +4,7 @@ import {
 } from 'node:child_process';
 import { z } from 'zod';
 import { config } from '../config.js';
-import { withGlobalLock, withGlobalSemaphore } from '../utils/lock.js';
+import { withGlobalSemaphore } from '../utils/lock.js';
 
 import {
   DistilledKnowledgeSchema,
@@ -37,6 +37,9 @@ export type LlmServiceDeps = {
 const defaultSpawnSync: SpawnSyncFn = (command, args, options) =>
   nodeSpawnSync(command, args, options as SpawnSyncOptionsWithStringEncoding);
 
+const defaultLock = <T>(name: string, fn: () => Promise<T>) =>
+  withGlobalSemaphore(name, config.llm.concurrencyLimit, fn);
+
 /**
  * ローカル LLM を使用してテキストからエンティティ情報を抽出します。
  */
@@ -47,7 +50,7 @@ export async function extractEntitiesFromText(
   const spawnSync = deps.spawnSync ?? defaultSpawnSync;
   const llmScript = deps.llmScript ?? config.llmScript;
   const llmTimeoutMs = deps.llmTimeoutMs ?? config.llmTimeoutMs;
-  const lockFn = deps.withLock ?? withGlobalLock;
+  const lockFn = deps.withLock ?? defaultLock;
   const prompt = `
 以下のテキストから、主要なエンティティ（実体）を抽出してください。
 出力は必ず以下のJSON配列形式のみで返してください。余計な解説は不要です。
@@ -65,7 +68,7 @@ export async function extractEntitiesFromText(
 `.trim();
 
   try {
-    const result = await withGlobalSemaphore('heavy-model', 2, async () =>
+    const result = await lockFn('llm-pool', async () =>
       spawnSync(llmScript, ['--output', 'text', '--prompt', prompt], {
         encoding: 'utf-8',
         env: { ...process.env },
@@ -117,7 +120,7 @@ export async function summarizeCommunity(
   const spawnSync = deps.spawnSync ?? defaultSpawnSync;
   const llmScript = deps.llmScript ?? config.llmScript;
   const llmTimeoutMs = deps.llmTimeoutMs ?? config.llmTimeoutMs;
-  const lockFn = deps.withLock ?? withGlobalLock;
+  const lockFn = deps.withLock ?? defaultLock;
   const prompt = `
 以下のナレッジグラフ断片（エンティティと関係性）を読み取り、この知識の塊が「何に関するものか」を要約してください。
 出力は必ず以下のJSON形式のみで返してください。
@@ -131,7 +134,7 @@ ${context}
 `.trim();
 
   try {
-    const result = await withGlobalSemaphore('heavy-model', 2, async () =>
+    const result = await lockFn('llm-pool', async () =>
       spawnSync(llmScript, ['--output', 'text', '--max-tokens', '512', '--prompt', prompt], {
         encoding: 'utf-8',
         env: { ...process.env },
@@ -177,7 +180,7 @@ export async function distillKnowledgeFromTranscript(
   const spawnSync = deps.spawnSync ?? defaultSpawnSync;
   const llmScript = deps.llmScript;
   const llmTimeoutMs = deps.llmTimeoutMs ?? config.llmTimeoutMs;
-  const lockFn = deps.withLock ?? withGlobalLock;
+  const lockFn = deps.withLock ?? defaultLock;
   const prompt = `
 以下のAIエージェントとの会話記録（JSONLパース済みテキスト）を分析し、
 将来の参照に役立つ「重要な事実」「技術的決定」「プロジェクト構造」などを抽出してください。
@@ -227,7 +230,10 @@ ${transcript}
             : config.llm.defaultTimeoutMs * 2,
         maxTokens: 1500,
       },
-      { spawnSync, withLock: (name, fn) => withGlobalSemaphore('heavy-model', 2, fn) },
+      {
+        spawnSync,
+        withLock: lockFn,
+      },
     );
     output = routed.output;
   } catch (error) {
@@ -269,7 +275,7 @@ export async function judgeAndMergeEntities(
   const spawnSync = deps.spawnSync ?? defaultSpawnSync;
   const llmScript = deps.llmScript ?? config.llmScript;
   const llmTimeoutMs = deps.llmTimeoutMs ?? config.llmTimeoutMs;
-  const lockFn = deps.withLock ?? withGlobalLock;
+  const lockFn = deps.withLock ?? defaultLock;
   const prompt = `
 以下の2つのエンティティ（実体）が、同じ対象を指しているか判定してください。
 名前の揺らぎ（別名、略称、英語表記とカタカナ表記等）があっても、文脈上同じであれば「同一」とみなしてください。
@@ -296,7 +302,7 @@ export async function judgeAndMergeEntities(
 `.trim();
 
   try {
-    const result = await withGlobalSemaphore('heavy-model', 2, async () =>
+    const result = await lockFn('llm-pool', async () =>
       spawnSync(llmScript, ['--output', 'text', '--max-tokens', '800', '--prompt', prompt], {
         encoding: 'utf-8',
         env: { ...process.env },

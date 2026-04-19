@@ -70,6 +70,8 @@ export const KeywordCronConfigSchema = z
     lookbackHours: z.number().int().positive(),
     evalModelAlias: KeywordEvalAliasSchema,
     evalFallbackAlias: KeywordEvalAliasSchema.optional(),
+    maxParallelEvaluations: z.number().int().positive().default(3),
+    maxRetries: z.number().int().nonnegative().default(2),
   })
   .strict();
 
@@ -179,13 +181,18 @@ export const config = {
       enabled: envBoolean(process.env.KNOWFLOW_KEYWORD_CRON_ENABLED, true),
       maxTopics: Math.max(1, envNumber(process.env.KNOWFLOW_KEYWORD_CRON_MAX_TOPICS, 10)),
       minResearchScore: envNumber(process.env.KNOWFLOW_KEYWORD_CRON_MIN_RESEARCH_SCORE, 6.5),
-      lookbackHours: Math.max(1, envNumber(process.env.KNOWFLOW_KEYWORD_CRON_LOOKBACK_HOURS, 24)),
+      lookbackHours: Math.max(1, envNumber(process.env.KNOWFLOW_KEYWORD_CRON_LOOKBACK_HOURS, 168)),
       evalModelAlias: KeywordEvalAliasSchema.parse(
         process.env.KNOWFLOW_KEYWORD_EVAL_MODEL_ALIAS ?? 'gemma4',
       ),
       evalFallbackAlias: process.env.KNOWFLOW_KEYWORD_EVAL_MODEL_FALLBACK_ALIAS
         ? KeywordEvalAliasSchema.parse(process.env.KNOWFLOW_KEYWORD_EVAL_MODEL_FALLBACK_ALIAS)
         : undefined,
+      maxParallelEvaluations: Math.max(
+        1,
+        envNumber(process.env.KNOWFLOW_KEYWORD_CRON_MAX_PARALLEL, 3),
+      ),
+      maxRetries: Math.max(0, envNumber(process.env.KNOWFLOW_KEYWORD_CRON_MAX_RETRIES, 2)),
     }),
     healthCheck: {
       timeoutMs: envNumber(process.env.KNOWFLOW_HEALTH_CHECK_TIMEOUT_MS, 5_000),
@@ -205,6 +212,7 @@ export const config = {
   llm: {
     maxBuffer: envNumber(process.env.GNOSIS_LLM_MAX_BUFFER_BYTES, 10 * 1024 * 1024),
     defaultTimeoutMs: envNumber(process.env.GNOSIS_LLM_DEFAULT_TIMEOUT_MS, 45_000),
+    concurrencyLimit: envNumber(process.env.GNOSIS_LLM_CONCURRENCY_LIMIT, 3),
   },
 
   memoryLoop: MemoryLoopConfigSchema.parse({

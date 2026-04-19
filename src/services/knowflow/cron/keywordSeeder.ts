@@ -287,70 +287,100 @@ export const runKeywordSeederOnce = async (
   let deduped = 0;
   let fallbackAliasUsed: KeywordEvalAlias | undefined;
 
-  for (const source of sources) {
-    const evaluated = await evaluateSource({
-      source,
-      alias: primaryAlias,
-      fallbackAlias,
-      maxItems: DEFAULT_MAX_ITEMS_PER_SOURCE,
-    });
+  const maxParallel = config.knowflow.keywordCron.maxParallelEvaluations;
+  const sourceQueue = [...sources];
 
-    if (evaluated.aliasUsed !== primaryAlias) {
-      fallbackAliasUsed = evaluated.aliasUsed;
-    }
+  const processSource = async (source: KeywordSource) => {
+    try {
+      const evaluated = await evaluateSource({
+        source,
+        alias: primaryAlias,
+        fallbackAlias,
+        maxItems: DEFAULT_MAX_ITEMS_PER_SOURCE,
+      });
 
-    for (const item of evaluated.items) {
-      const topic = normalizeTopic(item.topic);
-      if (!topic) continue;
-
-      const shouldEnqueue = item.search_score > threshold && enqueued < maxTopics;
-      let enqueuedTaskId: string | undefined;
-      const decision: 'enqueued' | 'skipped' = shouldEnqueue ? 'enqueued' : 'skipped';
-
-      if (shouldEnqueue) {
-        const enqueueResult = await queueRepository.enqueue({
-          topic,
-          mode: 'directed',
-          source: 'cron',
-          sourceGroup: 'keyword-seeder',
-          requestedBy: 'keyword-seeder',
-          priority: 1,
-          evaluation: {
-            category: item.category,
-            whyResearch: item.why_research,
-            searchScore: item.search_score,
-            termDifficultyScore: item.term_difficulty_score,
-            uncertaintyScore: item.uncertainty_score,
-            scoreEvaluatedAt: now.toISOString(),
-          },
-        });
-        enqueuedTaskId = enqueueResult.task.id;
-        enqueued += 1;
-        if (enqueueResult.deduped) {
-          deduped += 1;
-        }
-      } else {
-        skipped += 1;
+      if (evaluated.aliasUsed !== primaryAlias) {
+        fallbackAliasUsed = evaluated.aliasUsed;
       }
 
-      evaluationRows.push({
-        runId,
-        sourceType: source.sourceType,
+      for (const item of evaluated.items) {
+        const topic = normalizeTopic(item.topic);
+        if (!topic) continue;
+
+        // Note: enqueued check here is a soft limit as parallel workers might overlap slightly,
+        // but since JS is single-threaded between awaits, this is mostly safe.
+        const shouldEnqueue = item.search_score > threshold && enqueued < maxTopics;
+        let enqueuedTaskId: string | undefined;
+        const decision: 'enqueued' | 'skipped' = shouldEnqueue ? 'enqueued' : 'skipped';
+
+        if (shouldEnqueue) {
+          const enqueueResult = await queueRepository.enqueue({
+            topic,
+            mode: 'directed',
+            source: 'cron',
+            sourceGroup: 'keyword-seeder',
+            requestedBy: 'keyword-seeder',
+            priority: 1,
+            evaluation: {
+              category: item.category,
+              whyResearch: item.why_research,
+              searchScore: item.search_score,
+              termDifficultyScore: item.term_difficulty_score,
+              uncertaintyScore: item.uncertainty_score,
+              scoreEvaluatedAt: now.toISOString(),
+            },
+          });
+          enqueuedTaskId = enqueueResult.task.id;
+          enqueued += 1;
+          if (enqueueResult.deduped) {
+            deduped += 1;
+          }
+        } else {
+          skipped += 1;
+        }
+
+        evaluationRows.push({
+          runId,
+          sourceType: source.sourceType,
+          sourceId: source.sourceId,
+          topic,
+          category: item.category,
+          whyResearch: item.why_research,
+          searchScore: item.search_score,
+          termDifficultyScore: item.term_difficulty_score,
+          uncertaintyScore: item.uncertainty_score,
+          threshold,
+          decision,
+          enqueuedTaskId,
+          modelAlias: evaluated.aliasUsed,
+          createdAt: now,
+        });
+      }
+    } catch (error) {
+      logger('knowflow.keyword_seeder.source_failed', {
         sourceId: source.sourceId,
-        topic,
-        category: item.category,
-        whyResearch: item.why_research,
-        searchScore: item.search_score,
-        termDifficultyScore: item.term_difficulty_score,
-        uncertaintyScore: item.uncertainty_score,
-        threshold,
-        decision,
-        enqueuedTaskId,
-        modelAlias: evaluated.aliasUsed,
-        createdAt: now,
+        sourceType: source.sourceType,
+        error: error instanceof Error ? error.message : String(error),
       });
     }
+  };
+
+  const workers = [];
+  const workerCount = Math.min(maxParallel, sources.length);
+  for (let i = 0; i < workerCount; i++) {
+    workers.push(
+      (async () => {
+        while (sourceQueue.length > 0) {
+          const source = sourceQueue.shift();
+          if (source) {
+            await processSource(source);
+          }
+        }
+      })(),
+    );
   }
+
+  await Promise.all(workers);
 
   await evaluationRepository.saveEvaluations(evaluationRows);
   await persistCheckpoint({

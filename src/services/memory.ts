@@ -122,8 +122,8 @@ export async function generateEmbedding(
 
   for (let i = 0; i < retries; i++) {
     try {
-      // システム全体の重い処理（LLM/Embedding）の並行実行を2つに制限
-      return await withGlobalSemaphore('heavy-model', 2, async () => {
+      // システム全体の重い処理（LLM/Embedding）の並行実行を制限
+      return await withGlobalSemaphore('llm-pool', config.llm.concurrencyLimit, async () => {
         const { stdout } = await runEmbedCommand(config.embedCommand, text, config.embedTimeoutMs);
         return parseEmbeddingVector(stdout);
       });

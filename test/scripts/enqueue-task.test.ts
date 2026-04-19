@@ -2,6 +2,19 @@ import { describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 
 describe('enqueue-task script validation', () => {
+  function createChildEnv(): NodeJS.ProcessEnv {
+    return Object.fromEntries(
+      Object.entries(process.env).filter(
+        ([key]) =>
+          key !== 'NODE_V8_COVERAGE' &&
+          !key.startsWith('BUN_TEST') &&
+          !key.startsWith('BUN_COVERAGE') &&
+          !key.startsWith('BUN_RUNTIME_') &&
+          !key.startsWith('__BUN'),
+      ),
+    );
+  }
+
   function parseJsonFromOutput(output: string) {
     const lines = output
       .split('\n')
@@ -22,6 +35,7 @@ describe('enqueue-task script validation', () => {
     const proc = spawnSync('bun', ['run', 'src/scripts/enqueue-task.ts', '--json'], {
       cwd: process.cwd(),
       encoding: 'utf-8',
+      env: createChildEnv(),
       timeout: 5000,
     });
 
@@ -37,6 +51,7 @@ describe('enqueue-task script validation', () => {
       {
         cwd: process.cwd(),
         encoding: 'utf-8',
+        env: createChildEnv(),
         timeout: 5000,
       },
     );
@@ -54,6 +69,7 @@ describe('enqueue-task script validation', () => {
       {
         cwd: process.cwd(),
         encoding: 'utf-8',
+        env: createChildEnv(),
         timeout: 5000,
       },
     );
@@ -70,6 +86,7 @@ describe('enqueue-task script validation', () => {
       {
         cwd: process.cwd(),
         encoding: 'utf-8',
+        env: createChildEnv(),
         timeout: 5000,
       },
     );
@@ -86,6 +103,7 @@ describe('enqueue-task script validation', () => {
       {
         cwd: process.cwd(),
         encoding: 'utf-8',
+        env: createChildEnv(),
         timeout: 5000,
       },
     );

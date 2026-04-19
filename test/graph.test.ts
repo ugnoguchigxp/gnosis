@@ -63,6 +63,8 @@ const mockDb: MockDbClient = {
   delete: mock(() => mockDbDeleteWhere),
 };
 
+const mockEmbed = async () => new Array(config.embeddingDimension).fill(0.1);
+
 // mock.module('../src/db/index.js', () => ({
 //   db: mockDb,
 // }));
@@ -206,7 +208,7 @@ describe('graph service', () => {
       } as unknown as SaveEntitiesDb;
 
       const input = [{ id: 'e1', name: 'entity1', type: 'person', description: 'desc' }];
-      await saveEntities(input, db, undefined, { judgeAndMerge: mockJudgeAndMerge });
+      await saveEntities(input, db, mockEmbed, { judgeAndMerge: mockJudgeAndMerge });
 
       expect(db.insert).toHaveBeenCalled();
       expect(mockJudgeAndMerge).not.toHaveBeenCalled();
@@ -239,7 +241,7 @@ describe('graph service', () => {
       });
 
       const input = [{ id: 'e_new', name: 'new', type: 'person', description: 'new desc' }];
-      await saveEntities(input, db, undefined, { judgeAndMerge: mockJudgeAndMerge });
+      await saveEntities(input, db, mockEmbed, { judgeAndMerge: mockJudgeAndMerge });
 
       expect(mockJudgeAndMerge).toHaveBeenCalled();
       // マージによって既存の ID ('e_old') が使われるはず
@@ -294,9 +296,18 @@ describe('graph service', () => {
 
   describe('findPathBetweenEntities', () => {
     it('throws error if entity not found', async () => {
-      // 実際には内部で findEntityById や searchEntityByQuery を呼ぶ
-      // db.select で空を返すようにしてエラーを誘発
-      await expect(findPathBetweenEntities('non-existent', 'any')).rejects.toThrow();
+      const findEntityById = mock(async () => null);
+      const searchEntityByQuery = mock(async () => null);
+
+      await expect(
+        findPathBetweenEntities('non-existent', 'any', mockDb as unknown as SaveEntitiesDb, {
+          findEntityById,
+          searchEntityByQuery,
+        }),
+      ).rejects.toThrow();
+
+      expect(findEntityById).toHaveBeenCalledTimes(2);
+      expect(searchEntityByQuery).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -360,7 +371,9 @@ describe('graph service', () => {
         update: mock(() => ({ set: mock(() => ({ where: mock(async () => {}) })) })),
       } as unknown as SearchEntitiesDb;
 
-      const results = await searchEntitiesByText('TypeScript', 5, db);
+      const results = await searchEntitiesByText('TypeScript', 5, db, {
+        embeddingGenerator: mockEmbed,
+      });
       expect(results).toEqual([]);
     });
 
@@ -382,7 +395,9 @@ describe('graph service', () => {
         update: mockUpdate,
       } as unknown as SearchEntitiesDb;
 
-      const results = await searchEntitiesByText('TypeScript', 5, db);
+      const results = await searchEntitiesByText('TypeScript', 5, db, {
+        embeddingGenerator: mockEmbed,
+      });
       expect(results).toHaveLength(1);
       expect(results[0]?.name).toBe('TypeScript');
       expect(mockUpdate).toHaveBeenCalled();

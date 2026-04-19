@@ -3,6 +3,22 @@ import { describe, expect, test } from 'bun:test';
 describe('graph-snapshot script', () => {
   const runGraphSnapshotDbTests = process.env.RUN_GRAPH_SNAPSHOT_DB_TESTS === '1';
 
+  function createChildEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+    return {
+      ...Object.fromEntries(
+        Object.entries(process.env).filter(
+          ([key]) =>
+            key !== 'NODE_V8_COVERAGE' &&
+            !key.startsWith('BUN_TEST') &&
+            !key.startsWith('BUN_COVERAGE') &&
+            !key.startsWith('BUN_RUNTIME_') &&
+            !key.startsWith('__BUN'),
+        ),
+      ),
+      ...overrides,
+    };
+  }
+
   function extractJsonCandidate(output: string): string | null {
     const lines = output
       .split('\n')
@@ -52,6 +68,7 @@ describe('graph-snapshot script', () => {
 
     const proc = Bun.spawn(['bun', 'run', 'src/scripts/graph-snapshot.ts', '--json'], {
       cwd: process.cwd(),
+      env: createChildEnv(),
       stdout: 'pipe',
     });
 
@@ -87,6 +104,7 @@ describe('graph-snapshot script', () => {
 
     const proc = Bun.spawn(['bun', 'run', 'src/scripts/graph-snapshot.ts', '--json'], {
       cwd: process.cwd(),
+      env: createChildEnv(),
       stdout: 'pipe',
     });
 
@@ -116,12 +134,11 @@ describe('graph-snapshot script', () => {
     const proc = Bun.spawn(['bun', 'run', 'src/scripts/graph-snapshot.ts', '--json'], {
       cwd: process.cwd(),
       stdout: 'pipe',
-      env: {
-        ...process.env,
+      env: createChildEnv({
         GRAPH_SNAPSHOT_MAX_ENTITIES: '2',
         GRAPH_SNAPSHOT_MAX_RELATIONS: '2',
         GRAPH_SNAPSHOT_MAX_COMMUNITIES: '2',
-      },
+      }),
     });
 
     const output = await new Response(proc.stdout).text();

@@ -36,7 +36,7 @@ export function startBackgroundWorkers(): void {
       await scheduler.enqueue(
         'knowflow_keyword_seed',
         {},
-        { id: 'periodic-knowflow-keyword-seed', priority: 1 },
+        { id: 'periodic-knowflow-keyword-seed', priority: 15 },
       );
 
       // キューを消化

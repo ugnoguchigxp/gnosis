@@ -57,6 +57,8 @@ export type QueryProcedureOptions = {
 export type RecordOutcomeDeps = {
   database?: DbClient;
   embed?: (text: string) => Promise<number[]>;
+  saveEntities?: typeof saveEntities;
+  saveRelations?: typeof saveRelations;
 };
 
 // ---------------------------------------------------------------------------
@@ -472,6 +474,8 @@ export async function recordOutcome(
 ): Promise<{ updated: number; episodeId: string | null }> {
   const database = deps.database ?? db;
   const embed = deps.embed ?? generateEmbedding;
+  const persistEntities = deps.saveEntities ?? saveEntities;
+  const persistRelations = deps.saveRelations ?? saveRelations;
 
   let updatedCount = 0;
 
@@ -528,7 +532,7 @@ export async function recordOutcome(
 
     // episode プロキシ entity
     const episodeEntityId = generateEntityId('episode', episode.id);
-    await saveEntities(
+    await persistEntities(
       [
         {
           id: episodeEntityId,
@@ -551,7 +555,7 @@ export async function recordOutcome(
       relationType: 'learned_from',
       weight: 0.8,
     }));
-    await saveRelations(learnedRelations, database);
+    await persistRelations(learnedRelations, database);
   } catch (err) {
     console.error('Failed to record episode:', err);
   }
@@ -570,7 +574,7 @@ export async function recordOutcome(
           break;
         case 'add_task': {
           const newId = generateEntityId('task', imp.suggestion);
-          await saveEntities(
+          await persistEntities(
             [
               {
                 id: newId,
@@ -585,7 +589,7 @@ export async function recordOutcome(
             async () => await embed(imp.suggestion),
           );
           // goal → new task に has_step 関係を追加
-          await saveRelations(
+          await persistRelations(
             [{ sourceId: input.goalId, targetId: newId, relationType: 'has_step', weight: 0.5 }],
             database,
           );
@@ -594,7 +598,7 @@ export async function recordOutcome(
         case 'add_precondition':
           if (imp.targetTaskId) {
             const newId = generateEntityId('task', imp.suggestion);
-            await saveEntities(
+            await persistEntities(
               [
                 {
                   id: newId,
@@ -608,7 +612,7 @@ export async function recordOutcome(
               database,
               async () => await embed(imp.suggestion),
             );
-            await saveRelations(
+            await persistRelations(
               [
                 {
                   sourceId: imp.targetTaskId,
@@ -623,7 +627,7 @@ export async function recordOutcome(
           break;
         case 'add_constraint': {
           const newId = generateEntityId('constraint', imp.suggestion);
-          await saveEntities(
+          await persistEntities(
             [
               {
                 id: newId,
@@ -638,7 +642,7 @@ export async function recordOutcome(
             async () => await embed(imp.suggestion),
           );
           if (imp.targetTaskId) {
-            await saveRelations(
+            await persistRelations(
               [
                 {
                   sourceId: newId,

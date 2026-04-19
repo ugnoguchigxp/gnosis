@@ -75,5 +75,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 // Only start the stdio server when run directly (not when imported)
 if (import.meta.main) {
   const transport = new StdioServerTransport();
+
+  // Close server when stdin is closed (prevents zombie processes)
+  process.stdin.on('close', () => {
+    console.error('MCP Server: Stdin closed, exiting...');
+    process.exit(0);
+  });
+
   await server.connect(transport);
 }

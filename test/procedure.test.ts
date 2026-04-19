@@ -150,20 +150,28 @@ describe('procedure service', () => {
 
   describe('recordOutcome', () => {
     it('updates confidence scores and records episode', async () => {
+      const saveEntities = mock(async () => undefined);
+      const saveRelations = mock(async () => undefined);
+
       await recordOutcome(
         {
           goalId: 'g1',
           taskResults: [{ taskId: 't1', followed: true, succeeded: true }],
           sessionId: 's1',
         },
-        { database: mockDb, embed: mockEmbed },
+        { database: mockDb, embed: mockEmbed, saveEntities, saveRelations },
       );
 
       expect(mockDb.insert).toHaveBeenCalled();
       expect(mockDb.update).toHaveBeenCalled();
+      expect(saveEntities).toHaveBeenCalled();
+      expect(saveRelations).toHaveBeenCalled();
     });
 
     it('handles improvements if provided', async () => {
+      const saveEntities = mock(async () => undefined);
+      const saveRelations = mock(async () => undefined);
+
       await recordOutcome(
         {
           goalId: 'g1',
@@ -171,11 +179,12 @@ describe('procedure service', () => {
           improvements: [{ type: 'add_task', suggestion: 'new one' }],
           sessionId: 's1',
         },
-        { database: mockDb, embed: mockEmbed },
+        { database: mockDb, embed: mockEmbed, saveEntities, saveRelations },
       );
 
-      // Check if task addition was called
       expect(mockDb.insert).toHaveBeenCalled();
+      expect(saveEntities).toHaveBeenCalledTimes(2);
+      expect(saveRelations).toHaveBeenCalledTimes(2);
     });
   });
 

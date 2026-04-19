@@ -231,6 +231,7 @@ describe('consolidateEpisodes', () => {
       spawnSync: mockSpawn,
       minRawCount: 2, // Segment size is 2
       embedText: mock().mockResolvedValue(new Array(384).fill(0)),
+      getGuidance: mock().mockResolvedValue(''),
       withSemaphore: (_n, _c, fn) => fn(),
     });
 
@@ -276,6 +277,7 @@ describe('consolidateEpisodes', () => {
       minRawCount: 5,
       sourceTask: 'goal-123',
       embedText: mock().mockResolvedValue(new Array(384).fill(0)),
+      getGuidance: mock().mockResolvedValue(''),
       withSemaphore: (_n, _c, fn) => fn(),
     });
 
