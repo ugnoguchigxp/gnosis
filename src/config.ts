@@ -160,7 +160,7 @@ export const config = {
       enableCliFallback: envBoolean(process.env.LOCAL_LLM_ENABLE_CLI_FALLBACK, true),
       cliCommand:
         process.env.LOCAL_LLM_CLI_COMMAND ??
-        `${process.env.GNOSIS_LLM_SCRIPT || 'gemma4'} --prompt {{prompt}}`,
+        `${process.env.GNOSIS_LLM_SCRIPT || 'scripts/gemma4'} --prompt {{prompt}}`,
       cliPromptMode: process.env.LOCAL_LLM_CLI_PROMPT_MODE === 'stdin' ? 'stdin' : 'arg',
       cliPromptPlaceholder: process.env.LOCAL_LLM_CLI_PROMPT_PLACEHOLDER ?? '{{prompt}}',
     }),
@@ -170,7 +170,7 @@ export const config = {
       cronRunBudget: envNumber(process.env.CRON_RUN_BUDGET, 30),
     }),
     worker: WorkerConfigSchema.parse({
-      taskTimeoutMs: envNumber(process.env.KNOWFLOW_WORKER_TASK_TIMEOUT_MS, 600_000),
+      taskTimeoutMs: envNumber(process.env.KNOWFLOW_WORKER_TASK_TIMEOUT_MS, 1_800_000),
       pollIntervalMs: envNumber(process.env.KNOWFLOW_WORKER_POLL_INTERVAL_MS, 60_000),
       postTaskDelayMs: envNumber(process.env.KNOWFLOW_WORKER_POST_TASK_DELAY_MS, 30_000),
       maxConsecutiveErrors: envNumber(process.env.KNOWFLOW_WORKER_MAX_CONSECUTIVE_ERRORS, 5),

@@ -36,17 +36,25 @@ export type LlmLogEvent = {
     | 'llm.task.attempt'
     | 'llm.task.success'
     | 'llm.task.retry'
-    | 'llm.task.degraded';
+    | 'llm.task.degraded'
+    | 'llm.task.raw_response'
+    | 'gap_planner.enqueued'
+    | 'gap_planner.fallback_enqueued'
+    | 'gap_planner.error'
+    | 'ops.evidence_extractor.done';
   task: LlmTaskName;
   backend?: LlmBackend;
   attempt?: number;
   requestId?: string;
   message?: string;
+  rawOutput?: string;
+  level?: 'debug' | 'info' | 'warn' | 'error';
+  [key: string]: unknown;
 };
 
 type AdapterDependencies = {
-  invokeApi: (prompt: string, config: LlmClientConfig) => Promise<string>;
-  invokeCli: (prompt: string, config: LlmClientConfig) => Promise<string>;
+  invokeApi: (prompt: string, config: LlmClientConfig, signal?: AbortSignal) => Promise<string>;
+  invokeCli: (prompt: string, config: LlmClientConfig, signal?: AbortSignal) => Promise<string>;
   loadPromptTemplate: (task: LlmTaskName) => Promise<string>;
   sleep: (ms: number) => Promise<void>;
   logger: (event: LlmLogEvent) => void;
@@ -97,10 +105,26 @@ const extractLlmText = (content: unknown): string | undefined => {
 const resolveApiUrl = (base: string, path: string): string =>
   new URL(path, base.endsWith('/') ? base : `${base}/`).toString();
 
-const defaultInvokeApi = async (prompt: string, config: LlmClientConfig): Promise<string> => {
+const defaultInvokeApi = async (
+  prompt: string,
+  config: LlmClientConfig,
+  signal?: AbortSignal,
+): Promise<string> => {
   const url = resolveApiUrl(config.apiBaseUrl, config.apiPath);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
+  const timeoutId = setTimeout(() => controller.abort(), config.timeoutMs);
+
+  // 外部からの signal が aborted の場合は即座に終了
+  if (signal?.aborted) {
+    clearTimeout(timeoutId);
+    throw new Error('LLM task aborted by caller before start');
+  }
+
+  // 外部の signal を abortController にマージする
+  const abortListener = () => {
+    controller.abort();
+  };
+  signal?.addEventListener('abort', abortListener, { once: true });
 
   try {
     const apiKey = process.env[config.apiKeyEnv];
@@ -140,13 +164,15 @@ const defaultInvokeApi = async (prompt: string, config: LlmClientConfig): Promis
 
     return text;
   } finally {
-    clearTimeout(timeout);
+    clearTimeout(timeoutId);
+    signal?.removeEventListener('abort', abortListener);
   }
 };
 
 const defaultInvokeCli = async (
   prompt: string,
   llmClientConfig: LlmClientConfig,
+  signal?: AbortSignal,
 ): Promise<string> => {
   return await withGlobalLock('local-llm', async () => {
     let command = llmClientConfig.cliCommand;
@@ -161,10 +187,11 @@ const defaultInvokeCli = async (
     }
 
     const { stdout, stderr } = stdin
-      ? await runCommandWithStdin(command, stdin, llmClientConfig.timeoutMs)
+      ? await runCommandWithStdin(command, stdin, llmClientConfig.timeoutMs, signal)
       : await execAsync(command, {
           timeout: llmClientConfig.timeoutMs,
           maxBuffer: config.llm.maxBuffer,
+          signal,
         });
 
     const output = stdout.trim();
@@ -180,11 +207,13 @@ const runCommandWithStdin = (
   command: string,
   stdin: string,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<{ stdout: string; stderr: string }> =>
   new Promise((resolve, reject) => {
     const child = spawn(command, {
       shell: true,
       stdio: ['pipe', 'pipe', 'pipe'],
+      signal,
     });
 
     let stdout = '';
@@ -250,26 +279,68 @@ const resolveLlmClientConfig = (override: Partial<LlmClientConfig> = {}): LlmCli
 
 export const extractJsonCandidate = (text: string): string | undefined => {
   const trimmed = text.trim();
-  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-    return trimmed;
-  }
 
+  // 1. Markdown code block check (most common in well-behaved LLMs)
   const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
   if (fenceMatch?.[1]) {
     const fenced = fenceMatch[1].trim();
     if (fenced.startsWith('{') && fenced.endsWith('}')) {
       return fenced;
     }
+    // Deep check inside fence (e.g. text before/after JSON inside a fence)
+    const inner = extractJsonCandidate(fenced);
+    if (inner) return inner;
   }
 
+  // 2. Finding boundaries with priority to outer most braces
   const firstBrace = trimmed.indexOf('{');
   const lastBrace = trimmed.lastIndexOf('}');
-  if (firstBrace >= 0 && lastBrace > firstBrace) {
+
+  if (firstBrace >= 0) {
+    // If no closing brace, or closing brace is before opening brace
+    if (lastBrace <= firstBrace) {
+      // Possible truncated output: return from first brace to end
+      return trimmed.slice(firstBrace);
+    }
     return trimmed.slice(firstBrace, lastBrace + 1);
   }
 
   return undefined;
 };
+
+/**
+ * 不完全なJSON（切り捨てられた出力など）を修復する試み
+ */
+function repairJson(json: string): string {
+  let repaired = json.trim();
+
+  // 文字列が閉じられていない場合の処理
+  // エスケープされたクォート \" を除外してカウント
+  const quoteCount = (repaired.match(/(?<!\\)"/g) || []).length;
+  if (quoteCount % 2 !== 0) {
+    repaired += '"';
+  }
+
+  // 括弧のバランスを取る
+  const stack: string[] = [];
+  for (let i = 0; i < repaired.length; i++) {
+    const char = repaired[i];
+    if (char === '{') stack.push('}');
+    else if (char === '[') stack.push(']');
+    else if (char === '}' || char === ']') {
+      if (stack.length > 0 && stack[stack.length - 1] === char) {
+        stack.pop();
+      }
+    }
+  }
+
+  // 足りない閉じ括弧を逆順に追加
+  while (stack.length > 0) {
+    repaired += stack.pop();
+  }
+
+  return repaired;
+}
 
 export const parseLlmTaskOutputText = <T extends LlmTaskName>(
   task: T,
@@ -277,17 +348,43 @@ export const parseLlmTaskOutputText = <T extends LlmTaskName>(
 ): LlmTaskOutputMap[T] => {
   const jsonCandidate = extractJsonCandidate(text);
   if (!jsonCandidate) {
-    throw new Error('Response does not contain JSON object.');
+    throw new Error(`Failed to find JSON object in LLM output. (Text length: ${text.length})`);
   }
 
-  let parsed: unknown;
+  // 1. そのままパースを試みる
   try {
-    parsed = JSON.parse(jsonCandidate);
+    return parseLlmTaskOutput(task, JSON.parse(jsonCandidate));
   } catch (error) {
-    throw new Error(`JSON parse failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
+    // 2. ロバストな修復を試みる
+    try {
+      const repaired = repairJson(jsonCandidate);
+      if (repaired !== jsonCandidate) {
+        return parseLlmTaskOutput(task, JSON.parse(repaired));
+      }
+    } catch {
+      // ignore
+    }
 
-  return parseLlmTaskOutput(task, parsed);
+    // 3. 従来の固定サフィックスによる修復（後方互換性のため）
+    if (jsonCandidate.startsWith('{')) {
+      // Basic heuristic: append closing characters until it parses or we reach a limit
+      const repairSuffixes = ['}', ']}', ' ] }', ']]}', '}]}', '}}', '}}}'];
+      for (const suffix of repairSuffixes) {
+        try {
+          return parseLlmTaskOutput(task, JSON.parse(jsonCandidate + suffix));
+        } catch {
+          // continue
+        }
+      }
+    }
+    const snippet =
+      jsonCandidate.length > 100 ? `${jsonCandidate.slice(0, 100)}...` : jsonCandidate;
+    throw new Error(
+      `Incomplete or malformed JSON from LLM: ${snippet}. Original error: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
 };
 
 const degradedOutputBuilders: {
@@ -364,10 +461,15 @@ const renderPrompt = (
   task: LlmTaskName,
   context: Record<string, unknown>,
 ): string => {
-  return template
+  let rendered = template
     .replaceAll('{{task_name}}', task)
     .replaceAll('{{context_json}}', JSON.stringify(context, null, 2))
     .replaceAll('{{output_hint}}', getTaskOutputHint(task));
+
+  for (const [key, value] of Object.entries(context)) {
+    rendered = rendered.replaceAll(`{{${key}}}`, String(value));
+  }
+  return rendered;
 };
 
 const attemptBackend = async <T extends LlmTaskName>(
@@ -376,8 +478,13 @@ const attemptBackend = async <T extends LlmTaskName>(
   prompt: string,
   config: LlmClientConfig,
   deps: AdapterDependencies,
+  signal?: AbortSignal,
 ): Promise<{ output: LlmTaskOutputMap[T]; attempt: number }> => {
   for (let attempt = 1; attempt <= config.maxRetries; attempt += 1) {
+    if (signal?.aborted) {
+      throw new Error('LLM task aborted by signal during retry loop');
+    }
+
     deps.logger({
       event: 'llm.task.attempt',
       task: input.task,
@@ -389,8 +496,19 @@ const attemptBackend = async <T extends LlmTaskName>(
     try {
       const raw =
         backend === 'api'
-          ? await deps.invokeApi(prompt, config)
-          : await deps.invokeCli(prompt, config);
+          ? await deps.invokeApi(prompt, config, signal)
+          : await deps.invokeCli(prompt, config, signal);
+
+      deps.logger({
+        event: 'llm.task.raw_response',
+        task: input.task,
+        backend,
+        attempt,
+        requestId: input.requestId,
+        rawOutput: raw.slice(0, 2000), // 長すぎるとログが溢れるため切り詰め
+        level: 'debug',
+      });
+
       const output = parseLlmTaskOutputText(input.task, raw);
       return { output, attempt };
     } catch (error) {
@@ -418,6 +536,7 @@ export const runLlmTask = async <T extends LlmTaskName>(
   options?: {
     config?: Partial<LlmClientConfig>;
     deps?: Partial<AdapterDependencies>;
+    signal?: AbortSignal;
   },
 ): Promise<RunLlmTaskResult<T>> => {
   LlmTaskNameSchema.parse(input.task);
@@ -443,7 +562,7 @@ export const runLlmTask = async <T extends LlmTaskName>(
   const prompt = renderPrompt(template, task, context);
 
   try {
-    const apiResult = await attemptBackend(input, 'api', prompt, llmConfig, deps);
+    const apiResult = await attemptBackend(input, 'api', prompt, llmConfig, deps, options?.signal);
     deps.logger({
       event: 'llm.task.success',
       task,
@@ -465,7 +584,14 @@ export const runLlmTask = async <T extends LlmTaskName>(
 
   if (llmConfig.enableCliFallback) {
     try {
-      const cliResult = await attemptBackend(input, 'cli', prompt, llmConfig, deps);
+      const cliResult = await attemptBackend(
+        input,
+        'cli',
+        prompt,
+        llmConfig,
+        deps,
+        options?.signal,
+      );
       deps.logger({
         event: 'llm.task.success',
         task,

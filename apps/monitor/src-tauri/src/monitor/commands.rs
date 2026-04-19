@@ -50,6 +50,15 @@ pub async fn monitor_enqueue_task(
 }
 
 #[tauri::command]
+pub async fn monitor_list_tasks(
+    state: State<'_, MonitorRuntime>,
+) -> Result<serde_json::Value, String> {
+    cli::fetch_tasks(&state.project_root)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub async fn monitor_list_episodes(
     state: State<'_, MonitorRuntime>,
 ) -> Result<serde_json::Value, String> {

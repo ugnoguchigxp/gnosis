@@ -1,10 +1,30 @@
-import { closeSync, existsSync, mkdirSync, openSync, statSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { setTimeout } from 'node:timers/promises';
 
 const DEFAULT_LOCK_DIR = os.tmpdir();
 const DEFAULT_TIMEOUT_MS = 120_000;
+
+/**
+ * lock.ts の依存する fs 操作を DI できるインターフェース。
+ * テスト時にモックを注入することで、fs をモックせずにテストできる。
+ */
+export type LockFs = {
+  existsSync: (path: string) => boolean;
+  statSync: (path: string) => { mtimeMs: number };
+  readFileSync: (path: string, encoding: string) => string;
+  unlinkSync: (path: string) => void;
+  writeFileSync: (path: string, data: string, options: { flag: string }) => void;
+};
+
+const defaultLockFs: LockFs = {
+  existsSync,
+  statSync,
+  readFileSync: (p, enc) => readFileSync(p, enc as BufferEncoding),
+  unlinkSync,
+  writeFileSync,
+};
 
 /**
  * システム全体で共有されるセマフォ（同時実行数制限）。
@@ -14,6 +34,7 @@ export async function withGlobalSemaphore<T>(
   maxConcurrency: number,
   fn: () => Promise<T>,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  fs: LockFs = defaultLockFs,
 ): Promise<T> {
   const start = Date.now();
   let acquiredIndex = -1;
@@ -22,18 +43,38 @@ export async function withGlobalSemaphore<T>(
     for (let i = 0; i < maxConcurrency; i++) {
       const lockFile = path.join(DEFAULT_LOCK_DIR, `gnosis-${semaphoreName}-${i}.lock`);
       try {
-        // スタックしている古いロック（30分以上経過）を掃除
-        try {
-          const stats = statSync(lockFile);
-          if (Date.now() - stats.mtimeMs > 30 * 60 * 1000) {
-            unlinkSync(lockFile);
+        // スタックしている古いロックを掃除
+        if (fs.existsSync(lockFile)) {
+          try {
+            const stats = fs.statSync(lockFile);
+            const content = fs.readFileSync(lockFile, 'utf8').trim();
+            const pid = Number.parseInt(content, 10);
+
+            let isAlive = false;
+            if (!Number.isNaN(pid)) {
+              try {
+                // プロセスが生きていれば signal 0 は成功する
+                process.kill(pid, 0);
+                isAlive = true;
+              } catch (_e) {
+                isAlive = false;
+              }
+            }
+
+            // プロセスが死んでいるか、または30分以上経過している場合は削除
+            if (!isAlive || Date.now() - stats.mtimeMs > 30 * 60 * 1000) {
+              fs.unlinkSync(lockFile);
+              console.error(
+                `[Semaphore] Cleaned up stale lock: ${lockFile} (PID ${pid} alive: ${isAlive})`,
+              );
+            }
+          } catch (_sErr) {
+            // ignore
           }
-        } catch (sErr) {
-          // ignore
         }
 
-        const fd = openSync(lockFile, 'wx');
-        closeSync(fd);
+        fs.writeFileSync(lockFile, process.pid.toString(), { flag: 'wx' });
+
         acquiredIndex = i;
         console.error(
           `[Semaphore] Acquired slot ${acquiredIndex + 1}/${maxConcurrency} for: ${semaphoreName}`,
@@ -64,7 +105,7 @@ export async function withGlobalSemaphore<T>(
     return await fn();
   } finally {
     try {
-      unlinkSync(lockFile);
+      fs.unlinkSync(lockFile);
       console.error(
         `[Semaphore] Released slot ${acquiredIndex + 1}/${maxConcurrency} for: ${semaphoreName}`,
       );
@@ -82,6 +123,7 @@ export async function withGlobalLock<T>(
   lockName: string,
   fn: () => Promise<T>,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  fs: LockFs = defaultLockFs,
 ): Promise<T> {
-  return withGlobalSemaphore(lockName, 1, fn, timeoutMs);
+  return withGlobalSemaphore(lockName, 1, fn, timeoutMs, fs);
 }

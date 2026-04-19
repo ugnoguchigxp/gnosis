@@ -1,0 +1,285 @@
+$ biome check .
+./scratch/fix_payload_status.ts:15:63 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+    13 │     if (payload.status !== row.status) {
+    14 │       console.log(`Fixing task ${row.id}: column=${row.status}, payload=${payload.status}`);
+  > 15 │       const updatedTask = { ...payload, status: row.status as any };
+       │                                                               ^^^
+    16 │       const fields = toTaskRowFields(updatedTask);
+    17 │ 
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+./scripts/reset-stuck-tasks.ts:20:61 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+    18 │       .set({ status: 'pending', lockedAt: null, lockOwner: null })
+    19 │       .where(eq(topicTasks.id, task.id));
+  > 20 │     console.log(`Reset task: ${task.id} (${(task.payload as any).topic})`);
+       │                                                             ^^^
+    21 │   }
+    22 │ }
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+./src/scripts/monitor-tasks.ts:13:12 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+    11 │   status: string;
+    12 │   priority: number;
+  > 13 │   payload: any;
+       │            ^^^
+    14 │   createdAt: string;
+    15 │   updatedAt: string;
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+./src/scripts/monitor-tasks.ts:35:73 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+    34 │   if (statusFilter) {
+  > 35 │     query = query.where(sql`${topicTasks.status} = ${statusFilter}`) as any;
+       │                                                                         ^^^
+    36 │   }
+    37 │ 
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+./src/scripts/monitor-tasks.ts:42:81 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+    40 │   const tasks: TaskEntry[] = rows.map((row) => {
+    41 │     const payload =
+  > 42 │       typeof row.payload === 'object' && row.payload !== null ? (row.payload as any) : {};
+       │                                                                                 ^^^
+    43 │     return {
+    44 │       id: row.id,
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+./apps/monitor/src/lib/monitor/types.ts:55:12 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+    53 │   status: string;
+    54 │   priority: number;
+  > 55 │   payload: any;
+       │            ^^^
+    56 │   createdAt: string;
+    57 │   updatedAt: string;
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+./src/services/knowflow/worker/integration.test.ts:55:39 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+    54 │     let handlerAborted = false;
+  > 55 │     const slowHandler = async (_task: any, signal?: AbortSignal) => {
+       │                                       ^^^
+    56 │       return new Promise<any>((resolve) => {
+    57 │         const timeout = setTimeout(() => {
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+./src/services/knowflow/worker/integration.test.ts:56:26 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+    54 │     let handlerAborted = false;
+    55 │     const slowHandler = async (_task: any, signal?: AbortSignal) => {
+  > 56 │       return new Promise<any>((resolve) => {
+       │                          ^^^
+    57 │         const timeout = setTimeout(() => {
+    58 │           resolve({ ok: true, summary: 'too late' });
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+./src/services/knowflow/worker/knowFlowHandler.ts:36:21 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+    35 │   // For GapPlanner
+  > 36 │   queueRepository?: any;
+       │                     ^^^
+    37 │   llmConfig?: any;
+    38 │   llmLogger?: any;
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+./src/services/knowflow/worker/knowFlowHandler.ts:37:15 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+    35 │   // For GapPlanner
+    36 │   queueRepository?: any;
+  > 37 │   llmConfig?: any;
+       │               ^^^
+    38 │   llmLogger?: any;
+    39 │ };
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+./src/services/knowflow/worker/knowFlowHandler.ts:38:15 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+    36 │   queueRepository?: any;
+    37 │   llmConfig?: any;
+  > 38 │   llmLogger?: any;
+       │               ^^^
+    39 │ };
+    40 │ 
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+./src/services/knowflow/worker/pipeline.ts:91:26 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━
+
+  × Forbidden non-null assertion.
+  
+    89 │       const phase2Start = now();
+    90 │       try {
+  > 91 │         const evidence = result.phases.evidenceCollection.data!;
+       │                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    92 │         let flowResult: FlowResult;
+    93 │ 
+  
+
+./src/services/knowflow/worker/pipeline.ts:98:52 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+     96 │             topic: task.topic,
+     97 │             evidence,
+   > 98 │             repository: this.options.repository as any,
+        │                                                    ^^^
+     99 │             userBudget: this.options.budget.userBudget,
+    100 │             now: now(),
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+./src/services/knowflow/worker/pipeline.ts:107:52 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+    105 │             topic: task.topic,
+    106 │             evidence,
+  > 107 │             repository: this.options.repository as any,
+        │                                                    ^^^
+    108 │             cronBudget: this.options.budget.cronBudget,
+    109 │             cronRunBudget: this.options.budget.cronRunBudget,
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+./src/services/knowflow/worker/pipeline.ts:146:26 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━
+
+  × Forbidden non-null assertion.
+  
+    144 │       // Phase 3: Follow-up Planning (Best-effort)
+    145 │       const phase3Start = now();
+  > 146 │       const flowResult = result.phases.flowExecution.data!;
+        │                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    147 │       try {
+    148 │         const planned = await this.options.gapPlanner.planAndEnqueueSafe(
+  
+
+./src/services/knowflow/worker/smoke.test.ts:38:20 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+    36 │   beforeEach(() => {
+    37 │     vi.clearAllMocks();
+  > 38 │     (runLlmTask as any).mockResolvedValue({
+       │                    ^^^
+    39 │       output: { queries: [], steps: [] },
+    40 │       degraded: false,
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+./src/services/knowflow/worker/smoke.test.ts:47:31 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+    45 │     const orchestrator = new PipelineOrchestrator({
+    46 │       task: defaultTask,
+  > 47 │       repository: mockRepo as any,
+       │                               ^^^
+    48 │       evidenceProvider: mockEvidenceProvider,
+    49 │       gapPlanner: mockGapPlanner as any,
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+./src/services/knowflow/worker/smoke.test.ts:49:37 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+    47 │       repository: mockRepo as any,
+    48 │       evidenceProvider: mockEvidenceProvider,
+  > 49 │       gapPlanner: mockGapPlanner as any,
+       │                                     ^^^
+    50 │       budget: { cronBudget: 100, cronRunBudget: 50, userBudget: 50 },
+    51 │       cronRunConsumed: 0,
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+./src/services/knowflow/worker/smoke.test.ts:52:26 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+    50 │       budget: { cronBudget: 100, cronRunBudget: 50, userBudget: 50 },
+    51 │       cronRunConsumed: 0,
+  > 52 │       logger: vi.fn() as any,
+       │                          ^^^
+    53 │       metrics: new MetricsCollector(),
+    54 │       now: () => Date.now(),
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+./src/services/knowflow/worker/smoke.test.ts:85:31 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+    83 │     const orchestrator = new PipelineOrchestrator({
+    84 │       task: defaultTask,
+  > 85 │       repository: mockRepo as any,
+       │                               ^^^
+    86 │       evidenceProvider: mockEvidenceProvider,
+    87 │       gapPlanner: mockGapPlanner as any,
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+The number of diagnostics exceeds the number allowed by Biome.
+Diagnostics not shown: 16.
+Checked 1115 files in 267ms. No fixes needed.
+Found 2 errors.
+Found 34 warnings.
+check ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some errors were emitted while running checks.
+  
+
+error: script "lint" exited with code 1

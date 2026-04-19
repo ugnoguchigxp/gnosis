@@ -133,7 +133,19 @@ export async function processQueue(
           }
 
           try {
-            await runTask(task.type, JSON.parse(task.payload) as TaskPayload, deps);
+            // 個別タスクにハードタイムアウト (30分) を設定
+            const timeoutSignal = new Promise((_, reject) => {
+              setTimeout(
+                () => reject(new Error('Task execution timed out after 1800000ms')),
+                30 * 60 * 1000,
+              );
+            });
+
+            await Promise.race([
+              runTask(task.type, JSON.parse(task.payload) as TaskPayload, deps),
+              timeoutSignal,
+            ]);
+
             customScheduler.updateTaskStatus(task.id, 'completed');
             customScheduler.deleteTask(task.id);
           } catch (error) {

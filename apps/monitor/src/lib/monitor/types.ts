@@ -31,6 +31,8 @@ export type TimelineEvent = {
   ts: number;
   runId?: string;
   taskId?: string;
+  topic?: string | null;
+  source?: string | null;
   resultSummary?: string;
   errorReason?: string;
   message?: string;
@@ -42,6 +44,17 @@ export type TaskIndexEntry = {
   source: string | null;
   status: string;
   updatedAtTs: number | null;
+};
+
+export type TaskHistoryEntry = {
+  id: string;
+  topic: string | null;
+  source: string | null;
+  status: string;
+  priority: number;
+  payload: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type TaskDetailLogSnippet = {

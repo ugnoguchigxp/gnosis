@@ -1,6 +1,8 @@
+import type { TaskSource } from '../domain/task';
+
 export type RunMetricSample = {
   taskId: string;
-  source: 'user' | 'cron';
+  source: TaskSource;
   ok: boolean;
   changed?: boolean;
   retries: number;

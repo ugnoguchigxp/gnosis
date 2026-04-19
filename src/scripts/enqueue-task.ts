@@ -5,8 +5,7 @@ import type { TaskMode, TaskSource } from '../services/knowflow/domain/task.js';
 const topicSchema = z
   .string()
   .min(1, 'Topic must not be empty')
-  .max(500, 'Topic must be less than 500 characters')
-  .regex(/^[a-zA-Z0-9\s\-_.,()]+$/, 'Topic contains invalid characters');
+  .max(500, 'Topic must be less than 500 characters');
 
 const modeSchema = z.enum(['directed', 'expand', 'explore']);
 const sourceSchema = z.enum(['user', 'cron', 'ui', 'monitor']);

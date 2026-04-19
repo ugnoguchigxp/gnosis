@@ -4,6 +4,8 @@ import { type MergeRepository, mergeVerifiedKnowledge } from '../merge';
 import { buildVerificationSummary, verifyEvidence } from '../verifier';
 import type { FlowEvidence } from './types';
 
+import type { FlowResult } from './result';
+
 export type CronFlowRepository = MergeRepository & {
   getByTopic: (topic: string) => Promise<Knowledge | null>;
 };
@@ -18,16 +20,7 @@ export type RunCronFlowInput = {
   now?: number;
 };
 
-export type RunCronFlowResult = {
-  summary: string;
-  changed: boolean;
-  usedBudget: number;
-  runConsumedBudget: number;
-  acceptedClaims: number;
-  rejectedClaims: number;
-  conflicts: number;
-  gaps: number;
-};
+export type RunCronFlowResult = FlowResult;
 
 export const runCronFlow = async (input: RunCronFlowInput): Promise<RunCronFlowResult> => {
   const now = input.now ?? Date.now();
@@ -75,6 +68,6 @@ export const runCronFlow = async (input: RunCronFlowInput): Promise<RunCronFlowR
     acceptedClaims: verification.acceptedClaims.length,
     rejectedClaims: verification.rejectedClaims.length,
     conflicts: verification.conflicts.length,
-    gaps: gaps.gaps.length,
+    gaps: gaps.gaps,
   };
 };

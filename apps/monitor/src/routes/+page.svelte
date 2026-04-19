@@ -6,13 +6,21 @@ import type {
   MonitorConfigResponse,
   MonitorSnapshotData,
   TaskDetailPayload,
+  TaskHistoryEntry,
   TaskIndexEntry,
   TimelineEvent,
 } from '$lib/monitor/types';
 import { invoke } from '@tauri-apps/api/core';
 import { onMount } from 'svelte';
 
-type TimelineStatus = 'done' | 'failed' | 'deferred' | 'degraded' | 'unknown';
+type TimelineStatus =
+  | 'done'
+  | 'failed'
+  | 'deferred'
+  | 'degraded'
+  | 'pending'
+  | 'running'
+  | 'unknown';
 type EnrichedTimelineEvent = TimelineEvent & {
   status: TimelineStatus;
   source: string | null;
@@ -101,6 +109,8 @@ const normalizeStatus = (kind: string): TimelineStatus => {
   if (kind === 'task.done') return 'done';
   if (kind === 'task.failed') return 'failed';
   if (kind === 'task.deferred') return 'deferred';
+  if (kind === 'task.pending') return 'pending';
+  if (kind === 'task.running') return 'running';
   if (kind === 'llm.task.degraded') return 'degraded';
   return 'unknown';
 };
@@ -115,8 +125,8 @@ const filteredTimeline = $derived.by(() => {
     const enrichedEvent: EnrichedTimelineEvent = {
       ...event,
       status: normalizeStatus(event.kind),
-      source: taskIndex?.source ?? null,
-      topic: taskIndex?.topic ?? null,
+      source: event.source ?? taskIndex?.source ?? null,
+      topic: event.topic ?? taskIndex?.topic ?? null,
     };
 
     if (statusFilter !== 'all' && enrichedEvent.status !== statusFilter) {
@@ -285,6 +295,29 @@ const initialize = async (): Promise<void> => {
     const config = await invoke<MonitorConfigResponse>('monitor_config');
     wsUrl = config.wsUrl;
     errorMessage = null;
+
+    // 初期タスク履歴の読み込み (非ブロッキング)
+    void invoke<TaskHistoryEntry[]>('monitor_list_tasks')
+      .then((initialTasks) => {
+        // タイムラインイベント形式に変換して追加
+        const initialEvents: TimelineEvent[] = initialTasks.map((t) => ({
+          id: `init-${t.id}`,
+          kind: `task.${t.status}`,
+          ts: new Date(t.updatedAt).getTime(),
+          taskId: t.id,
+          topic: t.topic,
+          source: t.source,
+          message: `Initial load: ${t.status}`,
+        }));
+        // 最新の順に並べて表示 (既存のタイムラインがある場合はマージ)
+        const combined = [...initialEvents, ...timeline]
+          .sort((a, b) => a.ts - b.ts)
+          .slice(-TIMELINE_BUFFER_LIMIT);
+        timeline = combined;
+      })
+      .catch((err) => {
+        console.error('Failed to load initial tasks:', err);
+      });
 
     client = new MonitorWsClient({
       callbacks: {

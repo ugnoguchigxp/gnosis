@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
 export const TaskModeSchema = z.enum(['directed', 'expand', 'explore']);
-export const TaskSourceSchema = z.enum(['user', 'cron']);
+export const TaskSourceSchema = z.enum(['user', 'cron', 'ui', 'monitor']);
 export const TaskStatusSchema = z.enum(['pending', 'running', 'done', 'failed', 'deferred']);
 
 export type TaskMode = z.infer<typeof TaskModeSchema>;

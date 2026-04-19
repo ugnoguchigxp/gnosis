@@ -56,15 +56,17 @@ const extractTextContent = (result: unknown): string => {
 };
 
 export interface Retriever {
-  search(query: string): Promise<string>;
-  fetch(url: string): Promise<string>;
+  search(query: string, signal?: AbortSignal): Promise<string>;
+  fetch(url: string, signal?: AbortSignal): Promise<string>;
 }
 
 export class MockRetriever implements Retriever {
-  async search(query: string): Promise<string> {
+  async search(query: string, signal?: AbortSignal): Promise<string> {
+    if (signal?.aborted) throw new Error('Aborted');
     return `Mock search result for: ${query}. (Mock mode active)`;
   }
-  async fetch(url: string): Promise<string> {
+  async fetch(url: string, signal?: AbortSignal): Promise<string> {
+    if (signal?.aborted) throw new Error('Aborted');
     return `Mock content for URL: ${url}. (Mock mode active)`;
   }
 }
@@ -85,9 +87,13 @@ export class McpRetriever implements Retriever {
       }).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
     );
 
+    const logPath = resolve(process.cwd(), 'services/local-llm/mcp_tools.log');
     this.transport = new StdioClientTransport({
-      command: this.options.pythonPath,
-      args: [this.options.serverScriptPath],
+      command: 'bash',
+      args: [
+        '-c',
+        `"${this.options.pythonPath}" "${this.options.serverScriptPath}" 2>> "${logPath}"`,
+      ],
       env,
     });
 
@@ -107,28 +113,36 @@ export class McpRetriever implements Retriever {
     }
   }
 
-  async search(query: string): Promise<string> {
+  async search(query: string, signal?: AbortSignal): Promise<string> {
     if (!this.client) await this.connect();
     if (!this.client) {
       throw new Error('MCP client is not connected');
     }
-    const result = await this.client.callTool({
-      name: 'web_search',
-      arguments: { query },
-    });
+    const result = await this.client.callTool(
+      {
+        name: 'web_search',
+        arguments: { query },
+      },
+      undefined,
+      { signal },
+    );
 
     return extractTextContent(result);
   }
 
-  async fetch(url: string): Promise<string> {
+  async fetch(url: string, signal?: AbortSignal): Promise<string> {
     if (!this.client) await this.connect();
     if (!this.client) {
       throw new Error('MCP client is not connected');
     }
-    const result = await this.client.callTool({
-      name: 'fetch_content',
-      arguments: { url },
-    });
+    const result = await this.client.callTool(
+      {
+        name: 'fetch_content',
+        arguments: { url },
+      },
+      undefined,
+      { signal },
+    );
 
     return extractTextContent(result);
   }

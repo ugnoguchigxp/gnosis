@@ -88,8 +88,8 @@ describe('Phase5/6 e2e', () => {
       },
     });
 
-    expect(user.report.topic).toBe('TypeScript');
-    expect(user.report.summary.length).toBeGreaterThan(0);
+    expect(user.report?.topic).toBe('TypeScript');
+    expect(user.report?.summary.length).toBeGreaterThan(0);
     expect(user.acceptedClaims).toBeGreaterThan(0);
 
     const cron = await runCronFlow({

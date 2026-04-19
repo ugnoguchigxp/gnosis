@@ -11,6 +11,7 @@ export type EvidenceExtractionInput = {
   now?: number;
   llmConfig?: Partial<LlmClientConfig>;
   llmLogger?: (event: LlmLogEvent) => void;
+  signal?: AbortSignal;
 };
 
 export type EvidenceExtractorDeps = {
@@ -36,8 +37,22 @@ export const extractEvidenceFromText = async (
     {
       config: input.llmConfig,
       deps: input.llmLogger ? { logger: input.llmLogger } : undefined,
+      signal: input.signal,
     },
   );
+
+  const claimsCount = result.output.claims.length;
+  const relationsCount = (result.output.relations ?? []).length;
+
+  if (input.llmLogger) {
+    input.llmLogger({
+      event: 'ops.evidence_extractor.done',
+      task: 'extract_evidence',
+      requestId: input.requestId,
+      claims: claimsCount,
+      relations: relationsCount,
+    });
+  }
 
   const now = input.now ?? Date.now();
   const sourceId = `fetch:${Buffer.from(input.url).toString('base64').slice(0, 16)}`;

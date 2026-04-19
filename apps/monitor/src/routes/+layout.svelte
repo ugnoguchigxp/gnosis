@@ -12,6 +12,7 @@ const { children } = $props();
 <div class="app-layout">
 	<nav class="app-nav">
 		<a href="/" class="nav-link">Monitor</a>
+		<a href="/tasks" class="nav-link">Queue</a>
 		<a href="/graph" class="nav-link">Graph</a>
 		<a href="/memories" class="nav-link">Memories</a>
 	</nav>

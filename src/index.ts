@@ -21,11 +21,12 @@ async function main() {
 
   const transport = new StdioServerTransport();
 
-  // バックグラウンドワーカーの開始
-  startBackgroundWorkers();
+  // MCPモードではバックグラウンドワーカーを無効化（リソース競合とログ汚染の防止）
+  if (process.env.GNOSIS_NO_WORKERS !== 'true') {
+    startBackgroundWorkers();
+  }
 
   await server.connect(transport);
-  console.error('Gnosis VibeMemory & Knowledge Graph MCP Server is running over STDIO');
 }
 
 main().catch((error) => {

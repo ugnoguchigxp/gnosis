@@ -58,7 +58,9 @@ describe('llm adapter', () => {
 
   it('throws on malformed JSON in parseLlmTaskOutputText', () => {
     const raw = '{"bad": json}';
-    expect(() => parseLlmTaskOutputText('summarize', raw)).toThrow(/JSON parse failed/);
+    expect(() => parseLlmTaskOutputText('summarize', raw)).toThrow(
+      /malformed JSON|JSON parse failed/,
+    );
   });
 
   it('returns API output when schema-valid', async () => {

@@ -2,16 +2,17 @@ import { type LlmLogEvent, runLlmTask } from '../../../adapters/llm.js';
 import type { Retriever } from '../../../adapters/retriever/mcpRetriever.js';
 import { type BudgetConfig, type LlmClientConfig, config } from '../../../config.js';
 import type { TopicTask } from '../domain/task';
-import { runCronFlow } from '../flows/cronFlow';
 import type { FlowEvidence } from '../flows/types';
-import { runUserFlow } from '../flows/userFlow';
+import { GapPlanner } from '../gap/planner.js';
 import type { Knowledge, KnowledgeUpsertInput } from '../knowledge/types';
 import type { Relation, SourceRef } from '../knowledge/types';
 import { extractEvidenceFromText } from '../ops/evidenceExtractor';
 import { type StructuredLogger, defaultStructuredLogger } from '../ops/logger';
 import { MetricsCollector } from '../ops/metrics';
+import type { QueueRepository } from '../queue/repository';
 import type { EvidenceClaim, EvidenceSource } from '../verifier';
 import type { TaskExecutionResult, TaskHandler } from './loop';
+import { PipelineOrchestrator } from './pipeline.js';
 
 const MAX_INITIAL_QUERIES = 3;
 const MAX_URLS_PER_QUERY = 2;
@@ -21,7 +22,7 @@ export type KnowledgeRepositoryLike = {
   merge: (input: KnowledgeUpsertInput) => Promise<{ knowledge: Knowledge; changed: boolean }>;
 };
 
-export type EvidenceProvider = (task: TopicTask) => Promise<FlowEvidence>;
+export type EvidenceProvider = (task: TopicTask, signal?: AbortSignal) => Promise<FlowEvidence>;
 
 export type CreateKnowFlowTaskHandlerOptions = {
   repository: KnowledgeRepositoryLike;
@@ -31,6 +32,11 @@ export type CreateKnowFlowTaskHandlerOptions = {
   logger?: StructuredLogger;
   metrics?: MetricsCollector;
   now?: () => number;
+
+  // For GapPlanner
+  queueRepository?: QueueRepository;
+  llmConfig?: Partial<LlmClientConfig>;
+  llmLogger?: (event: LlmLogEvent) => void;
 };
 
 export type McpEvidenceProviderOptions = {
@@ -49,7 +55,7 @@ export const createMcpEvidenceProvider = (
   const _runLlmTask = options?.runLlmTask ?? runLlmTask;
   const _extractEvidence = options?.extractEvidence ?? extractEvidenceFromText;
 
-  return async (task): Promise<FlowEvidence> => {
+  return async (task, signal): Promise<FlowEvidence> => {
     logger({
       event: 'retriever.mcp.start',
       taskId: task.id,
@@ -66,6 +72,7 @@ export const createMcpEvidenceProvider = (
       {
         config: options?.llmConfig,
         deps: options?.llmLogger ? { logger: options.llmLogger } : undefined,
+        signal,
       },
     );
 
@@ -99,7 +106,7 @@ export const createMcpEvidenceProvider = (
 
       let searchResultText: string;
       try {
-        searchResultText = await retriever.search(query);
+        searchResultText = await retriever.search(query, signal);
       } catch (searchError) {
         logger({
           event: 'retriever.mcp.search_error',
@@ -119,15 +126,36 @@ export const createMcpEvidenceProvider = (
 
       for (const url of urls) {
         try {
-          const content = await retriever.fetch(url);
+          const startTime = Date.now();
+          const contentRaw = await retriever.fetch(url, signal);
+          // ローカルLLMの過負荷（ハング）を防ぐため、コンテンツを切り詰め
+          const MAX_CONTENT_CHARS = 6000;
+          const content =
+            contentRaw.length > MAX_CONTENT_CHARS
+              ? `${contentRaw.slice(0, MAX_CONTENT_CHARS)}\n\n[...Truncated from ${
+                  contentRaw.length
+                } chars...]`
+              : contentRaw;
+
           const extracted = await _extractEvidence({
             topic: task.topic,
             url,
-            title: query, // Use query as title fallback
+            title: query,
             text: content,
             requestId: task.id,
             llmConfig: options?.llmConfig,
             llmLogger: options?.llmLogger,
+            signal,
+          });
+
+          const durationMs = Date.now() - startTime;
+          logger({
+            event: 'retriever.mcp.fetch_and_extract.done',
+            taskId: task.id,
+            url,
+            durationMs,
+            claims: extracted.claims.length,
+            level: 'info',
           });
 
           allClaims.push(...extracted.claims);
@@ -156,7 +184,7 @@ export const createMcpEvidenceProvider = (
   };
 };
 
-const defaultEvidenceProvider: EvidenceProvider = async (task) => {
+const defaultEvidenceProvider: EvidenceProvider = async (task, _signal) => {
   const now = Date.now();
   const sourceA = `generated:${task.id}:a`;
   const sourceB = `generated:${task.id}:b`;
@@ -220,129 +248,66 @@ export const createKnowFlowTaskHandler = (
   let cronRunWindowStartedAt = 0;
   let cronRunConsumed = 0;
 
-  return async (task): Promise<TaskExecutionResult> => {
+  const gapPlanner = new GapPlanner({
+    repository: options.queueRepository,
+    llmConfig: options.llmConfig,
+    llmLogger: options.llmLogger,
+  });
+
+  return async (task, signal): Promise<TaskExecutionResult> => {
     const now = options.now?.() ?? Date.now();
-    logger({
-      event: 'task.flow.start',
-      taskId: task.id,
-      topic: task.topic,
-      source: task.source,
-      mode: task.mode,
-      level: 'info',
+
+    // Budget window management
+    if (
+      cronRunWindowStartedAt === 0 ||
+      now < cronRunWindowStartedAt ||
+      now - cronRunWindowStartedAt >= cronRunWindowMs
+    ) {
+      cronRunWindowStartedAt = now;
+      cronRunConsumed = 0;
+    }
+
+    const orchestrator = new PipelineOrchestrator({
+      task,
+      repository: options.repository,
+      evidenceProvider,
+      gapPlanner,
+      budget: {
+        ...budget,
+      },
+      cronRunConsumed,
+      logger,
+      metrics,
+      now: () => options.now?.() ?? Date.now(),
+      signal,
     });
 
-    try {
-      const evidence = await evidenceProvider(task);
+    const result = await orchestrator.run();
 
-      if (task.source === 'user') {
-        const userResult = await runUserFlow({
-          topic: task.topic,
-          evidence,
-          repository: options.repository,
-          userBudget: budget.userBudget,
-          now,
-        });
+    // Update budget consumption if it was a cron flow and result has the data
+    if (
+      task.source !== 'user' &&
+      result.phases.flowExecution.data?.runConsumedBudget !== undefined
+    ) {
+      cronRunConsumed = result.phases.flowExecution.data.runConsumedBudget;
+    }
 
-        metrics.record({
-          taskId: task.id,
-          source: 'user',
-          ok: true,
-          changed: userResult.changed,
-          retries: task.attempts,
-          acceptedClaims: userResult.acceptedClaims,
-          rejectedClaims: userResult.rejectedClaims,
-          conflicts: userResult.conflicts,
-        });
-
-        logger({
-          event: 'task.flow.done',
-          taskId: task.id,
-          source: task.source,
-          changed: userResult.changed,
-          acceptedClaims: userResult.acceptedClaims,
-          rejectedClaims: userResult.rejectedClaims,
-          conflicts: userResult.conflicts,
-          gaps: userResult.gaps,
-          reportSummary: userResult.report.summary,
-          level: 'info',
-        });
-
-        return {
-          ok: true,
-          summary: `${userResult.summary}; report=${userResult.report.summary}`,
-        };
-      }
-
-      if (
-        cronRunWindowStartedAt === 0 ||
-        now < cronRunWindowStartedAt ||
-        now - cronRunWindowStartedAt >= cronRunWindowMs
-      ) {
-        cronRunWindowStartedAt = now;
-        cronRunConsumed = 0;
-      }
-
-      const cronResult = await runCronFlow({
-        topic: task.topic,
-        evidence,
-        repository: options.repository,
-        cronBudget: budget.cronBudget,
-        cronRunBudget: budget.cronRunBudget,
-        cronRunConsumed,
-        now,
-      });
-      cronRunConsumed = cronResult.runConsumedBudget;
-
-      metrics.record({
-        taskId: task.id,
-        source: 'cron',
-        ok: true,
-        changed: cronResult.changed,
-        retries: task.attempts,
-        acceptedClaims: cronResult.acceptedClaims,
-        rejectedClaims: cronResult.rejectedClaims,
-        conflicts: cronResult.conflicts,
-      });
-
-      logger({
-        event: 'task.flow.done',
-        taskId: task.id,
-        source: task.source,
-        changed: cronResult.changed,
-        acceptedClaims: cronResult.acceptedClaims,
-        rejectedClaims: cronResult.rejectedClaims,
-        conflicts: cronResult.conflicts,
-        gaps: cronResult.gaps,
-        cronRunConsumed,
-        level: 'info',
-      });
-
+    if (result.ok) {
       return {
         ok: true,
-        summary: `${cronResult.summary}; cronRunConsumed=${cronRunConsumed}`,
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      metrics.record({
-        taskId: task.id,
-        source: task.source,
-        ok: false,
-        retries: task.attempts,
-        acceptedClaims: 0,
-        rejectedClaims: 0,
-        conflicts: 0,
-      });
-      logger({
-        event: 'task.flow.error',
-        taskId: task.id,
-        source: task.source,
-        message,
-        level: 'error',
-      });
-      return {
-        ok: false,
-        error: message,
+        summary: result.summary,
       };
     }
+    logger({
+      event: 'task.flow.error',
+      taskId: task.id,
+      topic: task.topic,
+      error: result.summary,
+      level: 'error',
+    });
+    return {
+      ok: false,
+      error: result.summary,
+    };
   };
 };

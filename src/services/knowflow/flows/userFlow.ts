@@ -5,6 +5,8 @@ import { type ExplorationReport, buildExplorationReport } from '../report/explor
 import { buildVerificationSummary, verifyEvidence } from '../verifier';
 import type { FlowEvidence } from './types';
 
+import type { FlowResult } from './result';
+
 export type UserFlowRepository = MergeRepository & {
   getByTopic: (topic: string) => Promise<Knowledge | null>;
 };
@@ -17,15 +19,7 @@ export type RunUserFlowInput = {
   now?: number;
 };
 
-export type RunUserFlowResult = {
-  report: ExplorationReport;
-  summary: string;
-  changed: boolean;
-  acceptedClaims: number;
-  rejectedClaims: number;
-  conflicts: number;
-  gaps: number;
-};
+export type RunUserFlowResult = FlowResult;
 
 export const runUserFlow = async (input: RunUserFlowInput): Promise<RunUserFlowResult> => {
   const now = input.now ?? Date.now();
@@ -68,10 +62,11 @@ export const runUserFlow = async (input: RunUserFlowInput): Promise<RunUserFlowR
   return {
     report,
     summary: buildVerificationSummary(verification),
+    usedBudget,
     changed: mergeResult.changed,
     acceptedClaims: verification.acceptedClaims.length,
     rejectedClaims: verification.rejectedClaims.length,
     conflicts: verification.conflicts.length,
-    gaps: gaps.gaps.length,
+    gaps: gaps.gaps,
   };
 };

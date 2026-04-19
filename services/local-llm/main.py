@@ -15,6 +15,7 @@ import argparse
 import sys
 import asyncio
 from core.chat_engine import ChatEngine
+from vibe_mcp.client import VibeMcpClient
 
 
 SESSION_ID_RE = r"^[A-Za-z0-9_-]{6,64}$"
@@ -86,6 +87,7 @@ async def main():
     parser.add_argument("--session-id", type=str, help="Session ID to resume/save chat history")
     parser.add_argument("--session-dir", type=str, help="Directory to store session files")
     parser.add_argument("--no-session", action="store_true", help="Disable session persistence in single-turn mode")
+    parser.add_argument("--no-mcp", action="store_true", help="Disable Gnosis MCP server connection")
     parser.add_argument("--output", choices=["json", "text"], default="json", help="Output format in single-turn mode")
     args = parser.parse_args()
 
@@ -128,14 +130,38 @@ async def main():
     # モデルのロード
     try:
         if args.verbose:
-            print(f"[Debug] Loading backend: {args.backend} with model: {model_path}")
+            print(f"[Debug] Loading backend: {args.backend} with model: {model_path}", file=sys.stderr)
         backend.load_model(model_path)
     except Exception as e:
         print(f"Failed to load model: {e}")
         sys.exit(1)
 
+    # MCP クライアントの初期化 (Gnosis TS Server へのブリッジ)
+    mcp_client = None
+    if not args.no_mcp:
+        try:
+            root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+            mcp_client = VibeMcpClient(root_dir)
+            if args.verbose:
+                print(f"[Debug] Starting MCP bridge to {root_dir}...", file=sys.stderr)
+            await mcp_client.start()
+        except Exception as e:
+            if args.verbose:
+                print(f"[Warning] Failed to start MCP bridge: {e}", file=sys.stderr)
+            mcp_client = None
+
     # Engineの初期化
-    engine = ChatEngine(backend, verbose=args.verbose)
+    engine = ChatEngine(backend, verbose=args.verbose, mcp_client=mcp_client)
+    
+    # MCPツールの取得とキャッシュ
+    if mcp_client:
+        try:
+            engine._mcp_tools_cache = await mcp_client.list_tools()
+            if args.verbose:
+                print(f"[Debug] Linked {len(engine._mcp_tools_cache)} MCP tools.", file=sys.stderr)
+        except Exception as e:
+            if args.verbose:
+                print(f"[Warning] Failed to list MCP tools: {e}", file=sys.stderr)
     
     # バックエンドに応じたコンテキスト設定
     current_date = datetime.now().strftime("%Y年%m月%d日")
@@ -179,7 +205,7 @@ async def main():
         if record and isinstance(record.get("messages"), list):
             engine.messages = record["messages"]
             if args.verbose:
-                print(f"[Debug] Loaded session: {session_id} ({len(engine.messages)} messages)")
+                print(f"[Debug] Loaded session: {session_id} ({len(engine.messages)} messages)", file=sys.stderr)
         else:
             engine.reset(sys_instr)
     else:
@@ -266,7 +292,10 @@ async def main():
             
     finally:
         # 終了時にリソースを適切に解放
-        pass
+        if mcp_client:
+            if args.verbose:
+                print("[Debug] Stopping MCP bridge...", file=sys.stderr)
+            await mcp_client.stop()
 
 if __name__ == "__main__":
     try:

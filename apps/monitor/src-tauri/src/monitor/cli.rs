@@ -109,6 +109,24 @@ pub async fn enqueue_knowflow_task(
 
     serde_json::from_slice(&output.stdout).context("failed to parse enqueue result")
 }
+
+pub async fn fetch_tasks(project_root: &Path) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-tasks.ts")
+        .arg("--json")
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute monitor-tasks command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("monitor-tasks command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse tasks list payload")
+}
 pub async fn fetch_episodes(project_root: &Path) -> anyhow::Result<serde_json::Value> {
     let output = Command::new("bun")
         .arg("run")

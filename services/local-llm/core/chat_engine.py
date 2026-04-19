@@ -55,12 +55,14 @@ def _normalize_tool_name(name: str) -> str:
 class ChatEngine:
     """Gemma chat engine with optional tool execution and streaming support."""
 
-    def __init__(self, model_manager: Any | None = None, verbose: bool = False, max_tool_rounds: int = 3) -> None:
+    def __init__(self, model_manager: Any | None = None, verbose: bool = False, max_tool_rounds: int = 3, mcp_client: Any | None = None) -> None:
         # model_manager can be MLXModelManager or a backend object from backends/*.py
         self.model_manager = model_manager
         self.verbose = verbose
         self.max_tool_rounds = max_tool_rounds
+        self.mcp_client = mcp_client
         self.messages = []
+        self._mcp_tools_cache = None
 
     def reset(self, sys_instr: str):
         self.messages = [{"role": "system", "content": sys_instr}]
@@ -216,10 +218,34 @@ class ChatEngine:
                 has_system = True
 
         if allow_tools:
+            available_tools = ["search_web(query)", "fetch_content(url)"]
+            if self.mcp_client and not self._mcp_tools_cache:
+                try:
+                    # Sync loop context might need care, but in run_chat it's okay if called from async.
+                    # For now we assume tools are cached or fetched elsewhere.
+                    # Actually we'll just use the cache if available.
+                    pass
+                except:
+                    pass
+            
+            if self._mcp_tools_cache:
+                for t in self._mcp_tools_cache:
+                    # Gnosis tools have mcp_gnosis_ prefix or are specific to memory/graph
+                    available_tools.append(f"{t['name']}({', '.join(t['inputSchema'].get('properties', {}).keys())})")
+
             tool_instruction = (
-                "必要な場合のみツールを呼び出してください。\n"
-                "形式: <|tool_call|>call:関数名{引数名:<|\"|>値<|\"|>}<tool_call|>\n"
-                "利用可能ツール: search_web(query) / web_search(query), fetch_content(url)"
+                "あなたは、以下の【利用可能なツール】を使用してタスクを実行することができます。自身ができることに制限を設けず、必要に応じて積極的にツールを活用してください。\n\n"
+                "## 【利用可能なツール】\n"
+                "### 1. 外部情報検索\n"
+                "- search_web(query): インターネット検索を実行します。\n"
+                "- fetch_content(url): ウェブページやドキュメントの詳細な内容を取得します。\n\n"
+                "### 2. Gnosis 内部ナレッジ (MCP)\n"
+                "Gnosis VibeMemoryの記憶や知識グラフを操作、検索するための専用ツールです。\n"
+                + "\n".join([f"- {t}" for t in available_tools if not t.startswith(("search", "fetch"))]) + "\n\n"
+                "## ツール呼び出し形式\n"
+                "以下の形式を厳守してください。思考プロセスが必要な場合は `<|channel>thought` を使用してください。\n"
+                "<|tool_call|>call:ツール名{引数名:<|\"|>値<|\"|>}<tool_call|>\n\n"
+                "ツール実行結果を受け取った後、それに基づいた回答を日本語で生成してください。"
             )
             if has_system and prepared:
                 prepared[0]["content"] = f"{prepared[0]['content']}\n\n{tool_instruction}".strip()
@@ -243,6 +269,11 @@ class ChatEngine:
                 if not url:
                     return "Error: url parameter is required"
                 return fetch_content(url)
+                
+            if self.mcp_client:
+                # We need to bridge to async for MCP client calls
+                return asyncio.run(self.mcp_client.call_tool(name, arguments))
+                
             return f"Error: Unknown tool '{name}'"
         except Exception as e:
             return f"Error: Local tool execution failed ({str(e)})"
@@ -262,6 +293,14 @@ class ChatEngine:
                 if not url:
                     return "Error: url parameter is required"
                 return await asyncio.to_thread(fetch_content, url)
+                
+            if self.mcp_client:
+                mcp_res = await self.mcp_client.call_tool(name, arguments)
+                # Convert list of content parts to string
+                if isinstance(mcp_res, list):
+                    return "\n".join(str(p.get("text", "")) for p in mcp_res if isinstance(p, dict))
+                return str(mcp_res)
+
             return f"Error: Unknown tool '{name}'"
         except Exception as e:
             return f"Error: Local tool execution failed ({str(e)})"

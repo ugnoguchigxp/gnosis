@@ -1,114 +1,124 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { describe, expect, it, mock } from 'bun:test';
+import type { LockFs } from '../src/utils/lock';
 import { withGlobalLock } from '../src/utils/lock';
-
-// mock 化したい関数を個別に定義
-const mockOpenSync = mock();
-const mockCloseSync = mock();
-const mockUnlinkSync = mock();
-const mockExistsSync = mock(() => true);
-const mockStatSync = mock(() => ({ mtimeMs: Date.now() }));
-
-// node:fs をモック
-mock.module('node:fs', () => ({
-  openSync: mockOpenSync,
-  closeSync: mockCloseSync,
-  unlinkSync: mockUnlinkSync,
-  existsSync: mockExistsSync,
-  statSync: mockStatSync,
-}));
 
 // 待機時間をゼロにするために setTimeout だけモック（プロミス版）
 mock.module('node:timers/promises', () => ({
   setTimeout: async () => {},
 }));
 
+/**
+ * テスト用の LockFs モック。
+ * writeFileSync の flag:'wx' でEEXISTをスローする振る舞いを制御する。
+ */
+const makeLockFs = (overrides: Partial<LockFs> = {}): LockFs => ({
+  existsSync: mock(() => false),
+  statSync: mock(() => ({ mtimeMs: Date.now() })),
+  readFileSync: mock(() => String(process.pid)),
+  unlinkSync: mock(() => {}),
+  writeFileSync: mock(() => {}),
+  ...overrides,
+});
+
 describe('lock utility', () => {
-  beforeEach(() => {
-    mockOpenSync.mockReset();
-    mockCloseSync.mockReset();
-    mockUnlinkSync.mockReset();
-    mockExistsSync.mockReset();
-    mockExistsSync.mockReturnValue(true);
-  });
-
-  afterEach(() => {
-    mockOpenSync.mockReset();
-    mockCloseSync.mockReset();
-    mockUnlinkSync.mockReset();
-    mockExistsSync.mockReset();
-  });
-
   it('acquires and releases a lock successfully', async () => {
-    mockOpenSync.mockReturnValue(123); // FD
-    mockExistsSync.mockReturnValue(true); // cleanup verify 用
-
-    const result = await withGlobalLock('test', async () => {
-      return 'success';
+    const fs = makeLockFs({
+      existsSync: mock(() => false), // no stale lock
     });
 
+    const result = await withGlobalLock('test', async () => 'success', 5000, fs);
+
     expect(result).toBe('success');
-    expect(mockOpenSync).toHaveBeenCalled();
-    expect(mockCloseSync).toHaveBeenCalledWith(123);
-    expect(mockUnlinkSync).toHaveBeenCalled();
+    expect(fs.writeFileSync).toHaveBeenCalled();
+    expect(fs.unlinkSync).toHaveBeenCalled();
   });
 
   it('retries if lock already exists (EEXIST)', async () => {
     let calls = 0;
-    mockOpenSync.mockImplementation(() => {
+    const writeFileSync = mock(() => {
       if (calls === 0) {
         calls++;
         const err = new Error('EEXIST');
         Object.defineProperty(err, 'code', { value: 'EEXIST' });
         throw err;
       }
-      return 124;
     });
-    mockExistsSync.mockReturnValue(true);
+    const fs = makeLockFs({
+      existsSync: mock(() => false),
+      writeFileSync,
+    });
 
-    const result = await withGlobalLock('retry-test', async () => 'ok');
+    const result = await withGlobalLock('retry-test', async () => 'ok', 5000, fs);
 
     expect(result).toBe('ok');
-    expect(mockOpenSync).toHaveBeenCalledTimes(2);
-    expect(mockUnlinkSync).toHaveBeenCalled();
+    expect(writeFileSync).toHaveBeenCalledTimes(2);
+    expect(fs.unlinkSync).toHaveBeenCalled();
   });
 
   it('throws error if timeout is reached', async () => {
-    mockOpenSync.mockImplementation(() => {
+    const writeFileSync = mock(() => {
       const err = new Error('EEXIST');
-      // biome-ignore lint/suspicious/noExplicitAny: <explanation>
-      (err as any).code = 'EEXIST';
+      Object.defineProperty(err, 'code', { value: 'EEXIST' });
       throw err;
     });
-    mockExistsSync.mockReturnValue(false); // タイムアウト判定用
+    const fs = makeLockFs({
+      existsSync: mock(() => false),
+      writeFileSync,
+    });
 
-    // 非常に短いタイムアウトを設定
-    await expect(withGlobalLock('timeout-test', async () => 'bad', 10)).rejects.toThrow(
+    await expect(withGlobalLock('timeout-test', async () => 'bad', 10, fs)).rejects.toThrow(
       /Global lock timeout/,
     );
   });
 
   it('releases lock even if inner function fails', async () => {
-    mockOpenSync.mockReturnValue(125);
-    mockExistsSync.mockReturnValue(true);
+    const fs = makeLockFs({
+      existsSync: mock(() => false),
+    });
 
     try {
-      await withGlobalLock('error-test', async () => {
-        throw new Error('inner failure');
-      });
-    } catch (e) {
+      await withGlobalLock(
+        'error-test',
+        async () => {
+          throw new Error('inner failure');
+        },
+        5000,
+        fs,
+      );
+    } catch (_e) {
       // ignore
     }
 
-    expect(mockUnlinkSync).toHaveBeenCalled();
+    expect(fs.unlinkSync).toHaveBeenCalled();
   });
 
-  it('rethrows unexpected errors from openSync', async () => {
-    mockOpenSync.mockImplementation(() => {
+  it('rethrows unexpected errors from writeFileSync', async () => {
+    const writeFileSync = mock(() => {
       throw new Error('Unexpected FS error');
     });
+    const fs = makeLockFs({
+      existsSync: mock(() => false),
+      writeFileSync,
+    });
 
-    await expect(withGlobalLock('fail-test', async () => 'no')).rejects.toThrow(
+    await expect(withGlobalLock('fail-test', async () => 'no', 5000, fs)).rejects.toThrow(
       'Unexpected FS error',
     );
+  });
+
+  it('cleans up stale lock before acquiring', async () => {
+    // 既存のロックが存在するが、プロセスは死んでいる（kill throws）→ cleanup
+    const pid = 99999999; // 存在しないPID
+    const fs = makeLockFs({
+      existsSync: mock(() => true),
+      readFileSync: mock(() => String(pid)),
+      statSync: mock(() => ({ mtimeMs: Date.now() })),
+    });
+
+    const result = await withGlobalLock('stale-lock-test', async () => 'cleaned', 5000, fs);
+
+    expect(result).toBe('cleaned');
+    // cleanup で一度、release で一度 unlinkSync が呼ばれる
+    expect(fs.unlinkSync).toHaveBeenCalled();
   });
 });

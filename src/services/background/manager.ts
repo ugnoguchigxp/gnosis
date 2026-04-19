@@ -4,6 +4,7 @@ import { scheduler } from './scheduler.js';
 
 let intervalId: Timer | null = null;
 let isProcessing = false;
+let lastTickStart = 0;
 
 /**
  * すべてのバックグラウンドプロセスを管理するマネージャー。
@@ -17,8 +18,17 @@ export function startBackgroundWorkers(): void {
   if (intervalId) return;
 
   const tick = async () => {
-    if (isProcessing) return;
+    if (isProcessing) {
+      if (Date.now() - lastTickStart > 60 * 60 * 1000) {
+        console.error('[BackgroundManager] Watchdog: Previous tick hung for >1h. Resetting flag.');
+        isProcessing = false;
+      } else {
+        return;
+      }
+    }
+
     isProcessing = true;
+    lastTickStart = Date.now();
 
     try {
       console.error('[BackgroundManager] Ticking unified background scheduler...');

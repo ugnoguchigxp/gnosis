@@ -15,6 +15,7 @@
   "module": "index.ts",
   "type": "module",
   "scripts": {
+    "bootstrap": "bun run scripts/bootstrap.ts",
     "start": "bun run src/index.ts",
     "dev": "bun run --watch src/index.ts",
     "llmharness:local-llm": "bun run src/integrations/llmharness-local-llm.ts",
