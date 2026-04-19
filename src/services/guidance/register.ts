@@ -1,4 +1,6 @@
+import { config } from '../../config.js';
 import { db } from '../../db/index.js';
+import { vibeMemories } from '../../db/schema.js';
 import type { GuidanceScope, GuidanceType } from '../../domain/schemas.js';
 import { sha256 } from '../../utils/crypto.js';
 import { generateEntityId } from '../../utils/entityId.js';
@@ -62,6 +64,47 @@ export async function saveGuidance(
 
   const tags = input.tags ?? [];
   const embedding = await resolvedDeps.generateEmbedding(input.content);
+
+  // vibe_memories に保存（UI用）
+  const dedupeKey = `guidance:${sha256(`${archiveKey}:${input.title}:${input.content}`)}`;
+  const [memory] = await resolvedDeps.database
+    .insert(vibeMemories)
+    .values({
+      sessionId: input.sessionId ?? config.guidance.sessionId,
+      content: input.content,
+      embedding,
+      dedupeKey,
+      metadata: {
+        kind: 'guidance',
+        guidanceType: input.guidanceType,
+        scope: input.scope,
+        priority: input.priority,
+        title: input.title,
+        tags,
+        archiveKey,
+        updatedAt: resolvedDeps.now().toISOString(),
+        source: 'manual',
+      },
+    })
+    .onConflictDoUpdate({
+      target: [vibeMemories.sessionId, vibeMemories.dedupeKey],
+      set: {
+        content: input.content,
+        embedding: embedding,
+        metadata: {
+          kind: 'guidance',
+          guidanceType: input.guidanceType,
+          scope: input.scope,
+          priority: input.priority,
+          title: input.title,
+          tags,
+          archiveKey,
+          updatedAt: resolvedDeps.now().toISOString(),
+          source: 'manual',
+        },
+      },
+    })
+    .returning();
 
   // entities に保存
   await saveEntities(

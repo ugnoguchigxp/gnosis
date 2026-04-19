@@ -358,7 +358,7 @@ onMount(() => {
 	<div class="top-row">
 		<div>
 			<h1>Gnosis Monitoring</h1>
-			<div style="margin-top: 4px; font-size: 0.82rem; color: #475569;">WS: {wsUrl || '-'}</div>
+			<div style="margin-top: 4px; font-size: 0.82rem; color: var(--text-muted);">WS: {wsUrl || '-'}</div>
 		</div>
 		<div style="display: flex; gap: 8px; align-items: center;">
 			<button type="button" class="enqueue-btn" onclick={openEnqueueDialog}>+ Enqueue Task</button>
@@ -394,7 +394,7 @@ onMount(() => {
 			</label>
 			<label class="control">
 				<span>topic</span>
-				<input type="text" bind:value={topicFilter} placeholder="topic contains..." style="padding: 4px 8px; border: 1px solid #cbd5e1; border-radius: 8px;" />
+				<input type="text" bind:value={topicFilter} placeholder="topic contains..." style="padding: 4px 8px;" />
 			</label>
 			<div class="control">最終 Snapshot: {formatTime(lastSnapshotTs)}</div>
 		</div>
@@ -436,7 +436,7 @@ onMount(() => {
 	<section class="panel timeline">
 		<div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px;">
 			<h2 style="margin: 0;">Timeline</h2>
-			<div style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: #475569;">
+			<div style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--text-secondary);">
 				<span>{filteredTimeline.length}件</span>
 				<span>page {activeTimelinePage} / {totalTimelinePages}</span>
 				<button type="button" onclick={goToPreviousTimelinePage} disabled={activeTimelinePage <= 1}>
@@ -493,7 +493,7 @@ onMount(() => {
 				<button type="button" onclick={closeDetail}>Close</button>
 			</div>
 			{#if selectedEvent}
-				<div style="font-size: 0.85rem; color: #475569; margin-bottom: 10px;">
+				<div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 10px;">
 					kind: {selectedEvent.kind}<br />
 					taskId: {selectedEvent.taskId ?? '-'}
 				</div>

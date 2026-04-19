@@ -146,7 +146,10 @@ pub async fn delete_episode(project_root: &Path, id: &str) -> anyhow::Result<ser
     serde_json::from_slice(&output.stdout).context("failed to parse delete result")
 }
 
-pub async fn register_episode(project_root: &Path, content: &str) -> anyhow::Result<serde_json::Value> {
+pub async fn register_episode(
+    project_root: &Path,
+    content: &str,
+) -> anyhow::Result<serde_json::Value> {
     let output = Command::new("bun")
         .arg("run")
         .arg("src/scripts/monitor-episodes.ts")
@@ -165,7 +168,10 @@ pub async fn register_episode(project_root: &Path, content: &str) -> anyhow::Res
     serde_json::from_slice(&output.stdout).context("failed to parse register result")
 }
 
-pub async fn consolidate_session(project_root: &Path, session_id: &str) -> anyhow::Result<serde_json::Value> {
+pub async fn consolidate_session(
+    project_root: &Path,
+    session_id: &str,
+) -> anyhow::Result<serde_json::Value> {
     let output = Command::new("bun")
         .arg("run")
         .arg("src/scripts/monitor-episodes.ts")
@@ -182,4 +188,182 @@ pub async fn consolidate_session(project_root: &Path, session_id: &str) -> anyho
     }
 
     serde_json::from_slice(&output.stdout).context("failed to parse consolidate result")
+}
+
+pub async fn list_lessons(project_root: &Path) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-memory-crud.ts")
+        .arg("lessons")
+        .arg("list")
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute lessons list command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("lessons list command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse lessons list payload")
+}
+
+pub async fn create_lesson(
+    project_root: &Path,
+    payload: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-memory-crud.ts")
+        .arg("lessons")
+        .arg("create")
+        .arg(payload)
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute lesson create command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("lesson create command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse lesson create payload")
+}
+
+pub async fn update_lesson(
+    project_root: &Path,
+    id: &str,
+    payload: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-memory-crud.ts")
+        .arg("lessons")
+        .arg("update")
+        .arg(id)
+        .arg(payload)
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute lesson update command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("lesson update command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse lesson update payload")
+}
+
+pub async fn delete_lesson(project_root: &Path, id: &str) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-memory-crud.ts")
+        .arg("lessons")
+        .arg("delete")
+        .arg(id)
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute lesson delete command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("lesson delete command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse lesson delete payload")
+}
+
+pub async fn list_guidance(
+    project_root: &Path,
+    guidance_type: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-memory-crud.ts")
+        .arg("guidance")
+        .arg("list")
+        .arg(guidance_type)
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute guidance list command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("guidance list command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse guidance list payload")
+}
+
+pub async fn create_guidance(
+    project_root: &Path,
+    payload: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-memory-crud.ts")
+        .arg("guidance")
+        .arg("create")
+        .arg(payload)
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute guidance create command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("guidance create command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse guidance create payload")
+}
+
+pub async fn update_guidance(
+    project_root: &Path,
+    id: &str,
+    payload: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-memory-crud.ts")
+        .arg("guidance")
+        .arg("update")
+        .arg(id)
+        .arg(payload)
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute guidance update command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("guidance update command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse guidance update payload")
+}
+
+pub async fn delete_guidance(project_root: &Path, id: &str) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-memory-crud.ts")
+        .arg("guidance")
+        .arg("delete")
+        .arg(id)
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute guidance delete command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("guidance delete command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse guidance delete payload")
 }

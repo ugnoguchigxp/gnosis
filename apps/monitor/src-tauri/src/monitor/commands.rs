@@ -44,14 +44,9 @@ pub async fn monitor_enqueue_task(
     mode: Option<String>,
     priority: Option<i32>,
 ) -> Result<serde_json::Value, String> {
-    cli::enqueue_knowflow_task(
-        &state.project_root,
-        &topic,
-        mode.as_deref(),
-        priority,
-    )
-    .await
-    .map_err(|error| error.to_string())
+    cli::enqueue_knowflow_task(&state.project_root, &topic, mode.as_deref(), priority)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -89,6 +84,87 @@ pub async fn monitor_consolidate_session(
     session_id: String,
 ) -> Result<serde_json::Value, String> {
     cli::consolidate_session(&state.project_root, &session_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_list_lessons(
+    state: State<'_, MonitorRuntime>,
+) -> Result<serde_json::Value, String> {
+    cli::list_lessons(&state.project_root)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_create_lesson(
+    state: State<'_, MonitorRuntime>,
+    payload: String,
+) -> Result<serde_json::Value, String> {
+    cli::create_lesson(&state.project_root, &payload)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_update_lesson(
+    state: State<'_, MonitorRuntime>,
+    id: String,
+    payload: String,
+) -> Result<serde_json::Value, String> {
+    cli::update_lesson(&state.project_root, &id, &payload)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_delete_lesson(
+    state: State<'_, MonitorRuntime>,
+    id: String,
+) -> Result<serde_json::Value, String> {
+    cli::delete_lesson(&state.project_root, &id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_list_guidance(
+    state: State<'_, MonitorRuntime>,
+    guidance_type: String,
+) -> Result<serde_json::Value, String> {
+    cli::list_guidance(&state.project_root, &guidance_type)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_create_guidance(
+    state: State<'_, MonitorRuntime>,
+    payload: String,
+) -> Result<serde_json::Value, String> {
+    cli::create_guidance(&state.project_root, &payload)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_update_guidance(
+    state: State<'_, MonitorRuntime>,
+    id: String,
+    payload: String,
+) -> Result<serde_json::Value, String> {
+    cli::update_guidance(&state.project_root, &id, &payload)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_delete_guidance(
+    state: State<'_, MonitorRuntime>,
+    id: String,
+) -> Result<serde_json::Value, String> {
+    cli::delete_guidance(&state.project_root, &id)
         .await
         .map_err(|error| error.to_string())
 }

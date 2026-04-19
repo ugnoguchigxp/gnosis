@@ -26,7 +26,15 @@ pub fn run() {
             monitor::commands::monitor_list_episodes,
             monitor::commands::monitor_delete_episode,
             monitor::commands::monitor_register_episode,
-            monitor::commands::monitor_consolidate_session
+            monitor::commands::monitor_consolidate_session,
+            monitor::commands::monitor_list_lessons,
+            monitor::commands::monitor_create_lesson,
+            monitor::commands::monitor_update_lesson,
+            monitor::commands::monitor_delete_lesson,
+            monitor::commands::monitor_list_guidance,
+            monitor::commands::monitor_create_guidance,
+            monitor::commands::monitor_update_guidance,
+            monitor::commands::monitor_delete_guidance
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
