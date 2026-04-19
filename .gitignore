@@ -30,6 +30,4 @@ services/**/__pycache__/
 services/**/*.egg-info/
 
 # SQLite
-*.sqlite
-*.sqlite-shm
-*.sqlite-wal
+data/

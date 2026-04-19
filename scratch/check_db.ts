@@ -4,7 +4,7 @@ import { db } from '../src/db/index';
 import { knowflowKeywordEvaluations, syncState, topicTasks } from '../src/db/schema';
 
 async function check() {
-  const sqlite = new Database('gnosis-tasks.sqlite');
+  const sqlite = new Database('data/gnosis-tasks.sqlite');
   const tasks = sqlite
     .query(
       'SELECT type, status, priority, count(*) as count FROM background_tasks GROUP BY type, status, priority',

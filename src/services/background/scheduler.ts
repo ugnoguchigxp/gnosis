@@ -31,7 +31,7 @@ interface TaskRow {
 export class UnifiedTaskScheduler {
   private db: Database;
 
-  constructor(dbOrPath: Database | string = 'gnosis-tasks.sqlite') {
+  constructor(dbOrPath: Database | string = 'data/gnosis-tasks.sqlite') {
     if (typeof dbOrPath === 'string') {
       const dir = path.dirname(dbOrPath);
       if (dir !== '.' && !existsSync(dir)) {
