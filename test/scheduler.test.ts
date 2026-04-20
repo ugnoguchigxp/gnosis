@@ -92,4 +92,50 @@ describe('UnifiedTaskScheduler', () => {
     const task = await scheduler.getNextTask();
     expect(task).toBeNull();
   });
+
+  it('does not overwrite a running periodic task when re-enqueued with same id', async () => {
+    await scheduler.enqueue('periodic', { step: 1 }, { id: 'periodic-1', priority: 5 });
+    const first = await scheduler.dequeueTask();
+    expect(first?.id).toBe('periodic-1');
+    expect(first?.status).toBe('pending');
+
+    await scheduler.enqueue('periodic', { step: 2 }, { id: 'periodic-1', priority: 9 });
+
+    const tasks = scheduler.getAllTasks();
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].id).toBe('periodic-1');
+    expect(tasks[0].status).toBe('running');
+    expect(JSON.parse(tasks[0].payload)).toEqual({ step: 1 });
+  });
+
+  it('keeps failed task unchanged before retry time when re-enqueued with same id', async () => {
+    const retryAt = Date.now() + 30_000;
+    await scheduler.enqueue('periodic', { step: 1 }, { id: 'periodic-failed', priority: 3 });
+    scheduler.updateTaskStatus('periodic-failed', 'failed', 'boom', retryAt);
+
+    await scheduler.enqueue('periodic', { step: 2 }, { id: 'periodic-failed', priority: 9 });
+
+    const tasks = scheduler.getAllTasks();
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].id).toBe('periodic-failed');
+    expect(tasks[0].status).toBe('failed');
+    expect(tasks[0].nextRunAt).toBe(retryAt);
+    expect(tasks[0].errorMessage).toBe('boom');
+    expect(JSON.parse(tasks[0].payload)).toEqual({ step: 1 });
+  });
+
+  it('requeues failed task to pending after retry time when re-enqueued with same id', async () => {
+    const past = Date.now() - 10_000;
+    await scheduler.enqueue('periodic', { step: 1 }, { id: 'periodic-retry', priority: 1 });
+    scheduler.updateTaskStatus('periodic-retry', 'failed', 'boom', past);
+
+    await scheduler.enqueue('periodic', { step: 2 }, { id: 'periodic-retry', priority: 7 });
+
+    const tasks = scheduler.getAllTasks();
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].id).toBe('periodic-retry');
+    expect(tasks[0].status).toBe('pending');
+    expect(tasks[0].errorMessage).toBeNull();
+    expect(JSON.parse(tasks[0].payload)).toEqual({ step: 2 });
+  });
 });

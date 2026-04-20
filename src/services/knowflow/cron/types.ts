@@ -77,6 +77,7 @@ export const KeywordSeederRunResultSchema = z
     enqueued: z.number().int().nonnegative(),
     skipped: z.number().int().nonnegative(),
     deduped: z.number().int().nonnegative(),
+    sourceFailures: z.number().int().nonnegative(),
   })
   .strict();
 

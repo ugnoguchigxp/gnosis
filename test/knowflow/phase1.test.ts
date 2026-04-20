@@ -97,6 +97,7 @@ describe('Phase1: queue/scheduler/worker', () => {
           now: () => now,
           maxAttempts: 3,
           baseBackoffMs: 500,
+          backoffJitterRatio: 0,
         },
       );
 

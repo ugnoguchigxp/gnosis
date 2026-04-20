@@ -5,8 +5,14 @@ import { entities, relations, vibeMemories } from '../db/schema.js';
 import { consolidateEpisodes } from '../services/consolidation.js';
 
 async function main() {
-  const args = process.argv.slice(2);
+  const rawArgs = process.argv.slice(2);
+  const strict = rawArgs.includes('--strict');
+  const args = rawArgs.filter((arg) => arg !== '--strict');
   const command = args[0];
+
+  if (strict && command !== 'consolidate') {
+    throw new Error('--strict is supported only for consolidate');
+  }
 
   if (command === 'list') {
     const eps = await db
@@ -105,19 +111,21 @@ async function main() {
     if (result) {
       console.error(`Consolidation successful: ${result.episodeId}`);
       console.log(JSON.stringify({ success: true, ...result }));
+      process.exit(0);
     } else {
       console.error('Consolidation result was null (skipped).');
       console.log(
         JSON.stringify({
           success: false,
           error: 'Consolidation skipped (not enough data or already processed)',
+          strict,
         }),
       );
+      process.exit(strict ? 1 : 0);
     }
-    process.exit(0);
   } else {
     console.error(
-      'Unknown command. Use: list, delete <id>, register <content>, consolidate <sessionId>',
+      'Unknown command. Use: list, delete <id>, register <content>, consolidate <sessionId> [--strict]',
     );
     process.exit(1);
   }

@@ -26,6 +26,8 @@ export type WorkerOptions = {
   maxAttempts?: number;
   baseBackoffMs?: number;
   maxBackoffMs?: number;
+  backoffJitterRatio?: number;
+  random?: () => number;
   taskTimeoutMs?: number;
   now?: () => number;
   logger?: StructuredLogger;
@@ -136,6 +138,8 @@ export const runWorkerOnce = async (
       maxAttempts: options.maxAttempts,
       baseBackoffMs: options.baseBackoffMs,
       maxBackoffMs: options.maxBackoffMs,
+      jitterRatio: options.backoffJitterRatio,
+      random: options.random,
     });
 
     await repository.applyFailureAction(task.id, action, currentNow);

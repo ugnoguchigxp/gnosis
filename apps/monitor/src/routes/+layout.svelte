@@ -55,7 +55,7 @@ const { children } = $props();
 		color: var(--text-primary);
 	}
 
-	.nav-link:active, .nav-link.active {
+	.nav-link:active {
 		background: rgba(59, 130, 246, 0.1);
 		color: var(--accent-primary);
 	}

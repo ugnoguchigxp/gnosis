@@ -18,8 +18,16 @@ const improvementSchema = z.object({
 });
 
 const recordOutcomeSchema = z.object({
-  goalId: z.string().describe('実行した goal の entity ID'),
-  sessionId: z.string().optional().default(config.guidance.sessionId).describe('セッション ID'),
+  goalId: z
+    .string()
+    .describe(
+      '実行した goal の entity ID。現在の作業目標（Goal）を特定するために必須です。不明な場合は query_graph で検索して取得してください。',
+    ),
+  sessionId: z
+    .string()
+    .optional()
+    .default(config.guidance.sessionId)
+    .describe('セッション ID。特定のプロジェクトや作業単位を区別するために使用します。'),
   taskResults: z.array(taskResultSchema).describe('各タスクの実行結果'),
   improvements: z.array(improvementSchema).optional().describe('改善提案（任意）'),
 });

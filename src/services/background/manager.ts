@@ -34,7 +34,7 @@ export function startBackgroundWorkers(): void {
       console.error('[BackgroundManager] Ticking unified background scheduler...');
 
       // 定期タスクの登録/更新 (ID固定で重複排除)
-      // 5分ごとにキューに積む (実際には status='pending' なら REPLACE される)
+      // scheduler.enqueue 側で running/failed の保護を行う
       await scheduler.enqueue('consolidation', {}, { id: 'periodic-consolidation', priority: 10 });
       await scheduler.enqueue('synthesis', {}, { id: 'periodic-synthesis', priority: 10 });
       await scheduler.enqueue(

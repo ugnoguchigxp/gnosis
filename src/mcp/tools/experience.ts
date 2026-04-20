@@ -4,11 +4,33 @@ import { recallExperienceLessons, saveExperience } from '../../services/experien
 import type { ToolEntry } from '../registry.js';
 
 const recordExperienceSchema = z.object({
-  sessionId: z.string().describe('セッションID'),
-  scenarioId: z.string().describe('シナリオID (e.g., smoke-001)'),
-  attempt: z.number().int().positive().describe('試行回数'),
-  type: z.enum(['failure', 'success']).describe('イベントのタイプ (failure or success)'),
-  content: z.string().describe('イベントの内容 (失敗メッセージや成功パッチの説明)'),
+  sessionId: z
+    .string()
+    .describe(
+      'セッションID。プロジェクト名や作業コンテキスト（例: "auth-refactoring"）を指定して教訓をグループ化します。',
+    ),
+  scenarioId: z
+    .string()
+    .optional()
+    .default('manual-record')
+    .describe('シナリオID。特定のテストケースや自動実行以外では省略可能です。'),
+  attempt: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .default(1)
+    .describe('試行回数。手動記録の場合は省略可能です。'),
+  type: z
+    .enum(['failure', 'success'])
+    .describe(
+      'イベントのタイプ。想定外の挙動やエラーは "failure"、解決策や成功した手順は "success" を指定します。',
+    ),
+  content: z
+    .string()
+    .describe(
+      'イベントの内容。失敗メッセージ、エラーログ、または解決策の詳細を具体的に記述します。',
+    ),
   failureType: z.string().optional().describe('失敗のタイプ (e.g., RISK_BLOCKING)'),
   metadata: z
     .record(z.unknown())

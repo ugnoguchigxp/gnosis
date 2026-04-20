@@ -9,6 +9,7 @@ import { createLocalLlmRetriever } from '../../adapters/retriever/mcpRetriever.j
 // KnowFlow 関連のインポート (Port from scripts/worker.ts)
 import { config } from '../../config.js';
 import { runKeywordSeederOnce } from '../knowflow/cron/keywordSeeder.js';
+import type { KeywordSeederRunResult } from '../knowflow/cron/types.js';
 import { PgKnowledgeRepository } from '../knowflow/knowledge/repository.js';
 import { PgJsonbQueueRepository } from '../knowflow/queue/pgJsonbRepository.js';
 import {
@@ -16,11 +17,31 @@ import {
   createMcpEvidenceProvider,
 } from '../knowflow/worker/knowFlowHandler.js';
 import { runWorkerOnce } from '../knowflow/worker/loop.js';
+import type { RunOnceResult } from '../knowflow/worker/loop.js';
 
 interface TaskPayload {
   batchSize?: number;
+  maxFailures?: number;
   [key: string]: unknown;
 }
+
+export type TaskOutcome = {
+  ok: boolean;
+  processed: boolean;
+  summary: string;
+  partialFailures: number;
+  error?: string;
+  stats?: Record<string, unknown>;
+};
+
+const readNonNegativeInt = (value: unknown): number | undefined => {
+  const raw =
+    typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : Number.NaN;
+  if (!Number.isFinite(raw)) {
+    return undefined;
+  }
+  return Math.max(0, Math.trunc(raw));
+};
 
 /**
  * 登録されたタスクタイプを実行関数にマップします。
@@ -35,32 +56,104 @@ export async function runTask(
   } = {
     database: defaultDb,
   },
-): Promise<void> {
+): Promise<TaskOutcome> {
   console.error(`[TaskRunner] Executing task: ${type}`);
 
   switch (type) {
-    case 'consolidation':
-      await consolidationTask();
-      break;
+    case 'consolidation': {
+      const maxFailures = readNonNegativeInt(payload.maxFailures) ?? 0;
+      const result = await consolidationTask({ maxFailures });
+      return {
+        ok: true,
+        processed: result.attemptedGroups > 0,
+        summary: `eligible=${result.eligibleGroups} attempted=${result.attemptedGroups} succeeded=${result.succeededGroups} skipped=${result.skippedGroups} failed=${result.failedGroups} episodes=${result.createdEpisodes}`,
+        partialFailures: result.failedGroups,
+        stats: result,
+      };
+    }
 
-    case 'synthesis':
-      await synthesisTask();
-      break;
+    case 'synthesis': {
+      const maxFailures = readNonNegativeInt(payload.maxFailures) ?? 0;
+      const result = await synthesisTask({ maxFailures });
+      return {
+        ok: true,
+        processed: result.processedMemories > 0 || result.failedCount > 0,
+        summary: `processed=${result.processedMemories} entities=${result.extractedEntities} relations=${result.extractedRelations} failed=${result.failedCount}`,
+        partialFailures: result.failedCount,
+        stats: result,
+      };
+    }
 
-    case 'embedding_batch':
-      await embeddingBatchTask(payload.batchSize || 20);
-      break;
+    case 'embedding_batch': {
+      const batchSize = readNonNegativeInt(payload.batchSize) ?? 20;
+      const result = await embeddingBatchTask(batchSize);
+      return {
+        ok: true,
+        processed: result.processed > 0,
+        summary: `processed=${result.processed}`,
+        partialFailures: 0,
+        stats: result,
+      };
+    }
 
-    case 'knowflow':
-      await runKnowFlowIteration(deps.database, deps.runWorkerOnce);
-      break;
-    case 'knowflow_keyword_seed':
-      await runKnowFlowKeywordSeedIteration(deps.database, deps.runKeywordSeederOnce);
-      break;
+    case 'knowflow': {
+      const result = await runKnowFlowIteration(deps.database, deps.runWorkerOnce);
+      return mapKnowflowRunOnceResult(result);
+    }
+
+    case 'knowflow_keyword_seed': {
+      const result = await runKnowFlowKeywordSeedIteration(
+        deps.database,
+        deps.runKeywordSeederOnce,
+      );
+      const sourceFailures = readNonNegativeInt(result.sourceFailures) ?? 0;
+      const processed =
+        result.evaluated > 0 || result.enqueued > 0 || result.skipped > 0 || sourceFailures > 0;
+
+      return {
+        ok: sourceFailures === 0,
+        processed,
+        summary: `sources=${result.sources} evaluated=${result.evaluated} enqueued=${result.enqueued} skipped=${result.skipped} deduped=${result.deduped} sourceFailures=${sourceFailures}`,
+        partialFailures: sourceFailures,
+        error:
+          sourceFailures > 0
+            ? `${sourceFailures} source(s) failed during keyword seeding`
+            : undefined,
+        stats: result,
+      };
+    }
 
     default:
       throw new Error(`Unknown task type: ${type}`);
   }
+}
+
+function mapKnowflowRunOnceResult(result: RunOnceResult): TaskOutcome {
+  if (!result.processed) {
+    return {
+      ok: true,
+      processed: false,
+      summary: 'No runnable knowflow tasks in queue.',
+      partialFailures: 0,
+    };
+  }
+
+  if (result.status === 'done') {
+    return {
+      ok: true,
+      processed: true,
+      summary: `Processed knowflow task ${result.taskId} successfully.`,
+      partialFailures: 0,
+    };
+  }
+
+  return {
+    ok: false,
+    processed: true,
+    summary: `Knowflow task ${result.taskId} ended with status=${result.status}.`,
+    partialFailures: 1,
+    error: result.error,
+  };
 }
 
 /**
@@ -69,7 +162,7 @@ export async function runTask(
 async function runKnowFlowIteration(
   database: typeof defaultDb = defaultDb,
   customRunWorkerOnce?: typeof runWorkerOnce,
-) {
+): Promise<RunOnceResult> {
   const queueRepository = new PgJsonbQueueRepository(database);
   const knowledgeRepository = new PgKnowledgeRepository({}, database);
   const retriever = createLocalLlmRetriever(config.localLlmPath);
@@ -86,7 +179,7 @@ async function runKnowFlowIteration(
 
   // runWorkerOnce 自体も内部で LLM を呼び出すため、
   // Semaphore は LLM サービス側 (llm.ts, memory.ts) で制御される前提
-  await runOnce(queueRepository, handler, {
+  return await runOnce(queueRepository, handler, {
     workerId: `background-manager-${process.pid}`,
   });
 }
@@ -94,9 +187,9 @@ async function runKnowFlowIteration(
 async function runKnowFlowKeywordSeedIteration(
   database: typeof defaultDb = defaultDb,
   customRunKeywordSeederOnce?: typeof runKeywordSeederOnce,
-) {
+): Promise<KeywordSeederRunResult> {
   const runSeeder = customRunKeywordSeederOnce ?? runKeywordSeederOnce;
-  await runSeeder({ database });
+  return await runSeeder({ database });
 }
 
 /**
@@ -126,25 +219,46 @@ export async function processQueue(
           // アトミックにタスクを取得 (取得できた時点で status = 'running' となっている)
           const task = await customScheduler.dequeueTask();
           if (!task) {
-            // タスクがなければループを抜けるためのフラグを外側のスコープに渡す必要があるが、
-            // ここではシンプルに一度 null を返して外側で break するように制御しやすくリファクタリングする
             hasMoreTasks = false;
             return;
           }
 
           try {
             // 個別タスクにハードタイムアウト (30分) を設定
-            const timeoutSignal = new Promise((_, reject) => {
-              setTimeout(
+            let timeoutId: ReturnType<typeof setTimeout> | undefined;
+            const timeoutSignal = new Promise<TaskOutcome>((_, reject) => {
+              timeoutId = setTimeout(
                 () => reject(new Error('Task execution timed out after 1800000ms')),
                 30 * 60 * 1000,
               );
             });
 
-            await Promise.race([
-              runTask(task.type, JSON.parse(task.payload) as TaskPayload, deps),
-              timeoutSignal,
-            ]);
+            let outcome: TaskOutcome;
+            try {
+              outcome = await Promise.race([
+                runTask(task.type, JSON.parse(task.payload) as TaskPayload, deps),
+                timeoutSignal,
+              ]);
+            } finally {
+              if (timeoutId !== undefined) {
+                clearTimeout(timeoutId);
+              }
+            }
+
+            if (!outcome.ok) {
+              const detail = outcome.error ? ` error=${outcome.error}` : '';
+              throw new Error(`Task outcome failed: ${outcome.summary}.${detail}`);
+            }
+
+            if (outcome.partialFailures > 0) {
+              console.error(
+                `[TaskRunner] Task ${task.id} (${task.type}) completed with partial failures: ${outcome.partialFailures}. ${outcome.summary}`,
+              );
+            } else {
+              console.error(
+                `[TaskRunner] Task ${task.id} (${task.type}) completed. ${outcome.summary}`,
+              );
+            }
 
             customScheduler.updateTaskStatus(task.id, 'completed');
             customScheduler.deleteTask(task.id);

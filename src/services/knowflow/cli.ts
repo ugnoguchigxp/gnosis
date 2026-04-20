@@ -25,7 +25,7 @@ import { type TaskHandler, runWorkerLoop, runWorkerOnce } from './worker/loop';
 
 const usage = `Usage:
   bun src/services/knowflow/cli.ts enqueue --topic <text> [--mode directed|expand|explore] [--source user|cron] [--priority <n>] [--requested-by <id>] [--dry-run]
-  bun src/services/knowflow/cli.ts run-once [--worker-id <id>] [--max-attempts <n>] [--fail] [--local-llm-path <path>]
+  bun src/services/knowflow/cli.ts run-once [--worker-id <id>] [--max-attempts <n>] [--fail] [--local-llm-path <path>] [--strict-complete]
   bun src/services/knowflow/cli.ts run-worker [--worker-id <id>] [--interval-ms <n>] [--max-iterations <n>] [--max-attempts <n>] [--fail] [--local-llm-path <path>]
   bun src/services/knowflow/cli.ts llm-task --task hypothesis|query_generation|gap_detection|gap_planner|summarize|extract_evidence --context-json <json>
   bun src/services/knowflow/cli.ts search-knowledge --query <text> [--limit <n>]
@@ -117,6 +117,7 @@ const run = async () => {
   const outputFormat = resolveOutputFormat(args);
   const verbose = readBooleanFlag(args, 'verbose');
   const dryRun = readBooleanFlag(args, 'dry-run');
+  const strictComplete = readBooleanFlag(args, 'strict-complete');
   const runLogger = await createRunLogger({
     runId: readStringFlag(args, 'run-id'),
   });
@@ -145,6 +146,7 @@ const run = async () => {
       outputFormat,
       verbose,
       dryRun,
+      strictComplete,
       profilePath,
     });
 
@@ -160,6 +162,10 @@ const run = async () => {
       }
       throw new Error('--dry-run is supported only for enqueue and merge-knowledge');
     };
+
+    if (strictComplete && command !== 'run-once') {
+      throw new Error('--strict-complete is supported only for run-once');
+    }
 
     // PostgreSQL (Drizzle) backend is fixed.
     const buildQueueRepository = () => new PgJsonbQueueRepository(defaultDb);
@@ -233,11 +239,24 @@ const run = async () => {
         logger,
       });
 
+      if (strictComplete) {
+        if (!result.processed) {
+          throw new Error('--strict-complete failed: no runnable task was processed');
+        }
+        if (result.status !== 'done') {
+          const errorDetail = result.error ? ` error=${result.error}` : '';
+          throw new Error(
+            `--strict-complete failed: task ${result.taskId} ended with status=${result.status}.${errorDetail}`,
+          );
+        }
+      }
+
       writeResult({
         command,
         runId: runLogger.runId,
         profilePath,
         workerId,
+        strictComplete,
         result,
       });
       return;

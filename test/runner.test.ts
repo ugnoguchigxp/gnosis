@@ -2,11 +2,34 @@ import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { processQueue, runTask } from '../src/services/background/runner.js';
 
 // Mock worker functions
-const mockConsolidation = mock(async () => {});
-const mockEmbedding = mock(async () => {});
-const mockSynthesis = mock(async () => {});
-const mockRunWorkerOnce = mock(async () => {});
-const mockRunKeywordSeederOnce = mock(async () => {});
+const mockConsolidation = mock(async () => ({
+  eligibleGroups: 0,
+  attemptedGroups: 0,
+  succeededGroups: 0,
+  skippedGroups: 0,
+  failedGroups: 0,
+  createdEpisodes: 0,
+  failures: [],
+}));
+const mockEmbedding = mock(async () => ({ processed: 0 }));
+const mockSynthesis = mock(async () => ({
+  processedMemories: 0,
+  extractedEntities: 0,
+  extractedRelations: 0,
+  failedCount: 0,
+}));
+const mockRunWorkerOnce = mock(async (): Promise<unknown> => ({ processed: false }));
+const mockRunKeywordSeederOnce = mock(async () => ({
+  runId: '00000000-0000-4000-8000-000000000000',
+  aliasUsed: 'gemma4',
+  threshold: 6.5,
+  sources: 0,
+  evaluated: 0,
+  enqueued: 0,
+  skipped: 0,
+  deduped: 0,
+  sourceFailures: 0,
+}));
 
 mock.module('../src/services/background/tasks/consolidationTask.js', () => ({
   consolidationTask: mockConsolidation,
@@ -83,23 +106,32 @@ describe('background runner', () => {
 
   describe('runTask', () => {
     it('executes consolidation task', async () => {
-      await runTask('consolidation', {}, testDeps);
+      const outcome = await runTask('consolidation', {}, testDeps);
       expect(mockConsolidation).toHaveBeenCalled();
+      expect(outcome.ok).toBe(true);
     });
 
     it('executes embedding_batch task', async () => {
-      await runTask('embedding_batch', { batchSize: 10 }, testDeps);
+      const outcome = await runTask('embedding_batch', { batchSize: 10 }, testDeps);
       expect(mockEmbedding).toHaveBeenCalledWith(10);
+      expect(outcome.ok).toBe(true);
     });
 
     it('executes knowflow task via DI', async () => {
-      await runTask('knowflow', {}, testDeps);
+      mockRunWorkerOnce.mockResolvedValueOnce({
+        processed: true,
+        taskId: 'k1',
+        status: 'done',
+      });
+      const outcome = await runTask('knowflow', {}, testDeps);
       expect(mockRunWorkerOnce).toHaveBeenCalled();
+      expect(outcome.ok).toBe(true);
     });
 
     it('executes knowflow_keyword_seed task', async () => {
-      await runTask('knowflow_keyword_seed', {}, testDeps);
+      const outcome = await runTask('knowflow_keyword_seed', {}, testDeps);
       expect(mockRunKeywordSeederOnce).toHaveBeenCalled();
+      expect(outcome.ok).toBe(true);
     });
 
     it('throws error for unknown task', async () => {
@@ -133,6 +165,27 @@ describe('background runner', () => {
         '1',
         'failed',
         expect.stringMatching(/Test error/),
+        expect.any(Number),
+      );
+    });
+
+    it('marks task failed when knowflow outcome is deferred', async () => {
+      const task = { id: '1', type: 'knowflow', payload: '{}' };
+      mockScheduler.dequeueTask.mockReturnValueOnce(task).mockReturnValueOnce(null);
+      mockRunWorkerOnce.mockResolvedValueOnce({
+        processed: true,
+        taskId: 'k-deferred',
+        status: 'deferred',
+        error: 'retry later',
+      });
+
+      // biome-ignore lint/suspicious/noExplicitAny: mock
+      await processQueue(mockScheduler as any, testDeps as any);
+
+      expect(mockScheduler.updateTaskStatus).toHaveBeenCalledWith(
+        '1',
+        'failed',
+        expect.stringMatching(/Task outcome failed/),
         expect.any(Number),
       );
     });

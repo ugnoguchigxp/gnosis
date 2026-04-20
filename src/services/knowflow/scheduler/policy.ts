@@ -3,6 +3,7 @@ import type { TopicTask } from '../domain/task';
 export const DEFAULT_MAX_ATTEMPTS = 3;
 export const DEFAULT_BASE_BACKOFF_MS = 30_000;
 export const DEFAULT_MAX_BACKOFF_MS = 30 * 60_000;
+export const DEFAULT_BACKOFF_JITTER_RATIO = 0.2;
 
 export type FailureAction =
   | {
@@ -27,6 +28,20 @@ export const computeBackoffMs = (
   return Math.min(backoff, maxBackoffMs);
 };
 
+export const computeBackoffWithJitterMs = (
+  backoffMs: number,
+  jitterRatio = DEFAULT_BACKOFF_JITTER_RATIO,
+  random: () => number = Math.random,
+): number => {
+  const ratio = Math.max(0, Math.min(1, jitterRatio));
+  if (ratio === 0) return Math.max(0, Math.round(backoffMs));
+
+  const spread = backoffMs * ratio;
+  const lower = Math.max(0, backoffMs - spread);
+  const upper = backoffMs + spread;
+  return Math.round(lower + (upper - lower) * random());
+};
+
 export const decideFailureAction = (
   task: TopicTask,
   errorReason: string,
@@ -35,10 +50,13 @@ export const decideFailureAction = (
     maxAttempts?: number;
     baseBackoffMs?: number;
     maxBackoffMs?: number;
+    jitterRatio?: number;
+    random?: () => number;
   },
 ): FailureAction => {
   const now = options?.now ?? Date.now();
   const maxAttempts = options?.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+  const maxBackoffMs = options?.maxBackoffMs ?? DEFAULT_MAX_BACKOFF_MS;
   const attempts = task.attempts + 1;
 
   if (attempts >= maxAttempts) {
@@ -49,7 +67,13 @@ export const decideFailureAction = (
     };
   }
 
-  const backoffMs = computeBackoffMs(attempts, options?.baseBackoffMs, options?.maxBackoffMs);
+  const baseBackoffMs = computeBackoffMs(attempts, options?.baseBackoffMs, maxBackoffMs);
+  const jitteredBackoffMs = computeBackoffWithJitterMs(
+    baseBackoffMs,
+    options?.jitterRatio,
+    options?.random,
+  );
+  const backoffMs = Math.min(maxBackoffMs, jitteredBackoffMs);
 
   return {
     kind: 'defer',

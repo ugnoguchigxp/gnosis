@@ -74,12 +74,57 @@ export class UnifiedTaskScheduler {
     const priority = options.priority || 0;
     const nextRunAt = options.nextRunAt || Date.now();
     const payloadStr = JSON.stringify(payload);
+    const now = Date.now();
 
-    this.db.run(
-      `INSERT OR REPLACE INTO background_tasks (id, type, status, payload, priority, next_run_at, created_at)
-       VALUES (?, ?, 'pending', ?, ?, ?, ?)`,
-      [id, type, payloadStr, priority, nextRunAt, Date.now()],
-    );
+    type ExistingTaskRow = Pick<
+      TaskRow,
+      'id' | 'status' | 'next_run_at' | 'created_at' | 'error_message'
+    >;
+
+    // 固定 ID タスクを安全に再投入する:
+    // - running は上書きしない
+    // - failed は再試行時刻が来るまで保持
+    // - failed かつ再試行時刻到来なら pending に戻す
+    this.db.transaction(() => {
+      const existing = this.db
+        .query(
+          `SELECT id, status, next_run_at, created_at, error_message
+           FROM background_tasks
+           WHERE id = ?`,
+        )
+        .get(id) as ExistingTaskRow | undefined;
+
+      if (!existing) {
+        // 競合時（他プロセスが同一IDを先に挿入）でも例外で落ちないようにする
+        this.db.run(
+          `INSERT OR IGNORE INTO background_tasks (id, type, status, payload, priority, next_run_at, created_at)
+           VALUES (?, ?, 'pending', ?, ?, ?, ?)`,
+          [id, type, payloadStr, priority, nextRunAt, now],
+        );
+        return;
+      }
+
+      if (existing.status === 'running') {
+        return;
+      }
+
+      if (existing.status === 'failed') {
+        const retryDue = existing.next_run_at === null || existing.next_run_at <= now;
+        if (!retryDue) {
+          return;
+        }
+      }
+
+      const mergedNextRunAt =
+        existing.next_run_at === null ? nextRunAt : Math.min(existing.next_run_at, nextRunAt);
+
+      this.db.run(
+        `UPDATE background_tasks
+         SET type = ?, status = 'pending', payload = ?, priority = ?, next_run_at = ?, error_message = NULL
+         WHERE id = ?`,
+        [type, payloadStr, priority, mergedNextRunAt, id],
+      );
+    })();
   }
 
   async getNextTask(): Promise<BackgroundTask | null> {

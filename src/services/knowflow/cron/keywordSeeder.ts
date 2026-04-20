@@ -259,6 +259,7 @@ export const runKeywordSeederOnce = async (
       enqueued: 0,
       skipped: 0,
       deduped: 0,
+      sourceFailures: 0,
     });
     logger('knowflow.keyword_seeder.disabled', disabled);
     return disabled;
@@ -285,6 +286,7 @@ export const runKeywordSeederOnce = async (
   let enqueued = 0;
   let skipped = 0;
   let deduped = 0;
+  let sourceFailures = 0;
   let fallbackAliasUsed: KeywordEvalAlias | undefined;
 
   const rawMaxParallel = config.knowflow.keywordCron.maxParallelEvaluations;
@@ -361,6 +363,7 @@ export const runKeywordSeederOnce = async (
         });
       }
     } catch (error) {
+      sourceFailures += 1;
       logger('knowflow.keyword_seeder.source_failed', {
         sourceId: source.sourceId,
         sourceType: source.sourceType,
@@ -411,6 +414,7 @@ export const runKeywordSeederOnce = async (
     enqueued,
     skipped,
     deduped,
+    sourceFailures,
   });
 
   logger('knowflow.keyword_seeder.completed', result);

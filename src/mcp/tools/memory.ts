@@ -7,7 +7,11 @@ import { deleteMemory, saveEpisodeMemory, searchMemory } from '../../services/me
 import type { ToolEntry } from '../registry.js';
 
 const storeMemorySchema = z.object({
-  sessionId: z.string().describe('セッションID (プロジェクトやコンテキストを分離する識別子)'),
+  sessionId: z
+    .string()
+    .describe(
+      'セッションID。プロジェクト名や作業コンテキスト（例: "auth-module"）を指定して記憶を分離します。',
+    ),
   content: z.string().describe('記憶するテキスト内容'),
   metadata: z.record(z.unknown()).optional().describe('その他のメタデータ'),
   memoryType: z

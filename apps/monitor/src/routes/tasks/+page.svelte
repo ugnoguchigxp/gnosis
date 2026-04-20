@@ -9,6 +9,7 @@ type TaskStatusGroup = 'upcoming' | 'active' | 'history';
 let tasks = $state<TaskHistoryEntry[]>([]);
 let loading = $state(true);
 let errorMessage = $state<string | null>(null);
+// biome-ignore lint/style/useConst: $state value is reassigned via tab click handlers
 let activeTab = $state<TaskStatusGroup>('active');
 
 let detailOpen = $state(false);
@@ -188,7 +189,7 @@ onMount(() => {
             {:else if selectedDetail}
                 <div class="detail-grid">
                     <div class="detail-item">
-                        <label>Payload</label>
+                        <div class="detail-label">Payload</div>
                         <pre>{JSON.stringify(selectedTask?.payload, null, 2)}</pre>
                     </div>
                 </div>
@@ -317,7 +318,7 @@ onMount(() => {
         color: var(--text-secondary);
     }
 
-    .detail-item label {
+    .detail-item .detail-label {
         display: block;
         font-size: 0.75rem;
         text-transform: uppercase;

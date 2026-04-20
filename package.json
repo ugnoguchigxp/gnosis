@@ -45,6 +45,7 @@
     "test:failure-path": "bun run scripts/test-failure-path.ts",
     "test:flaky-check": "bun run scripts/test-flaky-check.ts",
     "test:integration:local": "bun run scripts/test-integration-local.ts",
+    "test:phase3:batch": "bun test test/scripts/batch-process.phase3.integration.test.ts",
     "verify": "bun run scripts/verify.ts",
     "verify:strict": "bun run scripts/verify.ts strict",
     "observe:worker": "bun run scripts/observe-worker.ts",

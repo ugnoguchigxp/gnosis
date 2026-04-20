@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import type { TopicTask } from '../../src/services/knowflow/domain/task';
 import {
   compareTaskPriority,
+  computeBackoffWithJitterMs,
   decideFailureAction,
   isRunnable,
 } from '../../src/services/knowflow/scheduler/policy';
@@ -49,6 +50,7 @@ describe('scheduler policy', () => {
       maxAttempts: 3,
       baseBackoffMs: 200,
       maxBackoffMs: 5_000,
+      jitterRatio: 0,
     });
     expect(deferAction.kind).toBe('defer');
     if (deferAction.kind === 'defer') {
@@ -65,6 +67,28 @@ describe('scheduler policy', () => {
     if (failAction.kind === 'fail') {
       expect(failAction.attempts).toBe(3);
       expect(failAction.errorReason).toBe('terminal');
+    }
+  });
+
+  it('computeBackoffWithJitterMs spreads retry time within configured jitter range', () => {
+    const baseBackoff = 1_000;
+    expect(computeBackoffWithJitterMs(baseBackoff, 0.2, () => 0)).toBe(800);
+    expect(computeBackoffWithJitterMs(baseBackoff, 0.2, () => 0.5)).toBe(1_000);
+    expect(computeBackoffWithJitterMs(baseBackoff, 0.2, () => 1)).toBe(1_200);
+  });
+
+  it('decideFailureAction keeps backoff at or below maxBackoffMs even with jitter', () => {
+    const action = decideFailureAction(createTask({ attempts: 10 }), 'retry', {
+      now: 1_000,
+      maxAttempts: 99,
+      baseBackoffMs: 10_000,
+      maxBackoffMs: 5_000,
+      jitterRatio: 0.2,
+      random: () => 1,
+    });
+    expect(action.kind).toBe('defer');
+    if (action.kind === 'defer') {
+      expect(action.nextRunAt).toBe(6_000);
     }
   });
 });
