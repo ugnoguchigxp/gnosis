@@ -157,7 +157,8 @@ function mapKnowflowRunOnceResult(result: RunOnceResult): TaskOutcome {
 }
 
 /**
- * KnowFlow の1イテレーションを実行します。
+ * KnowFlow のイテレーションを実行します。
+ * スループット向上のため、1回の起動で最大10タスクまで連続して処理を試みます。
  */
 async function runKnowFlowIteration(
   database: typeof defaultDb = defaultDb,
@@ -176,12 +177,44 @@ async function runKnowFlowIteration(
   });
 
   const runOnce = customRunWorkerOnce ?? runWorkerOnce;
+  const MAX_TASKS_PER_ITERATION = 10;
+  let processedCount = 0;
+  let lastResult: RunOnceResult = { processed: false };
 
-  // runWorkerOnce 自体も内部で LLM を呼び出すため、
-  // Semaphore は LLM サービス側 (llm.ts, memory.ts) で制御される前提
-  return await runOnce(queueRepository, handler, {
-    workerId: `background-manager-${process.pid}`,
-  });
+  for (let i = 0; i < MAX_TASKS_PER_ITERATION; i++) {
+    const result = await runOnce(queueRepository, handler, {
+      workerId: `background-manager-${process.pid}`,
+    });
+
+    if (!result.processed) {
+      break;
+    }
+
+    processedCount++;
+    lastResult = result;
+
+    // もしタスクが失敗（タイムアウト等）した場合は、一旦止めて次の tick に譲る
+    if (result.status === 'failed') {
+      break;
+    }
+  }
+
+  // 1つでも処理した場合は processed: true を返す
+  if (processedCount > 0) {
+    return {
+      processed: true,
+      taskId:
+        processedCount > 1
+          ? `multi-batch (${processedCount})`
+          : lastResult.processed
+            ? lastResult.taskId
+            : 'unknown',
+      status: lastResult.processed ? lastResult.status : 'done',
+      error: lastResult.processed ? lastResult.error : undefined,
+    };
+  }
+
+  return { processed: false };
 }
 
 async function runKnowFlowKeywordSeedIteration(
@@ -228,8 +261,8 @@ export async function processQueue(
             let timeoutId: ReturnType<typeof setTimeout> | undefined;
             const timeoutSignal = new Promise<TaskOutcome>((_, reject) => {
               timeoutId = setTimeout(
-                () => reject(new Error('Task execution timed out after 1800000ms')),
-                30 * 60 * 1000,
+                () => reject(new Error('Task execution timed out after 600000ms')),
+                10 * 60 * 1000,
               );
             });
 

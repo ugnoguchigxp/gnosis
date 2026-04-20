@@ -18,6 +18,25 @@ export function startBackgroundWorkers(): void {
   if (intervalId) return;
 
   const tick = async () => {
+    try {
+      // 定期タスクの登録/更新 (ID固定で重複排除)
+      await scheduler.enqueue('consolidation', {}, { id: 'periodic-consolidation', priority: 10 });
+      await scheduler.enqueue('synthesis', {}, { id: 'periodic-synthesis', priority: 10 });
+      await scheduler.enqueue(
+        'embedding_batch',
+        { batchSize: 50 },
+        { id: 'periodic-embedding', priority: 20 },
+      );
+      await scheduler.enqueue('knowflow', {}, { id: 'periodic-knowflow', priority: 5 });
+      await scheduler.enqueue(
+        'knowflow_keyword_seed',
+        {},
+        { id: 'periodic-knowflow-keyword-seed', priority: 15 },
+      );
+    } catch (enqueueError) {
+      console.error('[BackgroundManager] Error during periodic enqueue:', enqueueError);
+    }
+
     if (isProcessing) {
       if (Date.now() - lastTickStart > 60 * 60 * 1000) {
         console.error('[BackgroundManager] Watchdog: Previous tick hung for >1h. Resetting flag.');
@@ -32,23 +51,6 @@ export function startBackgroundWorkers(): void {
 
     try {
       console.error('[BackgroundManager] Ticking unified background scheduler...');
-
-      // 定期タスクの登録/更新 (ID固定で重複排除)
-      // scheduler.enqueue 側で running/failed の保護を行う
-      await scheduler.enqueue('consolidation', {}, { id: 'periodic-consolidation', priority: 10 });
-      await scheduler.enqueue('synthesis', {}, { id: 'periodic-synthesis', priority: 10 });
-      await scheduler.enqueue(
-        'embedding_batch',
-        { batchSize: 50 },
-        { id: 'periodic-embedding', priority: 20 },
-      );
-      await scheduler.enqueue('knowflow', {}, { id: 'periodic-knowflow', priority: 5 });
-      await scheduler.enqueue(
-        'knowflow_keyword_seed',
-        {},
-        { id: 'periodic-knowflow-keyword-seed', priority: 15 },
-      );
-
       // キューを消化
       await processQueue();
     } catch (error) {

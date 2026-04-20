@@ -47,8 +47,10 @@ mock.module('../src/adapters/retriever/mcpRetriever.js', () => ({
 }));
 
 mock.module('../src/utils/lock.js', () => ({
-  withGlobalSemaphore: mock(async (_name: any, _max: any, fn: any) => await fn()),
-  withGlobalLock: mock(async (_name: any, fn: any) => await fn()),
+  withGlobalSemaphore: mock(
+    async (_n: unknown, _m: unknown, fn: () => Promise<unknown>) => await fn(),
+  ),
+  withGlobalLock: mock(async (_n: unknown, fn: () => Promise<unknown>) => await fn()),
 }));
 
 mock.module('../src/config.js', () => ({

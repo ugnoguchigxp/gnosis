@@ -8,6 +8,8 @@
   "files": {
     "ignoreUnknown": false,
     "ignore": [
+      ".gemini",
+      "**/scratch/**",
       "apps/monitor/build",
       "apps/monitor/.svelte-kit",
       ".svelte-kit",
