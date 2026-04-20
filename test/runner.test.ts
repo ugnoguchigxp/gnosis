@@ -46,6 +46,11 @@ mock.module('../src/adapters/retriever/mcpRetriever.js', () => ({
   createLocalLlmRetriever: mock(() => ({})),
 }));
 
+mock.module('../src/utils/lock.js', () => ({
+  withGlobalSemaphore: mock(async (_name: any, _max: any, fn: any) => await fn()),
+  withGlobalLock: mock(async (_name: any, fn: any) => await fn()),
+}));
+
 mock.module('../src/config.js', () => ({
   config: {
     embeddingDimension: 384,

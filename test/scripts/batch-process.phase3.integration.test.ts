@@ -34,9 +34,16 @@ function parseLastJsonLine(stdout: string): Record<string, unknown> {
 
 function runBun(
   args: string[],
-  env: NodeJS.ProcessEnv,
+  userEnv: NodeJS.ProcessEnv,
 ): { status: number | null; stdout: string; stderr: string } {
-  const proc = spawnSync('bun', args, {
+  const bunCommand = process.env.GNOSIS_BUN_COMMAND || '/Users/y.noguchi/.bun/bin/bun';
+  // PATH を補完して子プロセスが外部コマンドを呼べるようにする
+  const env = {
+    ...userEnv,
+    PATH: `${path.dirname(bunCommand)}:${process.env.PATH}`,
+  };
+
+  const proc = spawnSync(bunCommand, args, {
     encoding: 'utf-8',
     env,
   });

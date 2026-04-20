@@ -121,4 +121,23 @@ describe('lock utility', () => {
     // cleanup で一度、release で一度 unlinkSync が呼ばれる
     expect(fs.unlinkSync).toHaveBeenCalled();
   });
+
+  it('does not clean lock when PID is invalid but lock is not stale', async () => {
+    const writeFileSync = mock(() => {
+      const err = new Error('EEXIST');
+      Object.defineProperty(err, 'code', { value: 'EEXIST' });
+      throw err;
+    });
+    const fs = makeLockFs({
+      existsSync: mock(() => true),
+      readFileSync: mock(() => 'not-a-pid'),
+      statSync: mock(() => ({ mtimeMs: Date.now() })),
+      writeFileSync,
+    });
+
+    await expect(withGlobalLock('invalid-pid-lock', async () => 'bad', 10, fs)).rejects.toThrow(
+      /Global lock timeout/,
+    );
+    expect(fs.unlinkSync).not.toHaveBeenCalled();
+  });
 });

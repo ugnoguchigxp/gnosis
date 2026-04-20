@@ -2,17 +2,16 @@ import { describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 
 describe('enqueue-task script validation', () => {
+  const BUN_PATH = process.execPath;
+
   function createChildEnv(): NodeJS.ProcessEnv {
-    return Object.fromEntries(
-      Object.entries(process.env).filter(
-        ([key]) =>
-          key !== 'NODE_V8_COVERAGE' &&
-          !key.startsWith('BUN_TEST') &&
-          !key.startsWith('BUN_COVERAGE') &&
-          !key.startsWith('BUN_RUNTIME_') &&
-          !key.startsWith('__BUN'),
-      ),
-    );
+    return {
+      ...process.env,
+      NODE_V8_COVERAGE: undefined,
+      BUN_TEST: undefined,
+      BUN_COVERAGE: undefined,
+      BUN_RUNTIME_SPECIFIC: undefined,
+    };
   }
 
   function parseJsonFromOutput(output: string) {
@@ -32,7 +31,7 @@ describe('enqueue-task script validation', () => {
   }
 
   test('requires topic argument', async () => {
-    const proc = spawnSync('bun', ['run', 'src/scripts/enqueue-task.ts', '--json'], {
+    const proc = spawnSync(BUN_PATH, ['run', 'src/scripts/enqueue-task.ts', '--json'], {
       cwd: process.cwd(),
       encoding: 'utf-8',
       env: createChildEnv(),
@@ -46,7 +45,7 @@ describe('enqueue-task script validation', () => {
 
   test.skip('rejects topic with invalid characters', async () => {
     const proc = spawnSync(
-      'bun',
+      BUN_PATH,
       ['run', 'src/scripts/enqueue-task.ts', '--topic', 'test;rm', '--json'],
       {
         cwd: process.cwd(),
@@ -64,7 +63,7 @@ describe('enqueue-task script validation', () => {
   test('rejects topic exceeding max length', async () => {
     const longTopic = 'a'.repeat(501);
     const proc = spawnSync(
-      'bun',
+      BUN_PATH,
       ['run', 'src/scripts/enqueue-task.ts', '--topic', longTopic, '--json'],
       {
         cwd: process.cwd(),
@@ -81,8 +80,8 @@ describe('enqueue-task script validation', () => {
 
   test('rejects invalid mode', async () => {
     const proc = spawnSync(
-      'bun',
-      ['src/scripts/enqueue-task.ts', '--topic', 'test', '--mode', 'invalid', '--json'],
+      BUN_PATH,
+      ['run', 'src/scripts/enqueue-task.ts', '--topic', 'test', '--mode', 'invalid', '--json'],
       {
         cwd: process.cwd(),
         encoding: 'utf-8',
@@ -98,8 +97,8 @@ describe('enqueue-task script validation', () => {
 
   test('rejects priority out of range', async () => {
     const proc = spawnSync(
-      'bun',
-      ['src/scripts/enqueue-task.ts', '--topic', 'test', '--priority', '150', '--json'],
+      BUN_PATH,
+      ['run', 'src/scripts/enqueue-task.ts', '--topic', 'test', '--priority', '150', '--json'],
       {
         cwd: process.cwd(),
         encoding: 'utf-8',

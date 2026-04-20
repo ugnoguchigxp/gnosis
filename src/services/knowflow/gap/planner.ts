@@ -32,7 +32,8 @@ export class GapPlanner {
     }
 
     // 優先度の高いギャップを上位から処理
-    const importantGaps = gaps.filter((g) => g.priority >= 0.5).slice(0, 3);
+    const safeGaps = Array.isArray(gaps) ? gaps : [];
+    const importantGaps = safeGaps.filter((g) => g.priority >= 0.5).slice(0, 3);
     if (importantGaps.length === 0) {
       return { plannedTasks: 0 };
     }
@@ -133,7 +134,8 @@ export class GapPlanner {
     const decay = this.options.priorityDecay ?? 0.8;
 
     // 非常に重要なギャップがあれば、LLMなしでも1つだけ強行エンキューする
-    const criticalGaps = gaps.filter((g) => g.priority >= 0.7);
+    const safeGaps = Array.isArray(gaps) ? gaps : [];
+    const criticalGaps = safeGaps.filter((g) => g.priority >= 0.7);
     if (criticalGaps.length === 0 || !this.options.repository) {
       return { plannedTasks: 0, hadErrors: true };
     }

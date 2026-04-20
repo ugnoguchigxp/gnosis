@@ -61,8 +61,10 @@ export async function withGlobalSemaphore<T>(
               }
             }
 
-            // プロセスが死んでいるか、または30分以上経過している場合は削除
-            if (!isAlive || Date.now() - stats.mtimeMs > 30 * 60 * 1000) {
+            // 30分以上経過したロック、または有効なPIDが明確に死んでいるロックのみ削除
+            const staleByAge = Date.now() - stats.mtimeMs > 30 * 60 * 1000;
+            const staleByDeadPid = !Number.isNaN(pid) && !isAlive;
+            if (staleByAge || staleByDeadPid) {
               fs.unlinkSync(lockFile);
               console.error(
                 `[Semaphore] Cleaned up stale lock: ${lockFile} (PID ${pid} alive: ${isAlive})`,
@@ -109,8 +111,12 @@ export async function withGlobalSemaphore<T>(
       console.error(
         `[Semaphore] Released slot ${acquiredIndex + 1}/${maxConcurrency} for: ${semaphoreName}`,
       );
-    } catch (error) {
-      console.error(`Failed to release semaphore: ${semaphoreName}.${acquiredIndex}`, error);
+    } catch (error: unknown) {
+      const code =
+        typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined;
+      if (code !== 'ENOENT') {
+        console.error(`Failed to release semaphore: ${semaphoreName}.${acquiredIndex}`, error);
+      }
     }
   }
 }

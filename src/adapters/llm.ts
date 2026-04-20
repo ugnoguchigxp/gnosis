@@ -9,7 +9,7 @@ import {
   getTaskOutputHint,
   parseLlmTaskOutput,
 } from '../services/knowflow/schemas/llm.js';
-import { withGlobalLock } from '../utils/lock.js';
+import { withGlobalSemaphore } from '../utils/lock.js';
 import { sleep } from '../utils/time.js';
 
 const execAsync = promisify(exec);
@@ -70,6 +70,22 @@ const defaultLogger = (event: LlmLogEvent): void => {
 
 const shellQuote = (value: string): string => `'${value.replace(/'/g, `'"'"'`)}'`;
 
+const parsePositiveEnvInt = (value: string | undefined, fallback: number): number => {
+  if (!value || value.trim().length === 0) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const LLM_QUEUE_NAME = process.env.KNOWFLOW_LLM_QUEUE_NAME?.trim() || 'local-llm';
+const LLM_QUEUE_MAX_CONCURRENCY = parsePositiveEnvInt(process.env.KNOWFLOW_LLM_MAX_CONCURRENCY, 1);
+const LLM_QUEUE_TIMEOUT_MS = parsePositiveEnvInt(
+  process.env.KNOWFLOW_LLM_QUEUE_TIMEOUT_MS,
+  Math.max(15 * 60 * 1000, config.knowflow.llm.timeoutMs * 4),
+);
+
+const withKnowflowLlmQueue = async <T>(fn: () => Promise<T>): Promise<T> =>
+  withGlobalSemaphore(LLM_QUEUE_NAME, LLM_QUEUE_MAX_CONCURRENCY, fn, LLM_QUEUE_TIMEOUT_MS);
+
 type OpenAiCompatibleResponse = {
   choices?: Array<{
     message?: {
@@ -110,63 +126,68 @@ const defaultInvokeApi = async (
   config: LlmClientConfig,
   signal?: AbortSignal,
 ): Promise<string> => {
-  const url = resolveApiUrl(config.apiBaseUrl, config.apiPath);
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), config.timeoutMs);
-
-  // 外部からの signal が aborted の場合は即座に終了
   if (signal?.aborted) {
-    clearTimeout(timeoutId);
-    throw new Error('LLM task aborted by caller before start');
+    throw new Error('LLM task aborted by caller before queueing');
   }
+  return await withKnowflowLlmQueue(async () => {
+    const url = resolveApiUrl(config.apiBaseUrl, config.apiPath);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), config.timeoutMs);
 
-  // 外部の signal を abortController にマージする
-  const abortListener = () => {
-    controller.abort();
-  };
-  signal?.addEventListener('abort', abortListener, { once: true });
-
-  try {
-    const apiKey = process.env[config.apiKeyEnv];
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
-      },
-      body: JSON.stringify({
-        model: config.model,
-        temperature: config.temperature,
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a structured assistant. Return only JSON object output.',
-          },
-          {
-            role: 'user',
-            content: prompt,
-          },
-        ],
-      }),
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`API request failed: ${response.status} ${text}`);
+    // 外部からの signal が aborted の場合は即座に終了
+    if (signal?.aborted) {
+      clearTimeout(timeoutId);
+      throw new Error('LLM task aborted by caller before start');
     }
 
-    const payload = (await response.json()) as OpenAiCompatibleResponse;
-    const text = extractLlmText(payload.choices?.[0]?.message?.content);
-    if (!text) {
-      throw new Error('API response does not include message content.');
-    }
+    // 外部の signal を abortController にマージする
+    const abortListener = () => {
+      controller.abort();
+    };
+    signal?.addEventListener('abort', abortListener, { once: true });
 
-    return text;
-  } finally {
-    clearTimeout(timeoutId);
-    signal?.removeEventListener('abort', abortListener);
-  }
+    try {
+      const apiKey = process.env[config.apiKeyEnv];
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+        },
+        body: JSON.stringify({
+          model: config.model,
+          temperature: config.temperature,
+          messages: [
+            {
+              role: 'system',
+              content: 'You are a structured assistant. Return only JSON object output.',
+            },
+            {
+              role: 'user',
+              content: prompt,
+            },
+          ],
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`API request failed: ${response.status} ${text}`);
+      }
+
+      const payload = (await response.json()) as OpenAiCompatibleResponse;
+      const text = extractLlmText(payload.choices?.[0]?.message?.content);
+      if (!text) {
+        throw new Error('API response does not include message content.');
+      }
+
+      return text;
+    } finally {
+      clearTimeout(timeoutId);
+      signal?.removeEventListener('abort', abortListener);
+    }
+  });
 };
 
 const defaultInvokeCli = async (
@@ -174,7 +195,10 @@ const defaultInvokeCli = async (
   llmClientConfig: LlmClientConfig,
   signal?: AbortSignal,
 ): Promise<string> => {
-  return await withGlobalLock('local-llm', async () => {
+  if (signal?.aborted) {
+    throw new Error('LLM task aborted by caller before queueing');
+  }
+  return await withKnowflowLlmQueue(async () => {
     let command = llmClientConfig.cliCommand;
     let stdin: string | undefined;
 
@@ -314,6 +338,9 @@ export const extractJsonCandidate = (text: string): string | undefined => {
 function repairJson(json: string): string {
   let repaired = json.trim();
 
+  // 末尾がカンマで終わっている場合、削除する（不完全なオブジェクト/配列の要素の後のカンマ）
+  repaired = repaired.replace(/,\s*$/, '');
+
   // 文字列が閉じられていない場合の処理
   // エスケープされたクォート \" を除外してカウント
   const quoteCount = (repaired.match(/(?<!\\)"/g) || []).length;
@@ -323,8 +350,17 @@ function repairJson(json: string): string {
 
   // 括弧のバランスを取る
   const stack: string[] = [];
+  let inString = false;
   for (let i = 0; i < repaired.length; i++) {
     const char = repaired[i];
+    // 文字列の中かどうかを判定（エスケープされていないクォートで切り替え）
+    if (char === '"' && (i === 0 || repaired[i - 1] !== '\\')) {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) continue;
+
     if (char === '{') stack.push('}');
     else if (char === '[') stack.push(']');
     else if (char === '}' || char === ']') {
