@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { extractJsonCandidate } from '../../../adapters/llm.js';
 import { type KeywordEvalAlias, config } from '../../../config.js';
@@ -22,40 +21,10 @@ export type PromptRouteResult = {
   output: string;
 };
 
+import { runLlmProcess } from '../../llm/spawnControl.js';
+
 const defaultSpawn: SpawnFn = (command, args, options) => {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, {
-      env: options.env,
-    });
-
-    let stdout = '';
-    let stderr = '';
-    let error: Error | undefined;
-
-    child.stdout.on('data', (data) => {
-      stdout += data.toString();
-    });
-
-    child.stderr.on('data', (data) => {
-      stderr += data.toString();
-    });
-
-    child.on('error', (err) => {
-      error = err;
-    });
-
-    const timeoutTrigger = options.timeout
-      ? setTimeout(() => {
-          child.kill('SIGTERM');
-          error = new Error(`Process timed out after ${options.timeout}ms`);
-        }, options.timeout)
-      : null;
-
-    child.on('close', (code) => {
-      if (timeoutTrigger) clearTimeout(timeoutTrigger);
-      resolve({ stdout, stderr, status: code, error });
-    });
-  });
+  return runLlmProcess(command, args as string[], options);
 };
 
 const resolveAliasScript = (alias: KeywordEvalAlias): string => {

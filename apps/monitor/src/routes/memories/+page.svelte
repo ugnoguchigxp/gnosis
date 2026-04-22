@@ -3,10 +3,28 @@ import { invoke } from '@tauri-apps/api/core';
 import { onMount } from 'svelte';
 import { fade, fly, slide } from 'svelte/transition';
 
-type MemoryTab = 'episodes' | 'lessons' | 'rules' | 'skills';
+type MemoryTab = 'episodes' | 'lessons' | 'rules' | 'skills' | 'evaluations';
 type GuidanceType = 'rule' | 'skill';
 type GuidanceScope = 'always' | 'on_demand';
 type LessonType = 'failure' | 'success';
+
+interface KeywordEvaluation {
+  id: string;
+  runId: string;
+  sourceType: 'episode' | 'experience';
+  sourceId: string;
+  topic: string;
+  category: string;
+  whyResearch: string;
+  searchScore: number;
+  termDifficultyScore: number;
+  uncertaintyScore: number;
+  threshold: number;
+  decision: 'enqueued' | 'skipped';
+  enqueuedTaskId: string | null;
+  modelAlias: string;
+  createdAt: string;
+}
 
 interface Episode {
   id: string;
@@ -48,7 +66,7 @@ interface Toast {
 }
 
 interface DeleteTarget {
-  kind: 'episode' | 'lesson' | 'guidance';
+  kind: 'episode' | 'lesson' | 'guidance' | 'evaluation';
   id: string;
   label: string;
 }
@@ -59,6 +77,7 @@ const tabs: Array<{ id: MemoryTab; label: string; accent: string }> = [
   { id: 'lessons', label: '経験', accent: '学習' },
   { id: 'rules', label: '開発ルール', accent: '規約' },
   { id: 'skills', label: '開発ガイド', accent: '手順' },
+  { id: 'evaluations', label: 'KnowFlow評価', accent: '選定' },
 ];
 
 // biome-ignore lint/style/useConst: reassigned by Svelte binding/onclick
@@ -71,12 +90,14 @@ let episodes = $state<Episode[]>([]);
 let lessons = $state<Lesson[]>([]);
 let rules = $state<GuidanceItem[]>([]);
 let skills = $state<GuidanceItem[]>([]);
+let evaluations = $state<KeywordEvaluation[]>([]);
 
 let loadingState = $state<Record<MemoryTab, boolean>>({
   episodes: true,
   lessons: true,
   rules: true,
   skills: true,
+  evaluations: true,
 });
 
 let errorState = $state<Record<MemoryTab, string | null>>({
@@ -84,6 +105,7 @@ let errorState = $state<Record<MemoryTab, string | null>>({
   lessons: null,
   rules: null,
   skills: null,
+  evaluations: null,
 });
 
 let toasts = $state<Toast[]>([]);
@@ -207,8 +229,29 @@ async function loadGuidance(type: GuidanceType) {
   }
 }
 
+async function loadEvaluations() {
+  setLoading('evaluations', true);
+  setError('evaluations', null);
+
+  try {
+    evaluations = await invoke<KeywordEvaluation[]>('monitor_list_keyword_evaluations');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    setError('evaluations', message);
+    addToast(`Evaluations の読み込みに失敗しました: ${message}`, 'error');
+  } finally {
+    setLoading('evaluations', false);
+  }
+}
+
 async function loadAll() {
-  await Promise.all([loadEpisodes(), loadLessons(), loadGuidance('rule'), loadGuidance('skill')]);
+  await Promise.all([
+    loadEpisodes(),
+    loadLessons(),
+    loadGuidance('rule'),
+    loadGuidance('skill'),
+    loadEvaluations(),
+  ]);
 }
 
 const filteredEpisodes = $derived.by(() => {
@@ -259,6 +302,19 @@ const filteredSkills = $derived.by(() => {
   );
 });
 
+const filteredEvaluations = $derived.by(() => {
+  const query = searchQuery.toLowerCase().trim();
+  if (!query) return evaluations;
+  return evaluations.filter(
+    (e) =>
+      e.topic.toLowerCase().includes(query) ||
+      e.category.toLowerCase().includes(query) ||
+      e.whyResearch.toLowerCase().includes(query) ||
+      e.id.toLowerCase().includes(query) ||
+      e.sourceId.toLowerCase().includes(query),
+  );
+});
+
 const totalPages = $derived.by(() => {
   const length =
     activeTab === 'episodes'
@@ -267,7 +323,9 @@ const totalPages = $derived.by(() => {
         ? filteredLessons.length
         : activeTab === 'rules'
           ? filteredRules.length
-          : filteredSkills.length;
+          : activeTab === 'skills'
+            ? filteredSkills.length
+            : filteredEvaluations.length;
 
   return Math.max(1, Math.ceil(length / pageSize));
 });
@@ -292,6 +350,11 @@ const paginatedSkills = $derived.by(() => {
   return filteredSkills.slice(start, start + pageSize);
 });
 
+const paginatedEvaluations = $derived.by(() => {
+  const start = (currentPage - 1) * pageSize;
+  return filteredEvaluations.slice(start, start + pageSize);
+});
+
 const currentError = $derived(errorState[activeTab]);
 const currentLoading = $derived(loadingState[activeTab]);
 
@@ -299,7 +362,8 @@ const currentFilteredLength = $derived.by(() => {
   if (activeTab === 'episodes') return filteredEpisodes.length;
   if (activeTab === 'lessons') return filteredLessons.length;
   if (activeTab === 'rules') return filteredRules.length;
-  return filteredSkills.length;
+  if (activeTab === 'skills') return filteredSkills.length;
+  return filteredEvaluations.length;
 });
 
 function resetLessonForm() {
@@ -410,6 +474,9 @@ async function performDelete() {
     } else if (target.kind === 'lesson') {
       await invoke('monitor_delete_lesson', { id: target.id });
       lessons = lessons.filter((lesson) => lesson.id !== target.id);
+    } else if (target.kind === 'evaluation') {
+      await invoke('monitor_delete_keyword_evaluation', { id: target.id });
+      evaluations = evaluations.filter((e) => e.id !== target.id);
     } else {
       await invoke('monitor_delete_guidance', { id: target.id });
       rules = rules.filter((item) => item.id !== target.id);
@@ -616,7 +683,8 @@ function searchPlaceholder() {
   if (activeTab === 'episodes') return '内容やIDで検索...';
   if (activeTab === 'lessons') return 'session / scenario / 内容で検索...';
   if (activeTab === 'rules') return 'rule のタイトル・タグ・内容で検索...';
-  return 'skill のタイトル・タグ・内容で検索...';
+  if (activeTab === 'skills') return 'skill のタイトル・タグ・内容で検索...';
+  return 'トピックや理由で検索...';
 }
 
 onMount(() => {
@@ -674,8 +742,10 @@ $effect(() => {
         <button onclick={loadLessons}>再試行</button>
       {:else if activeTab === 'rules'}
         <button onclick={() => loadGuidance('rule')}>再試行</button>
-      {:else}
+      {:else if activeTab === 'skills'}
         <button onclick={() => loadGuidance('skill')}>再試行</button>
+      {:else}
+        <button onclick={loadEvaluations}>再試行</button>
       {/if}
     </div>
   {/if}
@@ -790,7 +860,7 @@ $effect(() => {
               {/each}
             </tbody>
           </table>
-        {:else}
+        {:else if activeTab === 'rules' || activeTab === 'skills'}
           <table>
             <thead>
               <tr>
@@ -849,6 +919,63 @@ $effect(() => {
                             id: item.id,
                             label: item.guidanceType === 'rule' ? 'Rule' : 'Skill',
                           },
+                          event,
+                        )}
+                    >
+                      🗑️
+                    </button>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        {:else if activeTab === 'evaluations'}
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 140px">日時</th>
+                <th style="width: 180px">トピック</th>
+                <th style="width: 100px">判定</th>
+                <th style="width: 250px">理由</th>
+                <th style="width: 100px">スコア計</th>
+                <th>モデル</th>
+                <th style="width: 80px">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each paginatedEvaluations as ev (ev.id)}
+                <tr
+                  in:fly={{ y: 10, duration: 200 }}
+                  out:fade={{ duration: 150 }}
+                  class:is-deleting={deletingId === ev.id}
+                >
+                  <td class="cell-date">{formatDate(ev.createdAt)}</td>
+                  <td>
+                    <div class="topic-cell">
+                      <strong>{ev.topic}</strong>
+                      <span class="badge neutral-badge small-badge">{ev.category}</span>
+                    </div>
+                  </td>
+                  <td>
+                    <span class="badge" class:success-badge={ev.decision === 'enqueued'} class:neutral-badge={ev.decision === 'skipped'}>
+                      {ev.decision === 'enqueued' ? '採用' : '見送り'}
+                    </span>
+                  </td>
+                  <td class="cell-content" title={ev.whyResearch}>{truncate(ev.whyResearch, 60)}</td>
+                  <td>
+                    <div class="score-display">
+                      <strong>{(ev.searchScore + ev.termDifficultyScore + ev.uncertaintyScore).toFixed(1)}</strong>
+                      <small class="muted">/ 30</small>
+                    </div>
+                  </td>
+                  <td><span class="badge neutral-badge">{ev.modelAlias}</span></td>
+                  <td class="cell-actions">
+                    <button
+                      class="icon-btn delete-btn"
+                      title="削除"
+                      onclick={(event) =>
+                        requestDelete(
+                          { kind: 'evaluation', id: ev.id, label: 'Evaluation' },
                           event,
                         )}
                     >
@@ -1469,6 +1596,29 @@ $effect(() => {
   .icon-btn:hover {
     background: rgba(255, 255, 255, 0.05);
     filter: none;
+  }
+
+  .topic-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .small-badge {
+    padding: 0.1rem 0.4rem;
+    font-size: 0.65rem;
+    width: fit-content;
+  }
+
+  .score-display {
+    display: flex;
+    align-items: baseline;
+    gap: 0.25rem;
+  }
+
+  .score-display strong {
+    font-size: 1.1rem;
+    color: #60a5fa;
   }
 
   .pagination-footer {

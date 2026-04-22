@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { withGlobalSemaphore } from '../utils/lock.js';
 
 export type LocalLlmAlias = 'gemma4' | 'bonsai' | 'openai' | 'bedrock';
 export type LauncherPlan = {
@@ -98,26 +99,36 @@ async function main(): Promise<void> {
   const alias = parseAlias(argv);
   const plan = resolveLauncherPlan(alias, argv);
 
-  const child = spawn(plan.command, plan.args, {
-    stdio: ['inherit', 'pipe', 'pipe'],
-    env: {
-      ...process.env,
-      HOME: process.env.HOME ?? os.homedir(),
-    },
-  });
+  const limit = 3; // システム全体の制限。本来は config から読みたいが、このスクリプトは独立して動くため定数または環境変数で。
+  const semaphoreName = 'llm-pool';
 
-  child.stdout?.on('data', (data) => {
-    process.stdout.write(data);
-  });
+  await withGlobalSemaphore(semaphoreName, limit, async () => {
+    const child = spawn(plan.command, plan.args, {
+      stdio: ['inherit', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        HOME: process.env.HOME ?? os.homedir(),
+      },
+    });
 
-  child.stderr?.on('data', (data) => {
-    process.stderr.write(data);
-  });
+    child.stdout?.on('data', (data) => {
+      process.stdout.write(data);
+    });
 
-  child.on('exit', (code) => process.exit(code ?? 1));
-  child.on('error', (error) => {
-    console.error(error);
-    process.exit(1);
+    child.stderr?.on('data', (data) => {
+      process.stderr.write(data);
+    });
+
+    return new Promise<void>((resolve, reject) => {
+      child.on('exit', (code) => {
+        if (code === 0) resolve();
+        else process.exit(code ?? 1);
+      });
+      child.on('error', (error) => {
+        console.error(error);
+        process.exit(1);
+      });
+    });
   });
 }
 

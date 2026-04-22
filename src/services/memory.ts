@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { desc, eq, inArray, sql } from 'drizzle-orm';
 import { config } from '../config.js';
 import { db } from '../db/index.js';
@@ -9,64 +8,19 @@ import { sleep } from '../utils/time.js';
 
 type DbClient = Pick<typeof db, 'insert' | 'select' | 'update' | 'delete'>;
 
-const runEmbedCommand = (
+import { runLlmProcess } from './llm/spawnControl.js';
+
+const runEmbedCommand = async (
   command: string,
   text: string,
   timeoutMs: number,
-): Promise<{ stdout: string; stderr: string }> =>
-  new Promise((resolve, reject) => {
-    // Text may begin with '-' (e.g. YAML frontmatter '---'), which some CLIs interpret as options.
-    // Passing '--' ensures the text is treated as a positional argument.
-    const child = spawn(command, ['--', text], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      shell: false,
-    });
-
-    let stdout = '';
-    let stderr = '';
-    let settled = false;
-
-    const settleResolve = (value: { stdout: string; stderr: string }) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(value);
-    };
-
-    const settleReject = (error: Error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reject(error);
-    };
-
-    const timer = setTimeout(() => {
-      child.kill('SIGTERM');
-      settleReject(new Error(`Embedding command timed out after ${timeoutMs}ms: ${command}`));
-    }, timeoutMs);
-
-    child.stdout.on('data', (chunk: Buffer | string) => {
-      stdout += chunk.toString();
-    });
-
-    child.stderr.on('data', (chunk: Buffer | string) => {
-      stderr += chunk.toString();
-    });
-
-    child.on('error', (error) => {
-      settleReject(error);
-    });
-
-    child.on('close', (code) => {
-      if (code !== 0) {
-        const detail = stderr.trim() || stdout.trim() || `exit code ${code}`;
-        settleReject(new Error(`Embedding command failed: ${detail}`));
-        return;
-      }
-
-      settleResolve({ stdout, stderr });
-    });
+): Promise<{ stdout: string; stderr: string }> => {
+  const result = await runLlmProcess(command, ['--', text], {
+    timeout: timeoutMs,
   });
+  if (result.error) throw result.error;
+  return { stdout: result.stdout, stderr: result.stderr };
+};
 
 const parseEmbeddingVector = (output: string): number[] => {
   const trimmed = output.trim();
@@ -209,6 +163,36 @@ export async function saveEpisodeMemory(
 /**
  * セマンティック検索を実行して類似するメモリを取得します
  */
+/**
+ * 特定のメモリ種別でセマンティック検索を実行します（セッション横断可）
+ */
+export async function searchMemoriesByType(
+  query: string,
+  memoryType: 'raw' | 'episode',
+  limit = 5,
+  database: DbClient = db,
+) {
+  const embedding = await generateEmbedding(query);
+  const embeddingStr = JSON.stringify(embedding);
+  const similarity = sql`1 - (${vibeMemories.embedding} <=> ${embeddingStr}::vector)`;
+
+  const results = await database
+    .select({
+      id: vibeMemories.id,
+      content: vibeMemories.content,
+      metadata: vibeMemories.metadata,
+      createdAt: vibeMemories.createdAt,
+      sessionId: vibeMemories.sessionId,
+      similarity: similarity.mapWith(Number),
+    })
+    .from(vibeMemories)
+    .where(eq(vibeMemories.memoryType, memoryType))
+    .orderBy((fields) => desc(fields.similarity))
+    .limit(limit);
+
+  return results;
+}
+
 export async function searchMemory(
   sessionId: string,
   query: string,

@@ -165,6 +165,7 @@ describe('consolidateEpisodes', () => {
       minRawCount: 5,
       getGuidance: mock().mockResolvedValue('Mocked guidance'),
       withSemaphore: (_name, _concurrency, fn) => fn(),
+      searchEpisodes: mock().mockResolvedValue([]), // Mocked search
     });
 
     expect(result).not.toBeNull();
@@ -175,6 +176,78 @@ describe('consolidateEpisodes', () => {
     const promptArg = (mockSpawn.mock.calls as any)[0][2];
     expect(promptArg).toBeDefined();
   }, 15000);
+
+  it('updates existing episode when LLM returns update action', async () => {
+    const rawMemos = Array.from({ length: 5 }, (_, i) => ({
+      id: `m${i}`,
+      sessionId: 'sess-upd',
+      content: `memo ${i}`,
+      memoryType: 'raw',
+      isSynthesized: false,
+      createdAt: new Date(),
+    }));
+    const db = makeDb(rawMemos);
+    const mockSpawn = mock().mockReturnValue({
+      stdout: JSON.stringify({
+        action: 'update',
+        targetEpisodeId: 'existing-ep-123',
+        story: 'Updated story text',
+        importance: 0.9,
+        episodeAt: '2026-04-18T10:00:00Z',
+        reason: 'Duplicate with more info',
+      }),
+      status: 0,
+    });
+
+    const mockEmbed = mock().mockResolvedValue(new Array(384).fill(0.2));
+
+    const result = await consolidateEpisodes('sess-upd', {
+      // biome-ignore lint/suspicious/noExplicitAny: mock
+      database: db as any,
+      spawnSync: mockSpawn,
+      embedText: mockEmbed,
+      minRawCount: 5,
+      searchEpisodes: mock().mockResolvedValue([{ id: 'existing-ep-123', content: 'Old story' }]),
+      getGuidance: mock().mockResolvedValue(''),
+      withSemaphore: (_name, _concurrency, fn) => fn(),
+    });
+
+    expect(result).not.toBeNull();
+    expect(result?.episodeId).toBe('existing-ep-123');
+    expect(mockSpawn).toHaveBeenCalled();
+  });
+
+  it('skips episode creation when LLM returns skip action', async () => {
+    const rawMemos = Array.from({ length: 5 }, (_, i) => ({
+      id: `m${i}`,
+      sessionId: 'sess-skip',
+      content: `memo ${i}`,
+      memoryType: 'raw',
+      isSynthesized: false,
+      createdAt: new Date(),
+    }));
+    const db = makeDb(rawMemos);
+    const mockSpawn = mock().mockReturnValue({
+      stdout: JSON.stringify({
+        action: 'skip',
+        reason: 'Exactly same as existing',
+      }),
+      status: 0,
+    });
+
+    const result = await consolidateEpisodes('sess-skip', {
+      // biome-ignore lint/suspicious/noExplicitAny: mock
+      database: db as any,
+      spawnSync: mockSpawn,
+      minRawCount: 5,
+      searchEpisodes: mock().mockResolvedValue([{ id: 'existing-ep-123', content: 'Same story' }]),
+      getGuidance: mock().mockResolvedValue(''),
+      withSemaphore: (_name, _concurrency, fn) => fn(),
+    });
+
+    expect(result).toBeNull();
+    expect(mockSpawn).toHaveBeenCalled();
+  });
 
   it('applies Time Gap Heuristic to split early segments', async () => {
     const rawMemos = [
@@ -233,6 +306,7 @@ describe('consolidateEpisodes', () => {
       embedText: mock().mockResolvedValue(new Array(384).fill(0)),
       getGuidance: mock().mockResolvedValue(''),
       withSemaphore: (_n, _c, fn) => fn(),
+      searchEpisodes: mock().mockResolvedValue([]),
     });
 
     expect(result).not.toBeNull();
@@ -279,6 +353,7 @@ describe('consolidateEpisodes', () => {
       embedText: mock().mockResolvedValue(new Array(384).fill(0)),
       getGuidance: mock().mockResolvedValue(''),
       withSemaphore: (_n, _c, fn) => fn(),
+      searchEpisodes: mock().mockResolvedValue([]),
     });
 
     // biome-ignore lint/suspicious/noExplicitAny: mock

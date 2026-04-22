@@ -1,7 +1,3 @@
-import {
-  type SpawnSyncOptionsWithStringEncoding,
-  spawnSync as nodeSpawnSync,
-} from 'node:child_process';
 import path from 'node:path';
 import { config } from '../config.js';
 import { withGlobalLock } from '../utils/lock.js';
@@ -59,8 +55,16 @@ export type RunPromptDeps = {
   withSemaphore?: <T>(name: string, concurrency: number, fn: () => Promise<T>) => Promise<T>;
 };
 
-const defaultSpawnSync: SpawnSyncFn = (command, args, options) =>
-  nodeSpawnSync(command, args, options as SpawnSyncOptionsWithStringEncoding);
+import type { SpawnSyncOptionsWithStringEncoding } from 'node:child_process';
+import { runLlmProcessSync } from './llm/spawnControl.js';
+
+const defaultSpawnSync: SpawnSyncFn = (command, args, options) => {
+  return runLlmProcessSync(
+    command,
+    args as string[],
+    options as SpawnSyncOptionsWithStringEncoding,
+  ) as unknown as SpawnSyncResult;
+};
 
 type MemoryLoopRuntimeConfig = {
   allowCloud: boolean;
@@ -211,10 +215,6 @@ export async function runPromptWithMemoryLoopRouter(
   deps: RunPromptDeps = {},
 ): Promise<{ output: string; route: MemoryLoopRoute; attempts: number }> {
   const spawnSync = deps.spawnSync ?? defaultSpawnSync;
-  const lockFn = deps.withLock ?? withGlobalLock;
-  const semaphoreFn =
-    deps.withSemaphore ??
-    ((name: string, _concurrency: number, fn: () => Promise<SpawnSyncResult>) => lockFn(name, fn));
   const timeoutMs =
     options.llmTimeoutMs ?? (config as { llmTimeoutMs?: number }).llmTimeoutMs ?? 90_000;
   const runtime = buildRuntimeConfig();
@@ -228,12 +228,14 @@ export async function runPromptWithMemoryLoopRouter(
       cloudEnabledForAttempt: false,
       reason: 'explicit-llm-script-override',
     };
-    const result = await semaphoreFn('llm-pool', config.llm.concurrencyLimit, async () =>
-      spawnSync(fixedRoute.script, buildPromptArgs(options.prompt, options.maxTokens), {
+    const result = await spawnSync(
+      fixedRoute.script,
+      buildPromptArgs(options.prompt, options.maxTokens),
+      {
         encoding: 'utf-8',
         env: buildMemoryLoopSpawnEnv(fixedRoute.alias),
         timeout: timeoutMs,
-      }),
+      },
     );
     if (result.error || result.status !== 0) {
       throw new Error(
@@ -259,12 +261,14 @@ export async function runPromptWithMemoryLoopRouter(
       qualityScore: options.qualityScore,
     });
 
-    const result = await semaphoreFn('llm-pool', config.llm.concurrencyLimit, async () =>
-      spawnSync(route.script, buildPromptArgs(options.prompt, options.maxTokens), {
+    const result = await spawnSync(
+      route.script,
+      buildPromptArgs(options.prompt, options.maxTokens),
+      {
         encoding: 'utf-8',
         env: buildMemoryLoopSpawnEnv(route.alias),
         timeout: timeoutMs,
-      }),
+      },
     );
 
     if (!result.error && result.status === 0) {

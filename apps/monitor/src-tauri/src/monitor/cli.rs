@@ -385,3 +385,44 @@ pub async fn delete_guidance(project_root: &Path, id: &str) -> anyhow::Result<se
 
     serde_json::from_slice(&output.stdout).context("failed to parse guidance delete payload")
 }
+pub async fn list_keyword_evaluations(project_root: &Path) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-memory-crud.ts")
+        .arg("evaluations")
+        .arg("list")
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute evaluations list command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("evaluations list command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse evaluations list payload")
+}
+
+pub async fn delete_keyword_evaluation(
+    project_root: &Path,
+    id: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-memory-crud.ts")
+        .arg("evaluations")
+        .arg("delete")
+        .arg(id)
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute evaluation delete command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("evaluation delete command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse evaluation delete payload")
+}

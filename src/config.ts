@@ -154,7 +154,7 @@ export const config = {
       apiKeyEnv: process.env.LOCAL_LLM_API_KEY_ENV ?? 'LOCAL_LLM_API_KEY',
       model: process.env.LOCAL_LLM_MODEL ?? 'gemma-4-e4b-it',
       temperature: envNumber(process.env.LOCAL_LLM_TEMPERATURE, 0),
-      timeoutMs: envNumber(process.env.LOCAL_LLM_TIMEOUT_MS, 60_000),
+      timeoutMs: envNumber(process.env.LOCAL_LLM_TIMEOUT_MS, 180_000),
       maxRetries: Math.max(1, envNumber(process.env.LOCAL_LLM_MAX_RETRIES, 2)),
       retryDelayMs: Math.max(0, envNumber(process.env.LOCAL_LLM_RETRY_DELAY_MS, 300)),
       enableCliFallback: envBoolean(process.env.LOCAL_LLM_ENABLE_CLI_FALLBACK, true),
@@ -236,7 +236,7 @@ export const config = {
     enabled: envBoolean(process.env.GNOSIS_BACKGROUND_WORKER_ENABLED, true),
     intervalMs: envNumber(process.env.GNOSIS_BACKGROUND_WORKER_INTERVAL_MS, 300_000), // 5 min
     minRawCount: envNumber(process.env.GNOSIS_BACKGROUND_WORKER_MIN_RAW_COUNT, 5),
-    maxConcurrency: envNumber(process.env.GNOSIS_BACKGROUND_WORKER_MAX_CONCURRENCY, 1),
+    maxConcurrency: envNumber(process.env.GNOSIS_BACKGROUND_WORKER_MAX_CONCURRENCY, 3),
   },
 
   llmharness: {

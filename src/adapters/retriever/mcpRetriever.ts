@@ -58,6 +58,7 @@ const extractTextContent = (result: unknown): string => {
 export interface Retriever {
   search(query: string, signal?: AbortSignal): Promise<string>;
   fetch(url: string, signal?: AbortSignal): Promise<string>;
+  disconnect(): Promise<void>;
 }
 
 export class MockRetriever implements Retriever {
@@ -68,6 +69,9 @@ export class MockRetriever implements Retriever {
   async fetch(url: string, signal?: AbortSignal): Promise<string> {
     if (signal?.aborted) throw new Error('Aborted');
     return `Mock content for URL: ${url}. (Mock mode active)`;
+  }
+  async disconnect(): Promise<void> {
+    // nothing to do
   }
 }
 

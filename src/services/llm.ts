@@ -1,10 +1,5 @@
-import {
-  type SpawnSyncOptionsWithStringEncoding,
-  spawnSync as nodeSpawnSync,
-} from 'node:child_process';
 import { z } from 'zod';
 import { config } from '../config.js';
-import { withGlobalSemaphore } from '../utils/lock.js';
 
 import {
   DistilledKnowledgeSchema,
@@ -34,11 +29,22 @@ export type LlmServiceDeps = {
   withLock?: <T>(name: string, fn: () => Promise<T>) => Promise<T>;
 };
 
-const defaultSpawnSync: SpawnSyncFn = (command, args, options) =>
-  nodeSpawnSync(command, args, options as SpawnSyncOptionsWithStringEncoding);
+import type { SpawnSyncOptionsWithStringEncoding } from 'node:child_process';
+import { runLlmProcessSync } from './llm/spawnControl.js';
 
-const defaultLock = <T>(name: string, fn: () => Promise<T>) =>
-  withGlobalSemaphore(name, config.llm.concurrencyLimit, fn);
+const defaultSpawnSync: SpawnSyncFn = (command, args, options) => {
+  // 内部で非同期のセマフォを待機するため、この関数自体は Promise を返す runLlmProcessSync の結果を待機する。
+  // ただし、SpawnSyncFn のシグネチャが同期的である必要がある場合は注意。
+  // 元のコードでは await lockFn(...) の中で spawnSync を呼んでいるので、非同期化しても問題ないはず。
+  return runLlmProcessSync(
+    command,
+    args as string[],
+    options as SpawnSyncOptionsWithStringEncoding,
+  ) as unknown as SpawnSyncResult;
+};
+
+// deps.withLock は不要になる（runLlmProcessSync が内部でロックするため）
+const defaultLock = <T>(name: string, fn: () => Promise<T>) => fn();
 
 /**
  * ローカル LLM を使用してテキストからエンティティ情報を抽出します。

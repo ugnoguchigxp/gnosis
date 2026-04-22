@@ -61,8 +61,8 @@ export async function withGlobalSemaphore<T>(
               }
             }
 
-            // 30分以上経過したロック、または有効なPIDが明確に死んでいるロックのみ削除
-            const staleByAge = Date.now() - stats.mtimeMs > 30 * 60 * 1000;
+            // 10分以上経過したロック（以前は30分）、または有効なPIDが明確に死んでいるロックのみ削除
+            const staleByAge = Date.now() - stats.mtimeMs > 10 * 60 * 1000;
             const staleByDeadPid = !Number.isNaN(pid) && !isAlive;
             if (staleByAge || staleByDeadPid) {
               fs.unlinkSync(lockFile);
@@ -95,11 +95,22 @@ export async function withGlobalSemaphore<T>(
     }
 
     if (acquiredIndex !== -1) break;
-    await setTimeout(Math.random() * 50 + 10);
+
+    const elapsed = Date.now() - start;
+    if (elapsed > 2000 && Math.random() < 0.1) {
+      console.error(
+        `[Semaphore] Waiting for ${semaphoreName} slot... (elapsed: ${Math.round(
+          elapsed / 1000,
+        )}s)`,
+      );
+    }
+    await setTimeout(Math.random() * 100 + 50);
   }
 
   if (acquiredIndex === -1) {
-    throw new Error(`Global lock timeout: ${semaphoreName}`);
+    throw new Error(
+      `Global lock timeout: ${semaphoreName} (concurrency=${maxConcurrency}, timeout=${timeoutMs}ms)`,
+    );
   }
 
   const lockFile = path.join(DEFAULT_LOCK_DIR, `gnosis-${semaphoreName}-${acquiredIndex}.lock`);

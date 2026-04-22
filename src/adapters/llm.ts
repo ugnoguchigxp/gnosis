@@ -76,8 +76,11 @@ const parsePositiveEnvInt = (value: string | undefined, fallback: number): numbe
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 
-const LLM_QUEUE_NAME = process.env.KNOWFLOW_LLM_QUEUE_NAME?.trim() || 'local-llm';
-const LLM_QUEUE_MAX_CONCURRENCY = parsePositiveEnvInt(process.env.KNOWFLOW_LLM_MAX_CONCURRENCY, 1);
+const LLM_QUEUE_NAME = process.env.KNOWFLOW_LLM_QUEUE_NAME?.trim() || 'llm-pool';
+const LLM_QUEUE_MAX_CONCURRENCY = parsePositiveEnvInt(
+  process.env.KNOWFLOW_LLM_MAX_CONCURRENCY,
+  config.llm.concurrencyLimit,
+);
 const LLM_QUEUE_TIMEOUT_MS = parsePositiveEnvInt(
   process.env.KNOWFLOW_LLM_QUEUE_TIMEOUT_MS,
   Math.max(15 * 60 * 1000, config.knowflow.llm.timeoutMs * 4),
@@ -415,8 +418,9 @@ export const parseLlmTaskOutputText = <T extends LlmTaskName>(
     }
     const snippet =
       jsonCandidate.length > 100 ? `${jsonCandidate.slice(0, 100)}...` : jsonCandidate;
+    const rawSnippet = text.length > 200 ? `${text.slice(0, 200)}...` : text;
     throw new Error(
-      `Incomplete or malformed JSON from LLM: ${snippet}. Original error: ${
+      `Incomplete or malformed JSON from LLM: ${snippet}. Raw output: ${rawSnippet}. Original error: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );

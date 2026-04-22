@@ -167,54 +167,59 @@ async function runKnowFlowIteration(
   const queueRepository = new PgJsonbQueueRepository(database);
   const knowledgeRepository = new PgKnowledgeRepository({}, database);
   const retriever = createLocalLlmRetriever(config.localLlmPath);
-  const evidenceProvider = createMcpEvidenceProvider(retriever, {
-    llmConfig: config.knowflow.llm,
-  });
-  const handler = createKnowFlowTaskHandler({
-    repository: knowledgeRepository,
-    evidenceProvider,
-    budget: config.knowflow.budget,
-  });
-
-  const runOnce = customRunWorkerOnce ?? runWorkerOnce;
-  const MAX_TASKS_PER_ITERATION = 10;
-  let processedCount = 0;
-  let lastResult: RunOnceResult = { processed: false };
-
-  for (let i = 0; i < MAX_TASKS_PER_ITERATION; i++) {
-    const result = await runOnce(queueRepository, handler, {
-      workerId: `background-manager-${process.pid}`,
+  try {
+    const evidenceProvider = createMcpEvidenceProvider(retriever, {
+      llmConfig: config.knowflow.llm,
+    });
+    const handler = createKnowFlowTaskHandler({
+      repository: knowledgeRepository,
+      evidenceProvider,
+      budget: config.knowflow.budget,
     });
 
-    if (!result.processed) {
-      break;
+    const runOnce = customRunWorkerOnce ?? runWorkerOnce;
+    const MAX_TASKS_PER_ITERATION = 10;
+    let processedCount = 0;
+    let lastResult: RunOnceResult = { processed: false };
+
+    for (let i = 0; i < MAX_TASKS_PER_ITERATION; i++) {
+      const result = await runOnce(queueRepository, handler, {
+        workerId: `background-manager-${process.pid}`,
+      });
+
+      if (!result.processed) {
+        break;
+      }
+
+      processedCount++;
+      lastResult = result;
+
+      // もしタスクが失敗（タイムアウト等）した場合は、一旦止めて次の tick に譲る
+      if (result.status === 'failed') {
+        break;
+      }
     }
 
-    processedCount++;
-    lastResult = result;
-
-    // もしタスクが失敗（タイムアウト等）した場合は、一旦止めて次の tick に譲る
-    if (result.status === 'failed') {
-      break;
+    // 1つでも処理した場合は processed: true を返す
+    if (processedCount > 0) {
+      return {
+        processed: true,
+        taskId:
+          processedCount > 1
+            ? `multi-batch (${processedCount})`
+            : lastResult.processed
+              ? lastResult.taskId
+              : 'unknown',
+        status: lastResult.processed ? lastResult.status : 'done',
+        error: lastResult.processed ? lastResult.error : undefined,
+      };
     }
-  }
 
-  // 1つでも処理した場合は processed: true を返す
-  if (processedCount > 0) {
-    return {
-      processed: true,
-      taskId:
-        processedCount > 1
-          ? `multi-batch (${processedCount})`
-          : lastResult.processed
-            ? lastResult.taskId
-            : 'unknown',
-      status: lastResult.processed ? lastResult.status : 'done',
-      error: lastResult.processed ? lastResult.error : undefined,
-    };
+    return { processed: false };
+  } finally {
+    // MCP プロセスのリークを防ぐため確実に切断
+    await retriever.disconnect().catch(() => {});
   }
-
-  return { processed: false };
 }
 
 async function runKnowFlowKeywordSeedIteration(

@@ -61,7 +61,7 @@ describe('createMcpEvidenceProvider', () => {
       output: { queries: [] },
     });
 
-    const retriever = { search: mock(), fetch: mock() };
+    const retriever = { search: mock(), fetch: mock(), disconnect: mock() };
     const provider = createMcpEvidenceProvider(retriever, {
       runLlmTask: mockRunLlmTask,
       extractEvidence: mockExtractEvidence,
@@ -91,6 +91,7 @@ describe('createMcpEvidenceProvider', () => {
     const retriever = {
       search: mock().mockResolvedValue('Found: https://typescriptlang.org/docs'),
       fetch: mock().mockResolvedValue('TypeScript is a typed superset of JavaScript.'),
+      disconnect: mock(),
     };
 
     const provider = createMcpEvidenceProvider(retriever, {
@@ -114,6 +115,7 @@ describe('createMcpEvidenceProvider', () => {
     const retriever = {
       search: mock().mockResolvedValue('See https://example.com/ts-errors'),
       fetch: mock().mockRejectedValue(new Error('network error')),
+      disconnect: mock(),
     };
 
     const provider = createMcpEvidenceProvider(retriever, {
@@ -143,6 +145,7 @@ describe('createMcpEvidenceProvider', () => {
         .mockRejectedValueOnce(new Error('search failed'))
         .mockResolvedValue('https://example.com'),
       fetch: mock().mockResolvedValue('content'),
+      disconnect: mock(),
     };
 
     const provider = createMcpEvidenceProvider(retriever, {

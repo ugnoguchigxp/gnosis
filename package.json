@@ -51,6 +51,9 @@
     "observe:worker": "bun run scripts/observe-worker.ts",
     "observe:review": "bun run scripts/observe-review.ts",
     "maintenance": "bun run src/scripts/maintenance.ts",
+    "task:knowflow:once": "bun run src/services/knowflow/cli.ts run-once --strict-complete --verbose",
+    "task:episode:consolidate": "bun run src/scripts/monitor-episodes.ts consolidate --strict --verbose",
+    "task:verify:operation": "bun run scripts/verify-task-operation.ts",
     "typecheck": "tsc --noEmit",
     "monorepo:setup": "./scripts/setup-services.sh",
     "release": "bun run verify && git tag -a v$(node -p \"require('./package.json').version\") -m \"Release v$(node -p \"require('./package.json').version\")\" && echo 'Tagged. Run git push --tags to publish.'"

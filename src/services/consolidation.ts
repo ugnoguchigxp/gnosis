@@ -15,7 +15,7 @@ import { entities, experienceLogs, relations, vibeMemories } from '../db/schema.
 import { generateEntityId } from '../utils/entityId.js';
 import { withGlobalLock } from '../utils/lock.js';
 import { getGuidanceContext } from './guidance/search.js';
-import { generateEmbedding } from './memory.js';
+import { generateEmbedding, searchMemoriesByType } from './memory.js';
 import { runPromptWithMemoryLoopRouter } from './memoryLoopLlmRouter.js';
 
 export type SpawnSyncFn = (
@@ -35,6 +35,7 @@ export type ConsolidateEpisodesDeps = {
   minRawCount?: number;
   sourceTask?: string;
   getGuidance?: typeof getGuidanceContext;
+  searchEpisodes?: typeof searchMemoriesByType;
 };
 
 const defaultSpawnSync: SpawnSyncFn = (command, args, options) =>
@@ -147,12 +148,31 @@ export async function consolidateEpisodes(
       ? experiences.map((e) => `[${e.type}] ${e.content}`).join('\n')
       : '（なし）';
 
+  // (4) 類似エピソード検索
+  const searchEpisodes = deps.searchEpisodes ?? searchMemoriesByType;
+  const searchQuery = `${memoriesText}\n${experiencesText}`.slice(0, 2000);
+  const similarEpisodes = await searchEpisodes(searchQuery, 'episode', 3, database);
+  const similarEpisodesText =
+    similarEpisodes.length > 0
+      ? similarEpisodes
+          .map((e) => `ID: ${e.id}\n内容: ${e.content}\n類似度: ${e.similarity?.toFixed(3)}`)
+          .join('\n\n')
+      : '（なし）';
+
   // 4. LLM でストーリー化
   const taskContext = sourceTask ? `【対象タスク: ${sourceTask}】\n` : '';
 
   const prompt = `
 ${taskContext}以下の作業メモ、体験記録、関連するルールや手続きを1つのストーリーに統合してください。
 これらは同一の論理的な作業単位（タスク）に関する記録です。
+
+【重要：重複チェックとアクション選定】
+入力された「類似ストーリー一覧」を確認し、今回の内容が既存のストーリーと重複していないか、あるいは既存のものを改善すべきか判断してください。
+
+以下のいずれかのアクションを選択してください：
+- "create": 既存のものと内容が大きく異なり、新しいストーリーとして保存すべき場合
+- "update": 既存のストーリーに新しい情報を統合・修正して上書き・改変すべき場合
+- "skip": 既存のストーリーで既に十分カバーされており、新しく記録する必要がない場合
 
 【厳守事項】
 1. 入力にない情報を絶対に追加しないでください（推測は避ける）
@@ -164,9 +184,12 @@ ${taskContext}以下の作業メモ、体験記録、関連するルールや手
 4. 出力は以下のJSON形式のみ:
 
 {
-  "story": "ストーリー本文（200-500文字）",
+  "action": "create" | "update" | "skip",
+  "targetEpisodeId": "update の場合、対象とする既存ストーリーの ID（それ以外は null）",
+  "story": "ストーリー本文（200-500文字。create/update の場合必須。update の場合は既存の内容に今回の事実を適切にマージ・改変した後の全文を記述すること）",
   "importance": 0.5,
-  "episodeAt": "出来事の中心的な時刻（ISO 8601）"
+  "episodeAt": "出来事の中心的な時刻（ISO 8601）",
+  "reason": "アクションを選択した理由（簡潔に）"
 }
 
 --- メモ一覧 ---
@@ -180,6 +203,9 @@ ${rulesAndSkillsText}
 
 --- 今回の体験記録（成功/失敗） ---
 ${experiencesText}
+
+--- 類似ストーリー一覧（重複チェック用） ---
+${similarEpisodesText}
 `.trim();
 
   let story: string;
@@ -206,8 +232,9 @@ ${experiencesText}
     const output = routed.output;
     const jsonMatch = output?.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      console.error('Raw LLM output (no JSON found):', output);
-      throw new Error('No JSON in LLM response');
+      const rawSnippet = output?.length > 500 ? `${output.slice(0, 500)}...` : output;
+      console.error('Raw LLM output (no JSON found):', rawSnippet);
+      throw new Error(`No JSON in LLM response. Raw output: ${rawSnippet}`);
     }
 
     let parsed = JSON.parse(jsonMatch[0]);
@@ -230,6 +257,62 @@ ${experiencesText}
     story = parsed.story;
     importance = typeof parsed.importance === 'number' ? parsed.importance : 0.5;
     episodeAt = parsed.episodeAt ? new Date(parsed.episodeAt) : new Date();
+
+    const action = parsed.action || 'create';
+    const targetEpisodeId = parsed.targetEpisodeId;
+
+    if (action === 'skip') {
+      console.log(`[Consolidation] Skipping episode creation. Reason: ${parsed.reason}`);
+      // raw メモを処理済みにする
+      for (const raw of rawMemories) {
+        await database
+          .update(vibeMemories)
+          .set({ isSynthesized: true })
+          .where(eq(vibeMemories.id, raw.id));
+      }
+      return null;
+    }
+
+    if (action === 'update' && targetEpisodeId) {
+      console.log(
+        `[Consolidation] Updating existing episode ${targetEpisodeId}. Reason: ${parsed.reason}`,
+      );
+      const episodeEmbedding = await embedText(story);
+
+      // vibe_memories 更新
+      await database
+        .update(vibeMemories)
+        .set({
+          content: story,
+          embedding: episodeEmbedding,
+          importance,
+          episodeAt,
+        })
+        .where(eq(vibeMemories.id, targetEpisodeId));
+
+      // entities 更新 (episode プロキシ)
+      await database
+        .update(entities)
+        .set({
+          description: story,
+          embedding: episodeEmbedding,
+          confidence: importance,
+        })
+        .where(sql`metadata->>'memoryId' = ${targetEpisodeId}`);
+
+      // raw メモを処理済みにする
+      for (const raw of rawMemories) {
+        await database
+          .update(vibeMemories)
+          .set({ isSynthesized: true })
+          .where(eq(vibeMemories.id, raw.id));
+      }
+
+      return {
+        episodeId: targetEpisodeId,
+        episodeEntityId: `episode:${targetEpisodeId.slice(0, 8)}`,
+      };
+    }
 
     if (!story) {
       console.error('Parsed result missing story field:', parsed);

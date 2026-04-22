@@ -11,8 +11,7 @@ async function resetTasks() {
       status: 'pending',
       lockedAt: null,
       lockOwner: null,
-      updatedAt: Date.now(),
-      attempts: 0, // Reset attempts too so we try fresh
+      updatedAt: new Date(),
     })
     .where(or(eq(topicTasks.status, 'failed'), eq(topicTasks.status, 'running')));
 
