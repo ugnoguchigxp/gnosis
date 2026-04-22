@@ -34,4 +34,5 @@ data/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+gnosis.db
 .gemini/
