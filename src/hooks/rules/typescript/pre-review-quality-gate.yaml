@@ -1,0 +1,33 @@
+id: pre-review-quality-gate
+event: task.ready_for_review
+enabled: true
+priority: 200
+
+conditions:
+  changed_files_min: 1
+
+actions:
+  - type: run_command
+    command: bun run lint
+    timeout_sec: 120
+
+  - type: run_command
+    command: bun run typecheck
+    timeout_sec: 180
+
+  - type: run_command
+    command: bun run test
+    timeout_sec: 600
+
+  - type: emit_monitor_event
+    include_output: true
+    include_duration: true
+
+  - type: enqueue_review
+    review_profile: standard
+
+on_failure:
+  strategy: block_progress
+  guidance: |
+    review 前の品質ゲートに失敗しました。
+    lint / typecheck / test を通してから review を再実行してください。

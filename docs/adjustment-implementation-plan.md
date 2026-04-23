@@ -47,12 +47,16 @@
 ## 3.1 In Scope（Phase 1）
 
 - Hook core engine（bus / runner / condition / action）
+- Hook 実行依存注入（Monitor reporter / review bridge / candidate bridge）
 - ルールローダー（YAML）
-- 7本の初期ルール実装
+- 8本の初期ルール実装
 - `task_checkpoint` MCP tool 追加
+- `task_checkpoint` / `review` からの `file.changed` 供給
 - review 前ゲートと review 完了イベント連携
 - candidate queue（episode/lesson）保存
+- candidate 昇格 worker（`hook_candidate_promotion`）
 - Monitor timeline 拡張（hook 系イベント）
+- Monitor 用 hook JSONL writer
 - `test:related` 新規コマンド追加
 - IDE/LLM 向け hooks 設定スクリプト追加（`hooks:setup`）
 
@@ -73,6 +77,10 @@
 - `src/hooks/core/condition-evaluator.ts`
 - `src/hooks/core/action-executor.ts`
 - `src/hooks/core/hook-runner.ts`
+- `src/hooks/core/execution-repository.ts`
+- `src/hooks/core/index.ts`
+- `src/hooks/index.ts`
+- `src/hooks/service.ts`
 
 要点:
 
@@ -175,16 +183,19 @@
 
 変更対象:
 
-- `src/mcp/tools`（新規 `task_checkpoint`）
+- `src/mcp/tools/hook.ts`（新規 `task_checkpoint`）
+- `src/mcp/tools/index.ts`
 - `src/mcp/tools/review.ts`
 - `src/mcp/server.ts`（Hook dispatcher 注入）
 
 仕様:
 
-- `task_checkpoint` 呼び出しで `task.segment.completed` 発火
+- `task_checkpoint` 呼び出しで `task.segment.completed` / `task.completed` / `task.failed` を発火
+- `task_checkpoint` / `review` は `changedFiles` を `file.changed` として事前バッファする
 - review 実行前に `task.ready_for_review` を発火
 - pre-review gate 成功時のみ review enqueue
 - review 終了時に `review.completed` 発火
+- review 失敗時に `task.failed` を発火
 
 ## 4.8 Candidate Queue + KnowFlow Bridge
 
@@ -211,11 +222,13 @@
 - Hook action が candidate 作成
 - background task（新規 `hook_candidate_promotion`）で昇格処理
 - 昇格先は既存 `record_outcome` / `record_experience` / `store_memory` を再利用
+- Phase 1 では success episode は `store_memory` 系、failure/review lesson は `record_experience` 系を優先利用
 
 ## 4.9 Monitor 拡張
 
 変更対象:
 
+- `src/hooks/integrations/monitor-hook-reporter.ts`
 - `apps/monitor/src-tauri/src/monitor/collector.rs`
 - `apps/monitor/src-tauri/src/monitor/models.rs`
 - `apps/monitor/src/lib/monitor/types.ts`
@@ -223,6 +236,7 @@
 
 仕様:
 
+- Hook 実行結果は `logs/runs/hooks-YYYY-MM-DD.jsonl` に JSONL 出力する
 - 監視対象に `hook.*` と `review.completed` を追加
 - timeline event に `traceId`, `ruleId`, `gateName`, `riskTags`, `candidateId` を optional 追加
 - 既存表示は後方互換を保つ
@@ -273,6 +287,7 @@
 1. `segment-lint-typescript`
 2. `segment-test-light`
 3. `pre-review-quality-gate`
+4. `test:related` スクリプト実装と package script 追加
 
 ## 5.3 Step 3: リスク guidance
 

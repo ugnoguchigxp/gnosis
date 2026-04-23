@@ -4,6 +4,8 @@ import { config } from '../../config.js';
 import { saveGuidance } from '../../services/guidance/index.js';
 import type { ToolEntry } from '../registry.js';
 
+const defaultGuidancePriority = config.guidance?.priorityLow ?? 50;
+
 const registerGuidanceSchema = z.object({
   title: z.string().describe('ガイダンスのタイトル'),
   content: z.string().describe('内容（マークダウン形式推奨）'),
@@ -19,7 +21,7 @@ const registerGuidanceSchema = z.object({
     .min(0)
     .max(100)
     .optional()
-    .default(config.guidance.priorityLow)
+    .default(defaultGuidancePriority)
     .describe('優先度 (0-100)'),
   tags: z.array(z.string()).optional().describe('関連タグ'),
   applicability: z
@@ -64,14 +66,12 @@ export const guidanceTools: ToolEntry[] = [
     inputSchema: zodToJsonSchema(registerGuidanceSchema) as Record<string, unknown>,
     handler: async (args) => {
       const input = registerGuidanceSchema.parse(args);
-      saveGuidance(input).catch((err) => {
-        console.error('Background register_guidance failed:', err);
-      });
+      const result = await saveGuidance(input);
       return {
         content: [
           {
             type: 'text',
-            text: `Guidance registration request accepted for: ${input.title}. It will be processed in the background.`,
+            text: `Guidance registered: ${input.title} (archiveKey: ${result.archiveKey})`,
           },
         ],
       };

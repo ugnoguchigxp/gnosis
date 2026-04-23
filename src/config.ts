@@ -95,6 +95,19 @@ export const MemoryLoopConfigSchema = z
 
 export type MemoryLoopConfig = z.infer<typeof MemoryLoopConfigSchema>;
 
+export const HookConfigSchema = z
+  .object({
+    enabled: z.boolean(),
+    rulesDir: z.string().min(1),
+    fileChangedDebounceMs: z.number().int().positive(),
+    actionTimeoutSecDefault: z.number().int().positive(),
+    actionTimeoutSecMax: z.number().int().positive(),
+    executionCacheSize: z.number().int().positive(),
+  })
+  .strict();
+
+export type HookConfig = z.infer<typeof HookConfigSchema>;
+
 /**
  * プロジェクト全体の設定管理
  */
@@ -245,6 +258,24 @@ export const config = {
     defaultApiKeyEnv: process.env.LOCAL_LLM_API_KEY_ENV || 'LOCAL_LLM_API_KEY',
     defaultModel: process.env.LOCAL_LLM_MODEL || 'gemma4-default',
   },
+
+  hooks: HookConfigSchema.parse({
+    enabled: envBoolean(process.env.GNOSIS_HOOKS_ENABLED, false),
+    rulesDir: process.env.GNOSIS_HOOKS_RULES_DIR || path.resolve(process.cwd(), 'src/hooks/rules'),
+    fileChangedDebounceMs: Math.max(
+      1,
+      envNumber(process.env.GNOSIS_HOOK_FILE_CHANGED_DEBOUNCE_MS, 10_000),
+    ),
+    actionTimeoutSecDefault: Math.max(
+      1,
+      envNumber(process.env.GNOSIS_HOOK_ACTION_TIMEOUT_SEC_DEFAULT, 120),
+    ),
+    actionTimeoutSecMax: Math.max(
+      1,
+      envNumber(process.env.GNOSIS_HOOK_ACTION_TIMEOUT_SEC_MAX, 900),
+    ),
+    executionCacheSize: Math.max(1, envNumber(process.env.GNOSIS_HOOK_EXECUTION_CACHE_SIZE, 2_000)),
+  }),
 
   guidance: {
     sessionId: process.env.GUIDANCE_SESSION_ID || 'guidance-registry',

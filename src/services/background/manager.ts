@@ -33,6 +33,11 @@ export function startBackgroundWorkers(): void {
         {},
         { id: 'periodic-knowflow-keyword-seed', priority: 15 },
       );
+      await scheduler.enqueue(
+        'hook_candidate_promotion',
+        {},
+        { id: 'periodic-hook-candidate-promotion', priority: 12 },
+      );
     } catch (enqueueError) {
       console.error('[BackgroundManager] Error during periodic enqueue:', enqueueError);
     }

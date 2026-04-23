@@ -1,0 +1,25 @@
+id: segment-test-light
+event: task.segment.completed
+enabled: true
+priority: 110
+
+conditions:
+  changed_files_min: 1
+  changed_lines_min: 25
+  task_mode:
+    - implementation
+    - refactor
+
+actions:
+  - type: run_command
+    command: bun run test:related
+    timeout_sec: 180
+
+  - type: emit_monitor_event
+    include_output: true
+
+on_failure:
+  strategy: soft_warn
+  guidance: |
+    関連テストで失敗が発生しました。
+    ただちに全面停止ではありませんが、修正優先度は高いです。

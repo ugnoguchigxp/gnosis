@@ -1,6 +1,13 @@
 import { resolve } from 'node:path';
+// Set process title for easier identification
+process.title = 'gnosis-worker';
 import { createLocalLlmRetriever } from '../adapters/retriever/mcpRetriever.js';
 import { config, envNumber } from '../config.js';
+
+// Add diagnostic info to environment
+process.env.GNOSIS_PROCESS_INFO = `Started:${new Date().toISOString()} | PPID:${
+  process.ppid
+} | CMD:${process.argv.join(' ')}`;
 import { PgKnowledgeRepository } from '../services/knowflow/knowledge/repository.js';
 import { checkLlmHealth } from '../services/knowflow/ops/healthCheck.js';
 import { createRunLogger } from '../services/knowflow/ops/runLog.js';
@@ -15,6 +22,27 @@ import { withGlobalSemaphore } from '../utils/lock.js';
 
 async function main() {
   const runLogger = await createRunLogger({ runId: `worker-daemon-${Date.now()}` });
+  let healthReportTimer: ReturnType<typeof setInterval> | undefined;
+
+  const cleanup = async (reason: string) => {
+    console.error(`\n--- Gnosis Worker Shutdown (Reason: ${reason}, PID: ${process.pid}) ---`);
+
+    // Watchdog: Force exit if cleanup takes too long (10s)
+    setTimeout(() => {
+      console.error(
+        `--- Gnosis Worker Shutdown Timed Out! Forcing exit. (PID: ${process.pid}) ---`,
+      );
+      process.exit(1);
+    }, 10000).unref();
+
+    if (healthReportTimer) clearInterval(healthReportTimer);
+    await runLogger.flush();
+    process.exit(0);
+  };
+
+  process.on('SIGINT', () => cleanup('SIGINT'));
+  process.on('SIGTERM', () => cleanup('SIGTERM'));
+
   const logger = runLogger.createStructuredLogger({ verbose: true });
   const llmLogger = runLogger.createLlmLogger({ verbose: true });
   const healthCheckReportIntervalMs = Math.max(
@@ -78,7 +106,6 @@ async function main() {
     });
   }
 
-  let healthReportTimer: ReturnType<typeof setInterval> | undefined;
   let healthCheckInFlight = false;
   const runHealthCheck = async (trigger: 'startup' | 'interval') => {
     if (healthCheckInFlight) {

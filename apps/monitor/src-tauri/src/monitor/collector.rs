@@ -18,11 +18,12 @@ use tokio::{
 
 use crate::monitor::{cli, models::TimelineEvent, now_millis, state::MonitorSharedState};
 
-const WATCH_EVENTS: [&str; 4] = [
+const WATCH_EVENTS: [&str; 5] = [
     "task.done",
     "task.failed",
     "task.deferred",
     "llm.task.degraded",
+    "review.completed",
 ];
 
 #[derive(Clone)]
@@ -314,7 +315,7 @@ fn parse_timeline_event(line: &str) -> Option<TimelineEvent> {
 
     let raw: RawRunEvent = serde_json::from_str(line).ok()?;
     let event_kind = raw.event?;
-    if !WATCH_EVENTS.contains(&event_kind.as_str()) {
+    if !WATCH_EVENTS.contains(&event_kind.as_str()) && !event_kind.starts_with("hook.") {
         return None;
     }
 
@@ -330,6 +331,40 @@ fn parse_timeline_event(line: &str) -> Option<TimelineEvent> {
         .get("taskId")
         .and_then(Value::as_str)
         .map(ToString::to_string);
+    let trace_id = payload
+        .get("traceId")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    let rule_id = payload
+        .get("ruleId")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    let gate_name = payload
+        .get("gateName")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    let risk_tags = payload
+        .get("riskTags")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let candidate_ids = payload
+        .get("candidateIds")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     let result_summary = payload
         .get("summary")
         .or_else(|| payload.get("resultSummary"))
@@ -346,11 +381,12 @@ fn parse_timeline_event(line: &str) -> Option<TimelineEvent> {
         .map(ToString::to_string);
 
     let event_id = format!(
-        "{}:{}:{}:{}",
+        "{}:{}:{}:{}:{}",
         run_id.clone().unwrap_or_else(|| "unknown".to_string()),
         event_kind,
         ts,
-        task_id.clone().unwrap_or_else(|| "-".to_string())
+        task_id.clone().unwrap_or_else(|| "-".to_string()),
+        rule_id.clone().unwrap_or_else(|| "-".to_string()),
     );
 
     Some(TimelineEvent {
@@ -359,6 +395,11 @@ fn parse_timeline_event(line: &str) -> Option<TimelineEvent> {
         ts,
         run_id,
         task_id,
+        trace_id,
+        rule_id,
+        gate_name,
+        risk_tags,
+        candidate_ids,
         result_summary,
         error_reason,
         message,

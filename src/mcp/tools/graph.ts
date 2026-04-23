@@ -98,29 +98,23 @@ export const graphTools: ToolEntry[] = [
       const input = updateGraphSchema.parse(args);
       if (input.action === 'update_entity') {
         if (!input.entity?.id) throw new Error('entity.id is required for update_entity');
-        updateEntity(input.entity.id, input.entity).catch((err) => {
-          console.error('Background updateEntity failed:', err);
-        });
+        await updateEntity(input.entity.id, input.entity);
         return {
-          content: [
-            { type: 'text', text: `Graph update request (entity: ${input.entity.id}) accepted.` },
-          ],
+          content: [{ type: 'text', text: `Entity ${input.entity.id} updated successfully.` }],
         };
       }
       if (input.action === 'delete_relation') {
         if (!input.relation) throw new Error('relation info is required for delete_relation');
-        deleteRelation(
+        await deleteRelation(
           input.relation.sourceId,
           input.relation.targetId,
           input.relation.relationType,
-        ).catch((err) => {
-          console.error('Background deleteRelation failed:', err);
-        });
+        );
         return {
           content: [
             {
               type: 'text',
-              text: `Graph update request (delete relation: ${input.relation.relationType}) accepted.`,
+              text: `Relation ${input.relation.relationType} deleted successfully.`,
             },
           ],
         };
@@ -145,11 +139,9 @@ export const graphTools: ToolEntry[] = [
     description: 'グラフ全体を分析し、知識の塊（コミュニティ）を検出・要約します。',
     inputSchema: { type: 'object', properties: {} },
     handler: async (_args) => {
-      buildCommunities().catch((err) => {
-        console.error('Background buildCommunities failed:', err);
-      });
+      const result = await buildCommunities();
       return {
-        content: [{ type: 'text', text: 'Community building started in background.' }],
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
       };
     },
   },

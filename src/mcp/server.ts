@@ -7,6 +7,20 @@ import { isGnosisError } from '../domain/errors.js';
 import { toolEntries } from './tools/index.js';
 
 // ---------------------------------------------------------------------------
+// Process Metadata
+// ---------------------------------------------------------------------------
+if (import.meta.main) {
+  process.title = 'gnosis-mcp-standalone-warn';
+  console.error('[Warning] src/mcp/server.ts is being run directly.');
+  console.error(
+    '[Warning] Please use src/index.ts as the entry point for proper signal handling and cleanup.',
+  );
+} else {
+  // Logic-only title (may be overwritten by index.ts)
+  process.title = 'gnosis-mcp-logic';
+}
+
+// ---------------------------------------------------------------------------
 // scope:'always' エンティティのキャッシュ（TTL: 5分）
 // ---------------------------------------------------------------------------
 let alwaysCache: { content: string; expiresAt: number } | null = null;

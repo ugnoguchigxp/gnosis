@@ -112,6 +112,13 @@ pub struct TimelineEvent {
     pub ts: i64,
     pub run_id: Option<String>,
     pub task_id: Option<String>,
+    pub trace_id: Option<String>,
+    pub rule_id: Option<String>,
+    pub gate_name: Option<String>,
+    #[serde(default)]
+    pub risk_tags: Vec<String>,
+    #[serde(default)]
+    pub candidate_ids: Vec<String>,
     pub result_summary: Option<String>,
     pub error_reason: Option<String>,
     pub message: Option<String>,

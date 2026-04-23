@@ -20,6 +20,8 @@ type TimelineStatus =
   | 'degraded'
   | 'pending'
   | 'running'
+  | 'review'
+  | 'hook'
   | 'unknown';
 type EnrichedTimelineEvent = TimelineEvent & {
   status: TimelineStatus;
@@ -112,6 +114,8 @@ const normalizeStatus = (kind: string): TimelineStatus => {
   if (kind === 'task.pending') return 'pending';
   if (kind === 'task.running') return 'running';
   if (kind === 'llm.task.degraded') return 'degraded';
+  if (kind === 'review.completed') return 'review';
+  if (kind.startsWith('hook.')) return 'hook';
   return 'unknown';
 };
 
@@ -168,7 +172,20 @@ const formatTime = (ts: number | null | undefined): string => {
 };
 
 const eventDetail = (event: TimelineEvent): string => {
-  return event.errorReason ?? event.resultSummary ?? event.message ?? '-';
+  const parts = [
+    event.errorReason,
+    event.resultSummary,
+    event.message,
+    event.gateName ? `gate=${event.gateName}` : undefined,
+    event.ruleId ? `rule=${event.ruleId}` : undefined,
+    event.traceId ? `trace=${event.traceId}` : undefined,
+    event.candidateIds && event.candidateIds.length > 0
+      ? `candidates=${event.candidateIds.join(',')}`
+      : undefined,
+    event.riskTags && event.riskTags.length > 0 ? `risk=${event.riskTags.join(',')}` : undefined,
+  ].filter((part): part is string => typeof part === 'string' && part.length > 0);
+
+  return parts.length > 0 ? parts.join(' | ') : '-';
 };
 
 const applyTimelineEvent = (event: TimelineEvent): void => {
@@ -414,6 +431,8 @@ onMount(() => {
 					<option value="failed">failed</option>
 					<option value="deferred">deferred</option>
 					<option value="degraded">degraded</option>
+					<option value="review">review</option>
+					<option value="hook">hook</option>
 				</select>
 			</label>
 			<label class="control">
@@ -528,7 +547,10 @@ onMount(() => {
 			{#if selectedEvent}
 				<div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 10px;">
 					kind: {selectedEvent.kind}<br />
-					taskId: {selectedEvent.taskId ?? '-'}
+					taskId: {selectedEvent.taskId ?? '-'}<br />
+					traceId: {selectedEvent.traceId ?? '-'}<br />
+					ruleId: {selectedEvent.ruleId ?? '-'}<br />
+					gateName: {selectedEvent.gateName ?? '-'}
 				</div>
 			{/if}
 			{#if detailLoading}

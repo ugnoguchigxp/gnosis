@@ -2,6 +2,7 @@ import type { ToolEntry } from '../registry.js';
 import { experienceTools } from './experience.js';
 import { graphTools } from './graph.js';
 import { guidanceTools } from './guidance.js';
+import { hookTools } from './hook.js';
 import { knowflowTools } from './knowflow.js';
 import { knowledgeTools } from './knowledge.js';
 import { memoryTools } from './memory.js';
@@ -18,6 +19,7 @@ export const toolEntries: ToolEntry[] = [
   ...experienceTools,
   ...syncTools,
   ...guidanceTools,
+  ...hookTools,
   ...queryProcedureTools,
   ...recordOutcomeTools,
   ...reviewTools,

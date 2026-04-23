@@ -6,6 +6,14 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { config } from '../../config.js';
+import { bufferFileChangedEvents, dispatchHookEvent } from '../../hooks/service.js';
+import {
+  countAddedLines,
+  countRemovedLines,
+  extractChangedFiles,
+  normalizeDiff,
+} from '../../services/review/diff/normalizer.js';
+import { getDiff } from '../../services/review/foundation/gitDiff.js';
 import { getReviewLLMService } from '../../services/review/llm/reviewer.js';
 import {
   runReviewStageA,
@@ -14,7 +22,11 @@ import {
   runReviewStageD,
   runReviewStageE,
 } from '../../services/review/orchestrator.js';
-import { ReviewModeSchema, ReviewRequestSchema } from '../../services/review/types.js';
+import {
+  ReviewModeSchema,
+  type ReviewOutput,
+  ReviewRequestSchema,
+} from '../../services/review/types.js';
 import type { ToolEntry } from '../registry.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -25,6 +37,8 @@ const reviewParamsSchema = z.object({
     .optional()
     .describe('リポジトリのルートパス (デフォルト: カレントディレクトリ)'),
   taskId: z.string().optional().describe('タスクID (省略時は自動生成)'),
+  traceId: z.string().optional().describe('Hook / Monitor 相関用 trace ID'),
+  runId: z.string().optional().describe('Hook / Monitor 相関用 run ID'),
   baseRef: z.string().optional().describe('ベースリファレンス (例: main)'),
   headRef: z.string().optional().describe('ヘッドリファレンス (例: HEAD)'),
   mode: ReviewModeSchema.optional().default('git_diff').describe('レビューモード'),
@@ -49,10 +63,19 @@ function getMcpReviewExecutionMode(): 'cli' | 'inproc' {
   return 'cli';
 }
 
+async function buildHookReviewContext(repoPath: string, mode: 'git_diff' | 'worktree') {
+  const rawDiff = await getDiff(repoPath, mode);
+  const normalized = normalizeDiff(rawDiff);
+  return {
+    changedFiles: extractChangedFiles(normalized),
+    changedLines: countAddedLines(normalized) + countRemovedLines(normalized),
+  };
+}
+
 async function runReviewViaCli(
   parsed: z.infer<typeof reviewParamsSchema>,
   resolvedPath: string,
-  requestId: string,
+  traceId: string,
 ): Promise<{ markdown: string }> {
   const stage = parsed.stage ?? 'e';
   const envPreference = process.env.GNOSIS_REVIEW_LLM_PREFERENCE === 'local' ? 'local' : 'cloud';
@@ -85,7 +108,7 @@ async function runReviewViaCli(
 
   emitReviewDebugLog({
     event: 'mcp_review_cli_spawn',
-    requestId,
+    requestId: traceId,
     command: config.bunCommand,
     args,
   });
@@ -136,18 +159,72 @@ export const reviewTools: ToolEntry[] = [
 Stage E (agentic) を使用すると、AI が自律的に情報を収集して詳細なレビューを行います。`,
     inputSchema: zodToJsonSchema(reviewParamsSchema) as Record<string, unknown>,
     handler: async (args) => {
-      const requestId = randomUUID();
+      const parsed = reviewParamsSchema.parse(args);
+      const traceId = parsed.traceId ?? randomUUID();
+      const runId = parsed.runId ?? traceId;
+      const repoPath = parsed.repoPath ?? process.cwd();
+      const resolvedPath = fs.realpathSync(repoPath);
+      const stage = parsed.stage ?? 'e';
+      const execMode = getMcpReviewExecutionMode();
+      const hookReviewContext = await buildHookReviewContext(
+        resolvedPath,
+        parsed.mode ?? 'git_diff',
+      );
+
+      if (hookReviewContext.changedFiles.length > 0) {
+        await bufferFileChangedEvents({
+          traceId,
+          runId,
+          taskId: parsed.taskId,
+          changedFiles: hookReviewContext.changedFiles,
+          changedLines: hookReviewContext.changedLines,
+          context: {
+            cwd: resolvedPath,
+            taskMode: 'review',
+            reviewRequested: true,
+          },
+          payload: {
+            reason: 'review_request',
+          },
+        });
+      }
+
+      const preReviewHook = await dispatchHookEvent({
+        event: 'task.ready_for_review',
+        traceId,
+        runId,
+        taskId: parsed.taskId,
+        context: {
+          cwd: resolvedPath,
+          reviewRequested: true,
+          taskMode: 'review',
+          changedFiles: hookReviewContext.changedFiles,
+          changedLines: hookReviewContext.changedLines,
+        },
+      });
+
+      if (preReviewHook.blocked) {
+        const guidanceText =
+          preReviewHook.guidance.length > 0
+            ? preReviewHook.guidance.join('\n')
+            : 'review pre-check was blocked by hook rules.';
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Review request blocked by hook gate.\ntraceId: ${preReviewHook.traceId}\n${guidanceText}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
       const runReview = async () => {
         try {
-          const parsed = reviewParamsSchema.parse(args);
-          const repoPath = parsed.repoPath ?? process.cwd();
-          const resolvedPath = fs.realpathSync(repoPath);
-          const stage = parsed.stage ?? 'e';
-          const execMode = getMcpReviewExecutionMode();
-
           emitReviewDebugLog({
             event: 'mcp_review_start',
-            requestId,
+            requestId: traceId,
             repoPath: resolvedPath,
             stage,
             execMode,
@@ -156,10 +233,24 @@ Stage E (agentic) を使用すると、AI が自律的に情報を収集して�
           });
 
           if (execMode === 'cli') {
-            const result = await runReviewViaCli(parsed, resolvedPath, requestId);
+            const result = await runReviewViaCli(parsed, resolvedPath, traceId);
+            await dispatchHookEvent({
+              event: 'review.completed',
+              traceId,
+              runId,
+              taskId: parsed.taskId,
+              context: {
+                cwd: resolvedPath,
+                changedFiles: hookReviewContext.changedFiles,
+                changedLines: hookReviewContext.changedLines,
+              },
+              payload: {
+                markdownLength: result.markdown.length,
+              },
+            });
             emitReviewDebugLog({
               event: 'mcp_review_success',
-              requestId,
+              requestId: traceId,
               stage,
               execMode,
               markdownLength: result.markdown.length,
@@ -182,10 +273,10 @@ Stage E (agentic) を使用すると、AI が自律的に情報を収集して�
             process.env.GNOSIS_REVIEW_LLM_PREFERENCE === 'local' ? 'local' : 'cloud';
           const llmService = await getReviewLLMService(parsed.llmPreference ?? envPreference, {
             invoker: 'mcp',
-            requestId,
+            requestId: traceId,
           });
 
-          let result: { markdown: string };
+          let result: ReviewOutput;
           switch (stage) {
             case 'a':
               result = await runReviewStageA(request, { llmService });
@@ -206,9 +297,27 @@ Stage E (agentic) を使用すると、AI が自律的に情報を収集して�
               result = await runReviewStageE(request, { llmService });
           }
 
+          await dispatchHookEvent({
+            event: 'review.completed',
+            traceId,
+            runId,
+            taskId: request.taskId,
+            context: {
+              cwd: resolvedPath,
+              changedFiles: hookReviewContext.changedFiles,
+              changedLines: hookReviewContext.changedLines,
+            },
+            payload: {
+              reviewId: result.review_id,
+              reviewStatus: result.review_status,
+              findingsCount: result.findings.length,
+              riskLevel: result.metadata.risk_level,
+            },
+          });
+
           emitReviewDebugLog({
             event: 'mcp_review_success',
-            requestId,
+            requestId: traceId,
             stage,
             execMode,
             markdownLength: result.markdown.length,
@@ -216,10 +325,24 @@ Stage E (agentic) を使用すると、AI が自律的に情報を収集して�
         } catch (error) {
           emitReviewDebugLog({
             event: 'mcp_review_error',
-            requestId,
+            requestId: traceId,
             error: error instanceof Error ? error.message : String(error),
           });
-          console.error(`Background review failed (requestId: ${requestId}):`, error);
+          await dispatchHookEvent({
+            event: 'task.failed',
+            traceId,
+            runId,
+            taskId: parsed.taskId,
+            context: {
+              cwd: resolvedPath,
+              changedFiles: hookReviewContext.changedFiles,
+              changedLines: hookReviewContext.changedLines,
+            },
+            payload: {
+              failureReason: error instanceof Error ? error.message : String(error),
+            },
+          });
+          console.error(`Background review failed (traceId: ${traceId}):`, error);
         }
       };
 
@@ -228,7 +351,7 @@ Stage E (agentic) を使用すると、AI が自律的に情報を収集して�
         content: [
           {
             type: 'text',
-            text: `Review request accepted (requestId: ${requestId}). It will be processed in the background.`,
+            text: `Review request accepted (traceId: ${traceId}). It will be processed in the background.`,
           },
         ],
       };

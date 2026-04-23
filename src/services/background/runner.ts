@@ -8,6 +8,7 @@ import { synthesisTask } from './tasks/synthesisTask.js';
 import { createLocalLlmRetriever } from '../../adapters/retriever/mcpRetriever.js';
 // KnowFlow 関連のインポート (Port from scripts/worker.ts)
 import { config } from '../../config.js';
+import { promotePendingHookCandidates } from '../../hooks/service.js';
 import { runKeywordSeederOnce } from '../knowflow/cron/keywordSeeder.js';
 import type { KeywordSeederRunResult } from '../knowflow/cron/types.js';
 import { PgKnowledgeRepository } from '../knowflow/knowledge/repository.js';
@@ -123,6 +124,21 @@ export async function runTask(
       };
     }
 
+    case 'hook_candidate_promotion': {
+      const result = await promotePendingHookCandidates();
+      return {
+        ok: result.rejected === 0,
+        processed: result.processed > 0,
+        summary: `processed=${result.processed} promoted=${result.promoted} rejected=${result.rejected}`,
+        partialFailures: result.rejected,
+        error:
+          result.rejected > 0
+            ? `${result.rejected} hook candidate(s) were rejected during promotion`
+            : undefined,
+        stats: result,
+      };
+    }
+
     default:
       throw new Error(`Unknown task type: ${type}`);
   }
@@ -218,7 +234,10 @@ async function runKnowFlowIteration(
     return { processed: false };
   } finally {
     // MCP プロセスのリークを防ぐため確実に切断
-    await retriever.disconnect().catch(() => {});
+    const disconnect = (retriever as { disconnect?: () => Promise<unknown> | unknown }).disconnect;
+    if (typeof disconnect === 'function') {
+      await Promise.resolve(disconnect.call(retriever)).catch(() => {});
+    }
   }
 }
 

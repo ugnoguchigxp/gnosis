@@ -11,6 +11,8 @@ import {
 import { runWorkerOnce } from '../../services/knowflow/worker/loop.js';
 import type { ToolEntry } from '../registry.js';
 
+const defaultGuidancePriority = config.guidance?.priorityLow ?? 50;
+
 const enqueueKnowledgeTaskSchema = z.object({
   topic: z.string().describe('調査を開始するトピック名'),
   mode: z
@@ -21,7 +23,7 @@ const enqueueKnowledgeTaskSchema = z.object({
   priority: z
     .number()
     .optional()
-    .default(config.guidance.priorityLow)
+    .default(defaultGuidancePriority)
     .describe('優先度 (高いほど先に実行)'),
 });
 

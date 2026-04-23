@@ -31,6 +31,11 @@ export type TimelineEvent = {
   ts: number;
   runId?: string;
   taskId?: string;
+  traceId?: string;
+  ruleId?: string;
+  gateName?: string;
+  riskTags?: string[];
+  candidateIds?: string[];
   topic?: string | null;
   source?: string | null;
   resultSummary?: string;
