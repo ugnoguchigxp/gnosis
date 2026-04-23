@@ -37,7 +37,21 @@ pub fn run() {
             monitor::commands::monitor_update_guidance,
             monitor::commands::monitor_delete_guidance,
             monitor::commands::monitor_list_keyword_evaluations,
-            monitor::commands::monitor_delete_keyword_evaluation
+            monitor::commands::monitor_delete_keyword_evaluation,
+            monitor::commands::monitor_list_entities,
+            monitor::commands::monitor_create_entity,
+            monitor::commands::monitor_update_entity,
+            monitor::commands::monitor_delete_entity,
+            monitor::commands::monitor_list_relations,
+            monitor::commands::monitor_create_relation,
+            monitor::commands::monitor_delete_relation,
+            monitor::commands::monitor_list_goals,
+            monitor::commands::monitor_get_procedure,
+            monitor::commands::monitor_set_task_confidence,
+            monitor::commands::monitor_add_step,
+            monitor::commands::monitor_remove_step,
+            monitor::commands::monitor_reorder_steps,
+            monitor::commands::monitor_create_custom_step
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

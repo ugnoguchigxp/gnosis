@@ -426,3 +426,320 @@ pub async fn delete_keyword_evaluation(
 
     serde_json::from_slice(&output.stdout).context("failed to parse evaluation delete payload")
 }
+
+pub async fn list_entities(project_root: &Path) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-memory-crud.ts")
+        .arg("entities")
+        .arg("list")
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute entities list command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("entities list command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse entities list payload")
+}
+
+pub async fn create_entity(project_root: &Path, payload: &str) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-memory-crud.ts")
+        .arg("entities")
+        .arg("create")
+        .arg(payload)
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute entity create command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("entity create command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse entity create payload")
+}
+
+pub async fn update_entity(
+    project_root: &Path,
+    id: &str,
+    payload: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-memory-crud.ts")
+        .arg("entities")
+        .arg("update")
+        .arg(id)
+        .arg(payload)
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute entity update command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("entity update command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse entity update payload")
+}
+
+pub async fn delete_entity(project_root: &Path, id: &str) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-memory-crud.ts")
+        .arg("entities")
+        .arg("delete")
+        .arg(id)
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute entity delete command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("entity delete command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse entity delete payload")
+}
+
+pub async fn list_relations(project_root: &Path) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-memory-crud.ts")
+        .arg("relations")
+        .arg("list")
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute relations list command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("relations list command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse relations list payload")
+}
+
+pub async fn create_relation(project_root: &Path, payload: &str) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-memory-crud.ts")
+        .arg("relations")
+        .arg("create")
+        .arg(payload)
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute relation create command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("relation create command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse relation create payload")
+}
+
+pub async fn delete_relation(
+    project_root: &Path,
+    source_id: &str,
+    target_id: &str,
+    relation_type: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-memory-crud.ts")
+        .arg("relations")
+        .arg("delete")
+        .arg(source_id)
+        .arg(target_id)
+        .arg(relation_type)
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute relation delete command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("relation delete command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse relation delete payload")
+}
+
+pub async fn list_goals(project_root: &Path) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-procedure-crud.ts")
+        .arg("goals")
+        .arg("list")
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute goals list command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("goals list command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse goals list payload")
+}
+
+pub async fn get_procedure(project_root: &Path, goal_id: &str) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-procedure-crud.ts")
+        .arg("procedure")
+        .arg("get")
+        .arg(goal_id)
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute procedure get command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("procedure get command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse procedure get payload")
+}
+
+pub async fn set_task_confidence(
+    project_root: &Path,
+    task_id: &str,
+    confidence: f64,
+) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-procedure-crud.ts")
+        .arg("task")
+        .arg("set-confidence")
+        .arg(task_id)
+        .arg(confidence.to_string())
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute set-confidence command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("set-confidence command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse set-confidence payload")
+}
+
+pub async fn add_step(
+    project_root: &Path,
+    goal_id: &str,
+    task_id: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-procedure-crud.ts")
+        .arg("task")
+        .arg("add-step")
+        .arg(goal_id)
+        .arg(task_id)
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute add-step command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("add-step command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse add-step payload")
+}
+
+pub async fn remove_step(
+    project_root: &Path,
+    goal_id: &str,
+    task_id: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-procedure-crud.ts")
+        .arg("task")
+        .arg("remove-step")
+        .arg(goal_id)
+        .arg(task_id)
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute remove-step command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("remove-step command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse remove-step payload")
+}
+
+pub async fn reorder_steps(
+    project_root: &Path,
+    goal_id: &str,
+    steps_order: Vec<String>,
+) -> anyhow::Result<serde_json::Value> {
+    let steps_json = serde_json::to_string(&steps_order)?;
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-procedure-crud.ts")
+        .arg("task")
+        .arg("reorder")
+        .arg(goal_id)
+        .arg(steps_json)
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute reorder command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("reorder command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse reorder payload")
+}
+
+pub async fn create_custom_step(
+    project_root: &Path,
+    goal_id: &str,
+    name: &str,
+    description: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-procedure-crud.ts")
+        .arg("task")
+        .arg("create-custom")
+        .arg(goal_id)
+        .arg(name)
+        .arg(description)
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute create-custom command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("create-custom command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse create-custom payload")
+}

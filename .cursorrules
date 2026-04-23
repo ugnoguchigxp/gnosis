@@ -1,1 +1,10 @@
 Gnosisを最大限活用するために、作業前に必ず /Users/y.noguchi/.gnosis/agent/manual.md を読み、書かれている指針を最優先してください。
+
+<!-- gnosis-hooks:start -->
+# Gnosis Hook Workflow (Auto-managed)
+- Read and follow the hook guide at: /Users/y.noguchi/.gnosis/hooks/manual.md
+- Before saying a coding segment is done, call `task_checkpoint`.
+- Before starting a review, trigger `task.ready_for_review` via the review flow.
+- If hook gate fails, prioritize fixing lint/typecheck/test before continuing.
+- Record completion and failures so episode/lesson candidates are created.
+<!-- gnosis-hooks:end -->

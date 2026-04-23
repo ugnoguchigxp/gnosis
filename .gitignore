@@ -4,6 +4,7 @@ dist
 .env
 .env.local
 *.log
+*.bak
 logs/runs/
 
 # vscode
@@ -36,3 +37,4 @@ data/
 *.sqlite-wal
 gnosis.db
 .gemini/
+.gnosis/

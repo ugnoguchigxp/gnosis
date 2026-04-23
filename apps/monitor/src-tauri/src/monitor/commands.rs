@@ -195,3 +195,149 @@ pub async fn monitor_delete_keyword_evaluation(
         .await
         .map_err(|error| error.to_string())
 }
+
+#[tauri::command]
+pub async fn monitor_list_entities(
+    state: State<'_, MonitorRuntime>,
+) -> Result<serde_json::Value, String> {
+    cli::list_entities(&state.project_root)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_create_entity(
+    state: State<'_, MonitorRuntime>,
+    payload: String,
+) -> Result<serde_json::Value, String> {
+    cli::create_entity(&state.project_root, &payload)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_update_entity(
+    state: State<'_, MonitorRuntime>,
+    id: String,
+    payload: String,
+) -> Result<serde_json::Value, String> {
+    cli::update_entity(&state.project_root, &id, &payload)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_delete_entity(
+    state: State<'_, MonitorRuntime>,
+    id: String,
+) -> Result<serde_json::Value, String> {
+    cli::delete_entity(&state.project_root, &id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_list_relations(
+    state: State<'_, MonitorRuntime>,
+) -> Result<serde_json::Value, String> {
+    cli::list_relations(&state.project_root)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_create_relation(
+    state: State<'_, MonitorRuntime>,
+    payload: String,
+) -> Result<serde_json::Value, String> {
+    cli::create_relation(&state.project_root, &payload)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_delete_relation(
+    state: State<'_, MonitorRuntime>,
+    source_id: String,
+    target_id: String,
+    relation_type: String,
+) -> Result<serde_json::Value, String> {
+    cli::delete_relation(&state.project_root, &source_id, &target_id, &relation_type)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_list_goals(
+    state: State<'_, MonitorRuntime>,
+) -> Result<serde_json::Value, String> {
+    cli::list_goals(&state.project_root)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_get_procedure(
+    state: State<'_, MonitorRuntime>,
+    goal_id: String,
+) -> Result<serde_json::Value, String> {
+    cli::get_procedure(&state.project_root, &goal_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_set_task_confidence(
+    state: State<'_, MonitorRuntime>,
+    task_id: String,
+    confidence: f64,
+) -> Result<serde_json::Value, String> {
+    cli::set_task_confidence(&state.project_root, &task_id, confidence)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_add_step(
+    state: State<'_, MonitorRuntime>,
+    goal_id: String,
+    task_id: String,
+) -> Result<serde_json::Value, String> {
+    cli::add_step(&state.project_root, &goal_id, &task_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_remove_step(
+    state: State<'_, MonitorRuntime>,
+    goal_id: String,
+    task_id: String,
+) -> Result<serde_json::Value, String> {
+    cli::remove_step(&state.project_root, &goal_id, &task_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_reorder_steps(
+    state: State<'_, MonitorRuntime>,
+    goal_id: String,
+    steps_order: Vec<String>,
+) -> Result<serde_json::Value, String> {
+    cli::reorder_steps(&state.project_root, &goal_id, steps_order)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_create_custom_step(
+    state: State<'_, MonitorRuntime>,
+    goal_id: String,
+    name: String,
+    description: String,
+) -> Result<serde_json::Value, String> {
+    cli::create_custom_step(&state.project_root, &goal_id, &name, &description)
+        .await
+        .map_err(|error| error.to_string())
+}

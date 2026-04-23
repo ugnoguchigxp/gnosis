@@ -12,6 +12,23 @@ import { generateEmbedding } from '../services/memory.js';
 import { sha256 } from '../utils/crypto.js';
 import { generateEntityId } from '../utils/entityId.js';
 
+type EntityPayload = {
+  id?: string;
+  type: string;
+  name: string;
+  description?: string;
+  confidence?: number;
+  scope?: string;
+  metadata?: Record<string, unknown>;
+};
+
+type RelationPayload = {
+  sourceId: string;
+  targetId: string;
+  relationType: string;
+  weight?: number;
+};
+
 type GuidanceType = 'rule' | 'skill';
 type GuidanceScope = 'always' | 'on_demand';
 type LessonType = 'failure' | 'success';
@@ -459,6 +476,131 @@ async function deleteEpisode(id: string) {
   return { success: !!deleted, id };
 }
 
+// --- Entities CRUD ---
+
+async function listEntities() {
+  return await db.select().from(entities).orderBy(desc(entities.createdAt)).limit(200);
+}
+
+async function createEntity(raw: EntityPayload) {
+  const type = requireString(raw.type, 'type');
+  const name = requireString(raw.name, 'name');
+  const id = raw.id || generateEntityId(type, name);
+  const description = raw.description || '';
+  const embedding = await generateEmbedding(`${name}\n${description}`);
+
+  const [entity] = await db
+    .insert(entities)
+    .values({
+      id,
+      type,
+      name,
+      description,
+      embedding,
+      confidence: raw.confidence ?? 0.5,
+      scope: raw.scope || 'on_demand',
+      metadata: raw.metadata || {},
+      provenance: 'monitor',
+    })
+    .returning();
+  return entity;
+}
+
+async function updateEntity(id: string, raw: EntityPayload) {
+  const existing = await db.query.entities.findFirst({
+    where: eq(entities.id, id),
+  });
+  if (!existing) {
+    throw new Error(`Entity ${id} not found`);
+  }
+
+  const name = raw.name || existing.name;
+  const type = raw.type || existing.type;
+  const expectedId = generateEntityId(type, name);
+  if (expectedId !== id) {
+    throw new Error(
+      `Renaming or changing type would require rekeying entity ID from ${id} to ${expectedId}. Recreate the entity instead.`,
+    );
+  }
+
+  const description = raw.description ?? existing.description ?? '';
+  const embedding = await generateEmbedding(`${name}\n${description}`);
+
+  const [entity] = await db
+    .update(entities)
+    .set({
+      type,
+      name,
+      description,
+      embedding,
+      confidence: raw.confidence ?? existing.confidence,
+      scope: raw.scope || existing.scope,
+      metadata: raw.metadata || existing.metadata,
+      provenance: 'monitor',
+    })
+    .where(eq(entities.id, id))
+    .returning();
+  return entity;
+}
+
+async function deleteEntity(id: string) {
+  // カスケード削除（リレーションも道連れにする）
+  await db
+    .delete(relations)
+    .where(sql`${relations.sourceId} = ${id} OR ${relations.targetId} = ${id}`);
+  const [deleted] = await db.delete(entities).where(eq(entities.id, id)).returning();
+  if (!deleted) {
+    throw new Error(`Entity ${id} not found`);
+  }
+  return { success: true, id };
+}
+
+// --- Relations CRUD ---
+
+async function listRelations() {
+  return await db.select().from(relations).limit(200);
+}
+
+async function createRelation(raw: RelationPayload) {
+  const sourceId = requireString(raw.sourceId, 'sourceId');
+  const targetId = requireString(raw.targetId, 'targetId');
+  const relationType = requireString(raw.relationType, 'relationType');
+
+  const [relation] = await db
+    .insert(relations)
+    .values({
+      sourceId,
+      targetId,
+      relationType,
+      weight: raw.weight ?? 1.0,
+    })
+    .onConflictDoUpdate({
+      target: [relations.sourceId, relations.targetId, relations.relationType],
+      set: {
+        weight: raw.weight ?? 1.0,
+      },
+    })
+    .returning();
+  return relation;
+}
+
+async function deleteRelation(sourceId: string, targetId: string, type: string) {
+  const [deleted] = await db
+    .delete(relations)
+    .where(
+      and(
+        eq(relations.sourceId, sourceId),
+        eq(relations.targetId, targetId),
+        eq(relations.relationType, type),
+      ),
+    )
+    .returning();
+  if (!deleted) {
+    throw new Error('Relation not found');
+  }
+  return { success: true };
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const resource = args[0];
@@ -543,8 +685,50 @@ async function main() {
     }
   }
 
+  if (resource === 'entities') {
+    if (command === 'list') {
+      console.log(JSON.stringify(await listEntities(), null, 2));
+      return;
+    }
+    if (command === 'create') {
+      const payload = parseJsonArg<EntityPayload>(args[2], 'entity payload');
+      console.log(JSON.stringify(await createEntity(payload), null, 2));
+      return;
+    }
+    if (command === 'update') {
+      const id = requireString(args[2], 'entity id');
+      const payload = parseJsonArg<EntityPayload>(args[3], 'entity payload');
+      console.log(JSON.stringify(await updateEntity(id, payload), null, 2));
+      return;
+    }
+    if (command === 'delete') {
+      const id = requireString(args[2], 'entity id');
+      console.log(JSON.stringify(await deleteEntity(id), null, 2));
+      return;
+    }
+  }
+
+  if (resource === 'relations') {
+    if (command === 'list') {
+      console.log(JSON.stringify(await listRelations(), null, 2));
+      return;
+    }
+    if (command === 'create') {
+      const payload = parseJsonArg<RelationPayload>(args[2], 'relation payload');
+      console.log(JSON.stringify(await createRelation(payload), null, 2));
+      return;
+    }
+    if (command === 'delete') {
+      const sourceId = requireString(args[2], 'sourceId');
+      const targetId = requireString(args[3], 'targetId');
+      const type = requireString(args[4], 'type');
+      console.log(JSON.stringify(await deleteRelation(sourceId, targetId, type), null, 2));
+      return;
+    }
+  }
+
   throw new Error(
-    'Unknown command. Use: guidance list|create|update|delete, lessons list|create|update|delete, evaluations list|delete, or episodes list|delete',
+    'Unknown command. Use: guidance list|create|update|delete, lessons list|create|update|delete, evaluations list|delete, episodes list|delete, entities list|create|update|delete, or relations list|create|delete',
   );
 }
 

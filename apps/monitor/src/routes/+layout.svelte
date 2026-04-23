@@ -1,4 +1,5 @@
 <script lang="ts">
+import { page } from '$app/stores';
 import favicon from '$lib/assets/favicon.svg';
 import '../app.css';
 
@@ -11,10 +12,11 @@ const { children } = $props();
 
 <div class="app-layout">
 	<nav class="app-nav">
-		<a href="/" class="nav-link">Monitor</a>
-		<a href="/tasks" class="nav-link">Queue</a>
-		<a href="/graph" class="nav-link">Graph</a>
-		<a href="/memories" class="nav-link">Memories</a>
+		<a href="/" class="nav-link" class:active={$page.url.pathname === '/'}>Monitor</a>
+		<a href="/tasks" class="nav-link" class:active={$page.url.pathname === '/tasks'}>Queue</a>
+		<a href="/procedures" class="nav-link" class:active={$page.url.pathname === '/procedures'}>Procedures</a>
+		<a href="/graph" class="nav-link" class:active={$page.url.pathname === '/graph'}>Graph</a>
+		<a href="/memories" class="nav-link" class:active={$page.url.pathname === '/memories'}>Memories</a>
 	</nav>
 	<div class="app-content">
 		{@render children()}
@@ -58,6 +60,11 @@ const { children } = $props();
 	.nav-link:active {
 		background: rgba(59, 130, 246, 0.1);
 		color: var(--accent-primary);
+	}
+
+	.nav-link.active {
+		background: #e2e8f0;
+		color: #0f172a;
 	}
 
 	.app-content {

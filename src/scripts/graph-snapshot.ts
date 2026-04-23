@@ -14,6 +14,10 @@ type GraphSnapshotPayload = {
     name: string;
     type: string;
     description: string | null;
+    confidence: number;
+    scope: string;
+    metadata: Record<string, unknown>;
+    createdAt: string;
     communityId: string | null;
     referenceCount: number;
   }>;
@@ -85,6 +89,13 @@ async function fetchGraphSnapshot(): Promise<GraphSnapshotPayload> {
       name: e.name,
       type: e.type,
       description: e.description,
+      confidence: e.confidence ?? 0.5,
+      scope: e.scope ?? 'on_demand',
+      metadata:
+        e.metadata && typeof e.metadata === 'object' && !Array.isArray(e.metadata)
+          ? (e.metadata as Record<string, unknown>)
+          : {},
+      createdAt: e.createdAt.toISOString(),
       communityId: e.communityId,
       referenceCount: e.referenceCount,
     })),
@@ -93,7 +104,7 @@ async function fetchGraphSnapshot(): Promise<GraphSnapshotPayload> {
       sourceId: r.sourceId,
       targetId: r.targetId,
       relationType: r.relationType,
-      weight: r.weight,
+      weight: r.weight ?? 1,
     })),
     communities: allCommunities.map((c) => ({
       id: c.id,

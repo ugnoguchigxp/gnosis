@@ -110,3 +110,21 @@ export type ServerMessage =
       type: 'heartbeat';
       ts: number;
     };
+
+export type Entity = {
+  id: string;
+  type: string;
+  name: string;
+  description: string | null;
+  confidence: number;
+  scope: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type Relation = {
+  sourceId: string;
+  targetId: string;
+  relationType: string;
+  weight: number;
+};
