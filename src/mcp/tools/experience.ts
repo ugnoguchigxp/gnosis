@@ -52,12 +52,14 @@ export const experienceTools: ToolEntry[] = [
     inputSchema: zodToJsonSchema(recordExperienceSchema) as Record<string, unknown>,
     handler: async (args) => {
       const input = recordExperienceSchema.parse(args);
-      const saved = await saveExperience(input);
+      saveExperience(input).catch((err) => {
+        console.error('Background record_experience failed:', err);
+      });
       return {
         content: [
           {
             type: 'text',
-            text: `Experience recorded successfully with ID: ${saved.id}`,
+            text: `Experience record request accepted for session: ${input.sessionId}. It will be processed in the background.`,
           },
         ],
       };

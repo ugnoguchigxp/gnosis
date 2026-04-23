@@ -78,31 +78,38 @@ export const memoryTools: ToolEntry[] = [
     inputSchema: zodToJsonSchema(storeMemorySchema) as Record<string, unknown>,
     handler: async (args) => {
       const input = storeMemorySchema.parse(args);
-      const savedMemory = await db.transaction(async (tx) => {
-        const saved = await saveEpisodeMemory(
-          {
-            sessionId: input.sessionId,
-            content: input.content,
-            metadata: input.metadata,
-            memoryType: input.memoryType,
-            episodeAt: input.episodeAt ? new Date(input.episodeAt) : undefined,
-            importance: input.importance,
-          },
-          tx,
-        );
-        if (input.entities?.length) {
-          await saveEntities(input.entities, tx);
+      const runStore = async () => {
+        try {
+          await db.transaction(async (tx) => {
+            await saveEpisodeMemory(
+              {
+                sessionId: input.sessionId,
+                content: input.content,
+                metadata: input.metadata,
+                memoryType: input.memoryType,
+                episodeAt: input.episodeAt ? new Date(input.episodeAt) : undefined,
+                importance: input.importance,
+              },
+              tx,
+            );
+            if (input.entities?.length) {
+              await saveEntities(input.entities, tx);
+            }
+            if (input.relations?.length) {
+              await saveRelations(input.relations, tx);
+            }
+          });
+        } catch (err) {
+          console.error('Background store_memory failed:', err);
         }
-        if (input.relations?.length) {
-          await saveRelations(input.relations, tx);
-        }
-        return saved;
-      });
+      };
+
+      runStore();
       return {
         content: [
           {
             type: 'text',
-            text: `Memory stored successfully with ID: ${savedMemory.id}`,
+            text: `Memory storage request accepted for session: ${input.sessionId}. It will be processed in the background.`,
           },
         ],
       };

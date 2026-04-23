@@ -84,7 +84,7 @@ describe('guidance MCP tools', () => {
   });
 
   describe('register_guidance', () => {
-    it('calls saveGuidance and returns success message', async () => {
+    it('calls saveGuidance and returns accepted message', async () => {
       mockSaveGuidance.mockResolvedValue({ archiveKey: 'test-key-123' });
 
       const handler = getHandler('register_guidance');
@@ -99,7 +99,7 @@ describe('guidance MCP tools', () => {
       expect(result.content[0]?.type).toBe('text');
       const text = (result.content[0] as { type: string; text: string }).text;
       expect(text).toContain('Test Rule');
-      expect(text).toContain('test-key-123');
+      expect(text).toContain('accepted');
     });
 
     it('passes optional fields through to saveGuidance', async () => {

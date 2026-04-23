@@ -66,12 +66,14 @@ export const guidanceTools: ToolEntry[] = [
     inputSchema: zodToJsonSchema(registerGuidanceSchema) as Record<string, unknown>,
     handler: async (args) => {
       const input = registerGuidanceSchema.parse(args);
-      const result = await saveGuidance(input);
+      saveGuidance(input).catch((err) => {
+        console.error('Background register_guidance failed:', err);
+      });
       return {
         content: [
           {
             type: 'text',
-            text: `Guidance registered: ${input.title} (archiveKey: ${result.archiveKey})`,
+            text: `Guidance registration request accepted for: ${input.title}. It will be processed in the background.`,
           },
         ],
       };

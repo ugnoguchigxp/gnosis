@@ -19,7 +19,7 @@ describe('experience tool handlers', () => {
     throw new Error('Experience tools not found');
   }
 
-  it('record_experience: calls service and returns success message', async () => {
+  it('record_experience: calls service and returns accepted message', async () => {
     mockSaveExperience.mockResolvedValue({ id: 'exp-123' });
 
     const args = {
@@ -33,7 +33,7 @@ describe('experience tool handlers', () => {
     const result = await recordHandler(args);
 
     expect(mockSaveExperience).toHaveBeenCalledWith(expect.objectContaining(args));
-    expect(result.content[0].text).toContain('Experience recorded successfully with ID: exp-123');
+    expect(result.content[0].text).toContain('accepted');
   });
 
   it('record_experience: throws Zod error for invalid input', async () => {

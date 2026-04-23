@@ -96,7 +96,7 @@ describe('graph MCP tools', () => {
   });
 
   describe('update_graph', () => {
-    it('updates entity and returns success message', async () => {
+    it('updates entity and returns accepted message', async () => {
       mockUpdateEntity.mockResolvedValue(undefined);
 
       const handler = getHandler('update_graph');
@@ -106,7 +106,7 @@ describe('graph MCP tools', () => {
       });
 
       expect(mockUpdateEntity).toHaveBeenCalledWith('ent-1', { id: 'ent-1', name: 'Updated Name' });
-      expect((result.content[0] as { text: string })?.text).toContain('updated successfully');
+      expect((result.content[0] as { text: string })?.text).toContain('accepted');
     });
 
     it('throws when update_entity is called without entity.id', async () => {
@@ -116,7 +116,7 @@ describe('graph MCP tools', () => {
       );
     });
 
-    it('deletes relation and returns success message', async () => {
+    it('deletes relation and returns accepted message', async () => {
       mockDeleteRelation.mockResolvedValue(undefined);
 
       const handler = getHandler('update_graph');
@@ -126,7 +126,7 @@ describe('graph MCP tools', () => {
       });
 
       expect(mockDeleteRelation).toHaveBeenCalledWith('A', 'B', 'works_for');
-      expect((result.content[0] as { text: string })?.text).toContain('deleted successfully');
+      expect((result.content[0] as { text: string })?.text).toContain('accepted');
     });
 
     it('throws when delete_relation is called without relation', async () => {
@@ -152,7 +152,7 @@ describe('graph MCP tools', () => {
   });
 
   describe('build_communities', () => {
-    it('returns community rebuild result as JSON', async () => {
+    it('returns accepted message for background rebuild', async () => {
       const rebuildResult = { message: 'Communities rebuilt successfully.', count: 3 };
       mockBuildCommunities.mockResolvedValue(rebuildResult);
 
@@ -161,7 +161,7 @@ describe('graph MCP tools', () => {
 
       expect(mockBuildCommunities).toHaveBeenCalled();
       const text = (result.content[0] as { text: string })?.text ?? '';
-      expect(JSON.parse(text)).toEqual(rebuildResult);
+      expect(text).toContain('background');
     });
   });
 });

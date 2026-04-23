@@ -43,7 +43,7 @@ describe('memory tool handlers', () => {
     mockSaveRelations.mockClear();
   });
 
-  it('store_memory: saves memory, entities and relations within a transaction', async () => {
+  it('store_memory: accepts request and starts background save flow', async () => {
     mockSaveMemory.mockResolvedValue({ id: 'mem-1' });
 
     const args = {
@@ -54,6 +54,8 @@ describe('memory tool handlers', () => {
     };
 
     const result = await storeHandler(args);
+    await Promise.resolve();
+    await Promise.resolve();
 
     expect(mockSaveMemory).toHaveBeenCalledWith(
       {
@@ -68,7 +70,7 @@ describe('memory tool handlers', () => {
     );
     expect(mockSaveEntities).toHaveBeenCalledWith(args.entities, 'mock-tx');
     expect(mockSaveRelations).toHaveBeenCalledWith(args.relations, 'mock-tx');
-    expect(result.content[0].text).toContain('Memory stored successfully with ID: mem-1');
+    expect(result.content[0].text).toContain('accepted');
   });
 
   it('search_memory: calls search service', async () => {
