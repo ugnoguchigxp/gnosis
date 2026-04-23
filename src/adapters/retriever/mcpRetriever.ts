@@ -93,11 +93,8 @@ export class McpRetriever implements Retriever {
 
     const logPath = resolve(process.cwd(), 'services/local-llm/mcp_tools.log');
     this.transport = new StdioClientTransport({
-      command: 'bash',
-      args: [
-        '-c',
-        `"${this.options.pythonPath}" "${this.options.serverScriptPath}" 2>> "${logPath}"`,
-      ],
+      command: this.options.pythonPath, // 'bun' direct execution
+      args: [this.options.serverScriptPath],
       env,
     });
 
@@ -155,18 +152,26 @@ export class McpRetriever implements Retriever {
 /**
  * 本プロジェクトの Bun 版 MCP サーバーを起動するためのヘルパー
  */
+let cachedRetriever: Retriever | null = null;
+
 export const createLocalLlmRetriever = (baseDir: string): Retriever => {
   if (config.mockRetriever) {
     return new MockRetriever();
   }
 
+  if (cachedRetriever) {
+    return cachedRetriever;
+  }
+
   // NOTE: Python 版 (services/local-llm/mcp/tools_server.py) は廃止されました。
   // 新しい Bun 版 (src/scripts/mcpToolsServer.ts) を使用します。
-  const command = process.execPath;
+  const command = config.bunCommand || 'bun';
   const serverScriptPath = resolve(process.cwd(), 'src/scripts/mcpToolsServer.ts');
 
-  return new McpRetriever({
+  cachedRetriever = new McpRetriever({
     pythonPath: command, // フィールド名は便宜上 pythonPath のまま
     serverScriptPath,
   });
+
+  return cachedRetriever;
 };

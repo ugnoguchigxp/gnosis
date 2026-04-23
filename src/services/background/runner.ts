@@ -233,11 +233,8 @@ async function runKnowFlowIteration(
 
     return { processed: false };
   } finally {
-    // MCP プロセスのリークを防ぐため確実に切断
-    const disconnect = (retriever as { disconnect?: () => Promise<unknown> | unknown }).disconnect;
-    if (typeof disconnect === 'function') {
-      await Promise.resolve(disconnect.call(retriever)).catch(() => {});
-    }
+    // NOTE: Singleton retriever is now managed globally.
+    // We don't disconnect here to keep the process alive and reuse it.
   }
 }
 
