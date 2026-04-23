@@ -59,6 +59,8 @@ echo -e "IMPORTANT: Please run the following command to refresh your current ses
 echo -e "  ${BLUE}source ~/.zshrc${NC}  (or your respective profile)"
 echo -e "\nThen verify with:"
 echo -e "  ${BLUE}which gemma4${NC}"
+echo -e "  ${BLUE}which qwen${NC}"
+echo -e "  ${BLUE}which qwen27b${NC}"
 echo -e "  ${BLUE}which bonsai${NC}"
 echo -e "  ${BLUE}which bedrock${NC}"
 echo -e "  ${BLUE}which openai${NC}"

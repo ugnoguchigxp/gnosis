@@ -87,7 +87,7 @@ async def main():
     parser.add_argument("--session-id", type=str, help="Session ID to resume/save chat history")
     parser.add_argument("--session-dir", type=str, help="Directory to store session files")
     parser.add_argument("--no-session", action="store_true", help="Disable session persistence in single-turn mode")
-    parser.add_argument("--no-mcp", action="store_true", help="Disable Gnosis MCP server connection")
+    parser.add_argument("--no-mcp", action="store_true", help="Disable MCP server connections")
     parser.add_argument("--output", choices=["json", "text"], default="json", help="Output format in single-turn mode")
     args = parser.parse_args()
 
@@ -145,6 +145,13 @@ async def main():
             if args.verbose:
                 print(f"[Debug] Starting MCP bridge to {root_dir}...", file=sys.stderr)
             await mcp_client.start()
+            if args.verbose and hasattr(mcp_client, "get_startup_errors"):
+                startup_errors = mcp_client.get_startup_errors()
+                if startup_errors:
+                    print(
+                        f"[Warning] Some MCP servers failed to start: {startup_errors}",
+                        file=sys.stderr,
+                    )
         except Exception as e:
             if args.verbose:
                 print(f"[Warning] Failed to start MCP bridge: {e}", file=sys.stderr)

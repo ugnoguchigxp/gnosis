@@ -132,7 +132,13 @@ function normalizeFinding(
  */
 export function resolveReviewerAlias(): ReviewerAlias {
   const env = process.env.GNOSIS_REVIEWER?.trim().toLowerCase();
-  if (env === 'gemma4' || env === 'bonsai' || env === 'bedrock' || env === 'openai') {
+  if (
+    env === 'gemma4' ||
+    env === 'qwen27b' ||
+    env === 'bonsai' ||
+    env === 'bedrock' ||
+    env === 'openai'
+  ) {
     return env as ReviewerAlias;
   }
   return 'bedrock'; // Default fallback
@@ -161,6 +167,8 @@ export async function getReviewLLMService(
     switch (alias) {
       case 'gemma4':
         return createLocalReviewLLMService({ alias: 'gemma4', invoker, requestId });
+      case 'qwen27b':
+        return createLocalReviewLLMService({ alias: 'qwen27b', invoker, requestId });
       case 'bonsai':
         return createLocalReviewLLMService({ alias: 'bonsai', invoker, requestId });
       case 'bedrock':
