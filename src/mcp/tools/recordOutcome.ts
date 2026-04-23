@@ -43,19 +43,19 @@ export const recordOutcomeTools: ToolEntry[] = [
     inputSchema: zodToJsonSchema(recordOutcomeSchema) as Record<string, unknown>,
     handler: async (args) => {
       const input = recordOutcomeSchema.parse(args);
-      const result = await recordOutcome({
+      recordOutcome({
         goalId: input.goalId,
         sessionId: input.sessionId,
         taskResults: input.taskResults,
         improvements: input.improvements,
+      }).catch((err) => {
+        console.error('Background record_outcome failed:', err);
       });
       return {
         content: [
           {
             type: 'text',
-            text: `Outcome recorded: ${result.updated} tasks updated, episodeId=${
-              result.episodeId ?? 'none'
-            }`,
+            text: `Outcome record request accepted for goal: ${input.goalId}. It will be processed in the background.`,
           },
         ],
       };

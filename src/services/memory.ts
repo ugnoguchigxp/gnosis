@@ -106,9 +106,10 @@ export async function saveMemory(
   content: string,
   metadata: Record<string, unknown> = {},
   database: DbClient = db,
+  options: { embedding?: number[] } = {},
 ) {
   VibeMemoryInputSchema.parse({ sessionId, content, metadata });
-  const embedding = await generateEmbedding(content);
+  const embedding = options.embedding ?? (await generateEmbedding(content));
 
   const [memory] = await database
     .insert(vibeMemories)
@@ -137,10 +138,11 @@ export async function saveEpisodeMemory(
     sourceTask?: string;
     importance?: number;
     compressed?: boolean;
+    embedding?: number[];
   },
   database: DbClient = db,
 ) {
-  const embedding = await generateEmbedding(input.content);
+  const embedding = input.embedding ?? (await generateEmbedding(input.content));
 
   const [memory] = await database
     .insert(vibeMemories)

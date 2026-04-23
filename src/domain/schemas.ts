@@ -40,6 +40,7 @@ export const RELATION_TYPES = [
   'part_of',
   'caused_by',
   'resolved_by',
+  'when_not',
 ] as const;
 
 export const RelationTypeSchema = z.enum(RELATION_TYPES);
@@ -96,6 +97,19 @@ export const GuidanceApplicabilitySchema = z
     domains: z.array(z.string().min(1)).optional(),
     environments: z.array(z.string().min(1)).optional(),
     repos: z.array(z.string().min(1)).optional(),
+    excludes: z
+      .object({
+        signals: z.array(z.string().min(1)).optional(),
+        fileTypes: z.array(z.string().min(1)).optional(),
+        languages: z.array(z.string().min(1)).optional(),
+        frameworks: z.array(z.string().min(1)).optional(),
+        projects: z.array(z.string().min(1)).optional(),
+        domains: z.array(z.string().min(1)).optional(),
+        environments: z.array(z.string().min(1)).optional(),
+        repos: z.array(z.string().min(1)).optional(),
+        paths: z.array(z.string().min(1)).optional(),
+      })
+      .optional(),
   })
   .strict();
 export type GuidanceApplicability = z.infer<typeof GuidanceApplicabilitySchema>;
@@ -110,6 +124,7 @@ export const GuidanceManifestSchema = z
     defaultPriority: z.number().finite().optional(),
     project: z.string().min(1).optional(),
     tags: z.array(z.string().min(1)).optional(),
+    validationCriteria: z.array(z.string().min(1)).optional(),
   })
   .passthrough();
 export type GuidanceManifest = z.infer<typeof GuidanceManifestSchema>;
@@ -123,6 +138,8 @@ export const GuidanceChunkSchema = z.object({
   tags: z.array(z.string().min(1)),
   entryPath: z.string().min(1),
   project: z.string().optional(),
+  validationCriteria: z.array(z.string().min(1)).optional(),
+  dependsOn: z.array(z.string().min(1)).optional(),
 });
 export type GuidanceChunk = z.infer<typeof GuidanceChunkSchema>;
 

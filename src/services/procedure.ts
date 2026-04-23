@@ -100,6 +100,7 @@ type ProcedureTask = {
   order: number;
   episodes: Array<{ id: string; story: string; isSuccess: boolean }>;
   isGoldenPath: boolean;
+  validationCriteria?: string[];
 };
 
 type ProcedureConstraint = {
@@ -107,6 +108,7 @@ type ProcedureConstraint = {
   name: string;
   description: string;
   severity: 'warning' | 'info';
+  validationCriteria?: string[];
 };
 
 export type ProcedureResult = {
@@ -180,6 +182,8 @@ function matchesApplicabilityFilter(
   }
 
   const app = applicability as Record<string, unknown>;
+  const excludes = app.excludes as Record<string, unknown> | undefined;
+
   const checks: Array<{ key: keyof NormalizedApplicabilityFilters; metadataKey: string }> = [
     { key: 'projects', metadataKey: 'projects' },
     { key: 'domains', metadataKey: 'domains' },
@@ -192,6 +196,16 @@ function matchesApplicabilityFilter(
   for (const { key, metadataKey } of checks) {
     const requested = filters[key];
     if (requested.length === 0) continue;
+
+    // Exclude check
+    if (excludes?.[metadataKey]) {
+      const excluded = normalizeMetadataList(excludes[metadataKey]);
+      if (requested.some((value) => excluded.includes(value))) {
+        return { matched: false, reason: `applicability.excludes.${metadataKey} matched` };
+      }
+    }
+
+    // Include check
     const candidate = normalizeMetadataList(app[metadataKey]);
     if (candidate.length === 0) continue; // 未指定は「広く適用可能」とみなす
     const hasIntersection = requested.some((value) => candidate.includes(value));
@@ -284,24 +298,36 @@ export async function queryProcedure(
     const ctxEmbedding = await embed(contextText);
     const ctxStr = JSON.stringify(ctxEmbedding);
     const ctxSimilarity = sql<number>`1 - (${entities.embedding} <=> ${ctxStr}::vector)`;
+
     // when 関係で紐づく context エンティティとの類似度チェック
-    const whenRelations = await database
-      .select({ sourceId: relations.sourceId, targetId: relations.targetId, ctxSimilarity })
+    const contextualRelations = await database
+      .select({
+        sourceId: relations.sourceId,
+        targetId: relations.targetId,
+        relationType: relations.relationType,
+        ctxSimilarity,
+      })
       .from(relations)
       .innerJoin(entities, eq(entities.id, relations.sourceId))
       .where(
         and(
-          eq(relations.relationType, 'when'),
+          inArray(relations.relationType, ['when', 'when_not']),
           inArray(relations.targetId, filteredTaskIds),
           eq(entities.type, 'context'),
         ),
       );
-    // context エンティティと入力 context の類似度が低いタスクは除外
-    const lowContextTasks = new Set<string>();
-    for (const rel of whenRelations) {
-      if ((rel.ctxSimilarity ?? 0) < 0.7) lowContextTasks.add(rel.targetId);
+
+    const tasksToExclude = new Set<string>();
+    for (const rel of contextualRelations) {
+      if (rel.relationType === 'when') {
+        // when: 類似度が低い場合に除外
+        if ((rel.ctxSimilarity ?? 0) < 0.7) tasksToExclude.add(rel.targetId);
+      } else if (rel.relationType === 'when_not') {
+        // when_not: 類似度が高い場合に除外
+        if ((rel.ctxSimilarity ?? 0) >= 0.7) tasksToExclude.add(rel.targetId);
+      }
     }
-    filteredTaskIds = filteredTaskIds.filter((id) => !lowContextTasks.has(id));
+    filteredTaskIds = filteredTaskIds.filter((id) => !tasksToExclude.has(id));
   }
 
   // 4. task エンティティ取得
@@ -430,6 +456,9 @@ export async function queryProcedure(
       order: orderMap.get(te.id) ?? 999,
       episodes,
       isGoldenPath: conf >= 0.7,
+      validationCriteria: (te.metadata as Record<string, unknown>)?.validationCriteria as
+        | string[]
+        | undefined,
     };
   });
 
@@ -452,6 +481,9 @@ export async function queryProcedure(
       name: ce.name,
       description: ce.description ?? '',
       severity: (ce.confidence ?? 1.0) < 0.3 ? 'warning' : 'info',
+      validationCriteria: (ce.metadata as Record<string, unknown>)?.validationCriteria as
+        | string[]
+        | undefined,
     })),
   };
 }

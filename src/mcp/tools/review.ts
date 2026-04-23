@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -49,11 +49,11 @@ function getMcpReviewExecutionMode(): 'cli' | 'inproc' {
   return 'cli';
 }
 
-function runReviewViaCli(
+async function runReviewViaCli(
   parsed: z.infer<typeof reviewParamsSchema>,
   resolvedPath: string,
   requestId: string,
-): { markdown: string } {
+): Promise<{ markdown: string }> {
   const stage = parsed.stage ?? 'e';
   const envPreference = process.env.GNOSIS_REVIEW_LLM_PREFERENCE === 'local' ? 'local' : 'cloud';
   const llmPreference = parsed.llmPreference ?? envPreference;
@@ -90,34 +90,43 @@ function runReviewViaCli(
     args,
   });
 
-  const result = spawnSync(config.bunCommand, args, {
-    encoding: 'utf-8',
-    env: { ...process.env },
+  return new Promise((resolve, reject) => {
+    const child = spawn(config.bunCommand, args, {
+      env: { ...process.env },
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    child.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    child.on('close', (code) => {
+      if (code !== 0) {
+        return reject(new Error(stderr.trim() || `review CLI failed with exit code ${code}`));
+      }
+
+      try {
+        const parsedOutput = JSON.parse(stdout.trim());
+        const markdown = parsedOutput.markdown;
+        if (typeof markdown !== 'string' || !markdown.trim()) {
+          return reject(new Error('review CLI output did not include markdown'));
+        }
+        resolve({ markdown });
+      } catch (e) {
+        reject(new Error(`review CLI returned non-JSON output: ${stdout.slice(0, 200)}`));
+      }
+    });
+
+    child.on('error', (err) => {
+      reject(err);
+    });
   });
-  if (result.error) {
-    throw result.error;
-  }
-  if (result.status !== 0) {
-    const stderr = result.stderr?.trim();
-    throw new Error(stderr || `review CLI failed with exit code ${result.status}`);
-  }
-
-  const stdout = result.stdout?.trim();
-  if (!stdout) {
-    throw new Error('review CLI returned empty output');
-  }
-
-  let parsedOutput: unknown;
-  try {
-    parsedOutput = JSON.parse(stdout);
-  } catch {
-    throw new Error(`review CLI returned non-JSON output: ${stdout.slice(0, 200)}`);
-  }
-  const markdown = (parsedOutput as { markdown?: unknown }).markdown;
-  if (typeof markdown !== 'string' || !markdown.trim()) {
-    throw new Error('review CLI output did not include markdown');
-  }
-  return { markdown };
 }
 
 export const reviewTools: ToolEntry[] = [
@@ -128,25 +137,75 @@ Stage E (agentic) を使用すると、AI が自律的に情報を収集して�
     inputSchema: zodToJsonSchema(reviewParamsSchema) as Record<string, unknown>,
     handler: async (args) => {
       const requestId = randomUUID();
-      try {
-        const parsed = reviewParamsSchema.parse(args);
-        const repoPath = parsed.repoPath ?? process.cwd();
-        const resolvedPath = fs.realpathSync(repoPath);
-        const stage = parsed.stage ?? 'e';
-        const execMode = getMcpReviewExecutionMode();
+      const runReview = async () => {
+        try {
+          const parsed = reviewParamsSchema.parse(args);
+          const repoPath = parsed.repoPath ?? process.cwd();
+          const resolvedPath = fs.realpathSync(repoPath);
+          const stage = parsed.stage ?? 'e';
+          const execMode = getMcpReviewExecutionMode();
 
-        emitReviewDebugLog({
-          event: 'mcp_review_start',
-          requestId,
-          repoPath: resolvedPath,
-          stage,
-          execMode,
-          mode: parsed.mode ?? 'git_diff',
-          llmPreference: parsed.llmPreference ?? null,
-        });
+          emitReviewDebugLog({
+            event: 'mcp_review_start',
+            requestId,
+            repoPath: resolvedPath,
+            stage,
+            execMode,
+            mode: parsed.mode ?? 'git_diff',
+            llmPreference: parsed.llmPreference ?? null,
+          });
 
-        if (execMode === 'cli') {
-          const result = runReviewViaCli(parsed, resolvedPath, requestId);
+          if (execMode === 'cli') {
+            const result = await runReviewViaCli(parsed, resolvedPath, requestId);
+            emitReviewDebugLog({
+              event: 'mcp_review_success',
+              requestId,
+              stage,
+              execMode,
+              markdownLength: result.markdown.length,
+            });
+            return;
+          }
+
+          const request = ReviewRequestSchema.parse({
+            taskId: parsed.taskId ?? `mcp-review-${Date.now()}`,
+            repoPath: resolvedPath,
+            baseRef: parsed.baseRef ?? 'main',
+            headRef: parsed.headRef ?? 'HEAD',
+            trigger: 'manual',
+            sessionId: `mcp-session-${Date.now()}`,
+            mode: parsed.mode,
+            taskGoal: parsed.goal,
+          });
+
+          const envPreference =
+            process.env.GNOSIS_REVIEW_LLM_PREFERENCE === 'local' ? 'local' : 'cloud';
+          const llmService = await getReviewLLMService(parsed.llmPreference ?? envPreference, {
+            invoker: 'mcp',
+            requestId,
+          });
+
+          let result: { markdown: string };
+          switch (stage) {
+            case 'a':
+              result = await runReviewStageA(request, { llmService });
+              break;
+            case 'b':
+              result = await runReviewStageB(request, { llmService });
+              break;
+            case 'c':
+              result = await runReviewStageC(request, { llmService });
+              break;
+            case 'd':
+              result = await runReviewStageD(request, { llmService });
+              break;
+            case 'e':
+              result = await runReviewStageE(request, { llmService });
+              break;
+            default:
+              result = await runReviewStageE(request, { llmService });
+          }
+
           emitReviewDebugLog({
             event: 'mcp_review_success',
             requestId,
@@ -154,79 +213,25 @@ Stage E (agentic) を使用すると、AI が自律的に情報を収集して�
             execMode,
             markdownLength: result.markdown.length,
           });
-          return {
-            content: [
-              {
-                type: 'text',
-                text: result.markdown,
-              },
-            ],
-          };
+        } catch (error) {
+          emitReviewDebugLog({
+            event: 'mcp_review_error',
+            requestId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          console.error(`Background review failed (requestId: ${requestId}):`, error);
         }
+      };
 
-        const request = ReviewRequestSchema.parse({
-          taskId: parsed.taskId ?? `mcp-review-${Date.now()}`,
-          repoPath: resolvedPath,
-          baseRef: parsed.baseRef ?? 'main',
-          headRef: parsed.headRef ?? 'HEAD',
-          trigger: 'manual',
-          sessionId: `mcp-session-${Date.now()}`,
-          mode: parsed.mode,
-          taskGoal: parsed.goal,
-        });
-
-        const envPreference =
-          process.env.GNOSIS_REVIEW_LLM_PREFERENCE === 'local' ? 'local' : 'cloud';
-        const llmService = await getReviewLLMService(parsed.llmPreference ?? envPreference, {
-          invoker: 'mcp',
-          requestId,
-        });
-
-        let result: { markdown: string };
-        switch (stage) {
-          case 'a':
-            result = await runReviewStageA(request, { llmService });
-            break;
-          case 'b':
-            result = await runReviewStageB(request, { llmService });
-            break;
-          case 'c':
-            result = await runReviewStageC(request, { llmService });
-            break;
-          case 'd':
-            result = await runReviewStageD(request, { llmService });
-            break;
-          case 'e':
-            result = await runReviewStageE(request, { llmService });
-            break;
-          default:
-            result = await runReviewStageE(request, { llmService });
-        }
-
-        emitReviewDebugLog({
-          event: 'mcp_review_success',
-          requestId,
-          stage,
-          execMode,
-          markdownLength: result.markdown.length,
-        });
-
-        return {
-          content: [
-            {
-              type: 'text',
-              text: result.markdown,
-            },
-          ],
-        };
-      } catch (error) {
-        emitReviewDebugLog({
-          event: 'mcp_review_error',
-          requestId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        throw error;
-      }
+      runReview(); // Background execution
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Review request accepted (requestId: ${requestId}). It will be processed in the background.`,
+          },
+        ],
+      };
     },
   },
 ];

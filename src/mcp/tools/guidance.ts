@@ -33,9 +33,25 @@ const registerGuidanceSchema = z.object({
       domains: z.array(z.string()).optional(),
       environments: z.array(z.string()).optional(),
       repos: z.array(z.string()).optional(),
+      excludes: z
+        .object({
+          signals: z.array(z.string()).optional(),
+          fileTypes: z.array(z.string()).optional(),
+          languages: z.array(z.string()).optional(),
+          frameworks: z.array(z.string()).optional(),
+          projects: z.array(z.string()).optional(),
+          domains: z.array(z.string()).optional(),
+          environments: z.array(z.string()).optional(),
+          repos: z.array(z.string()).optional(),
+          paths: z.array(z.string()).optional(),
+        })
+        .optional()
+        .describe('除外条件'),
     })
     .optional()
     .describe('構造化された適用条件'),
+  validationCriteria: z.array(z.string()).optional().describe('検証基準（チェックリスト）'),
+  dependsOn: z.array(z.string()).optional().describe('依存する他のガイダンスのタイトルまたはID'),
   archiveKey: z.string().optional().describe('管理用キー (省略時はタイトルから自動生成)'),
   sessionId: z.string().optional().describe('セッションID (デフォルト: config.guidance.sessionId)'),
 });
@@ -48,12 +64,14 @@ export const guidanceTools: ToolEntry[] = [
     inputSchema: zodToJsonSchema(registerGuidanceSchema) as Record<string, unknown>,
     handler: async (args) => {
       const input = registerGuidanceSchema.parse(args);
-      const result = await saveGuidance(input);
+      saveGuidance(input).catch((err) => {
+        console.error('Background register_guidance failed:', err);
+      });
       return {
         content: [
           {
             type: 'text',
-            text: `Guidance registered successfully: ${input.title} (archiveKey: ${result.archiveKey})`,
+            text: `Guidance registration request accepted for: ${input.title}. It will be processed in the background.`,
           },
         ],
       };

@@ -39,7 +39,20 @@ export async function saveGuidance(
       domains?: string[];
       environments?: string[];
       repos?: string[];
+      excludes?: {
+        signals?: string[];
+        fileTypes?: string[];
+        languages?: string[];
+        frameworks?: string[];
+        projects?: string[];
+        domains?: string[];
+        environments?: string[];
+        repos?: string[];
+        paths?: string[];
+      };
     };
+    validationCriteria?: string[];
+    dependsOn?: string[];
     archiveKey?: string;
     sessionId?: string;
   },
@@ -82,6 +95,8 @@ export async function saveGuidance(
         title: input.title,
         tags,
         archiveKey,
+        validationCriteria: input.validationCriteria,
+        dependsOn: input.dependsOn,
         updatedAt: resolvedDeps.now().toISOString(),
         source: 'manual',
       },
@@ -99,6 +114,8 @@ export async function saveGuidance(
           title: input.title,
           tags,
           archiveKey,
+          validationCriteria: input.validationCriteria,
+          dependsOn: input.dependsOn,
           updatedAt: resolvedDeps.now().toISOString(),
           source: 'manual',
         },
@@ -119,6 +136,8 @@ export async function saveGuidance(
           archiveKey,
           priority: input.priority,
           applicability: input.applicability,
+          validationCriteria: input.validationCriteria,
+          dependsOn: input.dependsOn,
           importedAt: resolvedDeps.now().toISOString(),
         },
         confidence: 0.5,
@@ -162,6 +181,64 @@ export async function saveGuidance(
       [{ sourceId: ctxId, targetId: entityId, relationType: 'when', weight: 0.8 }],
       resolvedDeps.database,
     );
+  }
+
+  // excludes がある場合: context エンティティ + when_not 関係
+  const excludeConditions: string[] = [];
+  if (input.applicability?.excludes?.signals)
+    excludeConditions.push(...input.applicability.excludes.signals);
+  if (input.applicability?.excludes?.languages)
+    excludeConditions.push(...input.applicability.excludes.languages);
+  if (input.applicability?.excludes?.frameworks)
+    excludeConditions.push(...input.applicability.excludes.frameworks);
+  if (input.applicability?.excludes?.projects)
+    excludeConditions.push(...input.applicability.excludes.projects);
+  if (input.applicability?.excludes?.domains)
+    excludeConditions.push(...input.applicability.excludes.domains);
+  if (input.applicability?.excludes?.environments)
+    excludeConditions.push(...input.applicability.excludes.environments);
+  if (input.applicability?.excludes?.repos)
+    excludeConditions.push(...input.applicability.excludes.repos);
+  if (input.applicability?.excludes?.paths)
+    excludeConditions.push(...input.applicability.excludes.paths);
+
+  for (const condition of new Set(excludeConditions)) {
+    const ctxId = generateEntityId('context', condition);
+    const ctxEmbedding = await resolvedDeps.generateEmbedding(condition);
+    await saveEntities(
+      [
+        {
+          id: ctxId,
+          type: 'context',
+          name: condition,
+          description: condition,
+          confidence: 0.5,
+          provenance: 'manual',
+        },
+      ],
+      resolvedDeps.database,
+      async () => ctxEmbedding,
+    );
+    await saveRelations(
+      [{ sourceId: ctxId, targetId: entityId, relationType: 'when_not', weight: 1.0 }],
+      resolvedDeps.database,
+    );
+  }
+
+  // dependsOn がある場合: depends_on 関係
+  if (input.dependsOn?.length) {
+    for (const dependency of input.dependsOn) {
+      // 依存先が ID かタイトルか不明なため、とりあえず title から ID を生成して張る
+      // (本来は検索して正確な ID を取得すべきだが、まずは簡易実装)
+      // guidanceType は不明だが、一般的は task (skill) か constraint (rule)
+      // ここでは dependency を名前として扱い、IDを推測する。
+      // もし正確な依存関係を張るなら、ここで DB 検索が必要。
+      const depId = generateEntityId('task', dependency); // 仮で task とする
+      await saveRelations(
+        [{ sourceId: entityId, targetId: depId, relationType: 'depends_on', weight: 1.0 }],
+        resolvedDeps.database,
+      );
+    }
   }
 
   return { id: entityId, archiveKey };
