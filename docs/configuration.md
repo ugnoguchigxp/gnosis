@@ -2,6 +2,18 @@
 
 Gnosis は環境変数を中心に構成されています。一部の機能（KnowFlow）については、`.toml` プロファイルによる詳細設定も可能です。
 
+## 構成別テンプレート
+
+| 構成 | テンプレート | 用途 |
+| :--- | :--- | :--- |
+| minimal | `.env.minimal` | DB + embedding だけで最短起動する |
+| local-llm | `.env.local-llm` | minimal に local LLM 運用設定を追加する |
+| cloud-review | `.env.cloud-review` | minimal に cloud reviewer 設定を追加する |
+
+推奨フロー:
+1. `cp .env.minimal .env`
+2. 必要に応じて `.env.local-llm` または `.env.cloud-review` の必要項目を `.env` へ追記
+
 ## 環境変数一覧
 
 ### 基本設定 (Core)
