@@ -146,6 +146,59 @@ describe('procedure service', () => {
         expect(result.tasks[0].id).toBe('tm');
       }
     });
+
+    it('adds caution constraint when golden-path task has followed_failure episode', async () => {
+      const episodeEntity = {
+        id: 'ep1',
+        name: 'episode',
+        description: 'episode',
+        metadata: { memoryId: 'm1' },
+      };
+      let hasStepCalls = 0;
+      let entitySelectCalls = 0;
+      mockDb.select = mock((cols) => ({
+        from: mock((table) => {
+          if (table === entities) {
+            // biome-ignore lint/suspicious/noExplicitAny: mock
+            if (cols && (cols as any).similarity) return createMockChain([mockGoal]);
+            entitySelectCalls += 1;
+            return createMockChain(entitySelectCalls === 1 ? [mockTask1] : [episodeEntity]);
+          }
+          if (table === relations) {
+            const keys = Object.keys((cols as Record<string, unknown>) ?? {});
+            // has_step collection
+            if (keys.length === 1 && keys.includes('targetId')) {
+              hasStepCalls += 1;
+              return createMockChain(hasStepCalls === 1 ? [{ targetId: 't1' }] : []);
+            }
+            // prohibits: none
+            if (keys.length === 1 && keys.includes('sourceId')) {
+              return createMockChain([]);
+            }
+            // learned_from + precondition/follows
+            if (keys.includes('sourceId') && keys.includes('targetId')) {
+              return createMockChain([{ sourceId: 't1', targetId: 'ep1' }]);
+            }
+            return createMockChain([]);
+          }
+          if (table === vibeMemories) {
+            return createMockChain([
+              { content: '[task:t1] followed=true, succeeded=false', metadata: {} },
+            ]);
+          }
+          return createMockChain([]);
+        }),
+      }));
+
+      const result = await queryProcedure('test', undefined, {
+        database: mockDb,
+        embed: mockEmbed,
+      });
+      expect(result).not.toBeNull();
+      if (result) {
+        expect(result.constraints.some((constraint) => constraint.id === 'caution:t1')).toBe(true);
+      }
+    });
   });
 
   describe('recordOutcome', () => {

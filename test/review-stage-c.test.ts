@@ -96,6 +96,7 @@ describe('review stage C', () => {
   test('retrieves and ranks guidance entries from stored metadata', async () => {
     const rows = [
       {
+        id: 'guide-1',
         content: 'Guard all auth inputs.',
         priority: 90,
         metadata: {
@@ -110,6 +111,7 @@ describe('review stage C', () => {
         similarity: 0.92,
       },
       {
+        id: 'guide-2',
         content: 'Review config changes.',
         priority: 70,
         metadata: {

@@ -1,3 +1,6 @@
+use std::path::{Path, PathBuf};
+
+use anyhow::Context;
 use serde::Serialize;
 use tauri::State;
 
@@ -8,6 +11,41 @@ use crate::monitor::{cli, models::TaskDetailPayload, MonitorRuntime};
 pub struct MonitorConfigResponse {
     pub ws_url: String,
     pub protocol_version: u32,
+    pub project_root: String,
+    pub project_name: String,
+
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SelectedProjectResponse {
+    pub project_root: String,
+    pub project_name: String,
+}
+
+fn project_name(project_root: &Path) -> String {
+    project_root
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "project".to_string())
+}
+
+fn selected_project_response(project_root: PathBuf) -> SelectedProjectResponse {
+    SelectedProjectResponse {
+        project_name: project_name(&project_root),
+        project_root: project_root.to_string_lossy().to_string(),
+    }
+}
+
+fn validate_project_root(raw: &str) -> anyhow::Result<PathBuf> {
+    let path = PathBuf::from(raw);
+    let canonical = path
+        .canonicalize()
+        .with_context(|| format!("failed to resolve project root: {raw}"))?;
+    if !canonical.is_dir() {
+        anyhow::bail!("selected project is not a directory: {raw}");
+    }
+    Ok(canonical)
 }
 
 #[tauri::command]
@@ -15,8 +53,28 @@ pub fn monitor_config(state: State<'_, MonitorRuntime>) -> MonitorConfigResponse
     MonitorConfigResponse {
         ws_url: state.ws_url.clone(),
         protocol_version: state.protocol_version,
+        project_root: state.project_root.to_string_lossy().to_string(),
+        project_name: project_name(&state.project_root),
+
     }
 }
+
+#[tauri::command]
+pub async fn monitor_browse_project() -> Result<Option<SelectedProjectResponse>, String> {
+    let selected = tauri::async_runtime::spawn_blocking(|| rfd::FileDialog::new().pick_folder())
+        .await
+        .map_err(|error| error.to_string())?;
+
+    selected
+        .map(|path| {
+            validate_project_root(&path.to_string_lossy())
+                .map(selected_project_response)
+                .map_err(|error| error.to_string())
+        })
+        .transpose()
+}
+
+
 
 #[tauri::command]
 pub async fn monitor_task_detail(

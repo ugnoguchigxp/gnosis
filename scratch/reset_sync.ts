@@ -1,5 +1,5 @@
-import { db } from '../db/index.js';
-import { syncState } from '../db/schema.js';
+import { db } from '../src/db/index.js';
+import { syncState } from '../src/db/schema.js';
 
 async function main() {
   await db.delete(syncState);

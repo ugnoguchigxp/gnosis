@@ -1,9 +1,11 @@
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::Context;
 use tokio::process::Command;
 
 use crate::monitor::models::{SnapshotCliPayload, SnapshotEnvelope, TaskDetailPayload};
+
+
 
 pub async fn fetch_snapshot(project_root: &Path) -> anyhow::Result<SnapshotEnvelope> {
     let output = Command::new("bun")
@@ -446,7 +448,10 @@ pub async fn list_entities(project_root: &Path) -> anyhow::Result<serde_json::Va
     serde_json::from_slice(&output.stdout).context("failed to parse entities list payload")
 }
 
-pub async fn create_entity(project_root: &Path, payload: &str) -> anyhow::Result<serde_json::Value> {
+pub async fn create_entity(
+    project_root: &Path,
+    payload: &str,
+) -> anyhow::Result<serde_json::Value> {
     let output = Command::new("bun")
         .arg("run")
         .arg("src/scripts/monitor-memory-crud.ts")
@@ -530,7 +535,10 @@ pub async fn list_relations(project_root: &Path) -> anyhow::Result<serde_json::V
     serde_json::from_slice(&output.stdout).context("failed to parse relations list payload")
 }
 
-pub async fn create_relation(project_root: &Path, payload: &str) -> anyhow::Result<serde_json::Value> {
+pub async fn create_relation(
+    project_root: &Path,
+    payload: &str,
+) -> anyhow::Result<serde_json::Value> {
     let output = Command::new("bun")
         .arg("run")
         .arg("src/scripts/monitor-memory-crud.ts")
@@ -596,7 +604,10 @@ pub async fn list_goals(project_root: &Path) -> anyhow::Result<serde_json::Value
     serde_json::from_slice(&output.stdout).context("failed to parse goals list payload")
 }
 
-pub async fn get_procedure(project_root: &Path, goal_id: &str) -> anyhow::Result<serde_json::Value> {
+pub async fn get_procedure(
+    project_root: &Path,
+    goal_id: &str,
+) -> anyhow::Result<serde_json::Value> {
     let output = Command::new("bun")
         .arg("run")
         .arg("src/scripts/monitor-procedure-crud.ts")
@@ -742,4 +753,66 @@ pub async fn create_custom_step(
     }
 
     serde_json::from_slice(&output.stdout).context("failed to parse create-custom payload")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn temp_project_root() -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be valid")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("gnosis-agent-test-{nonce}"));
+        fs::create_dir_all(&root).expect("test project root should be created");
+        root
+    }
+
+    #[tokio::test]
+    async fn applies_path_marked_markdown_code_blocks() {
+        let root = temp_project_root();
+        let markdown = r#"
+Here is the file:
+
+```typescript
+// path: src/fizzbuzz.ts
+export function fizzBuzz(n: number): string {
+  return n.toString();
+}
+```
+"#;
+
+        let applied = apply_markdown_file_blocks(&root, markdown)
+            .await
+            .expect("file block should apply");
+
+        assert_eq!(applied, vec!["src/fizzbuzz.ts"]);
+        let content = fs::read_to_string(root.join("src/fizzbuzz.ts")).expect("file should exist");
+        assert_eq!(
+            content,
+            "export function fizzBuzz(n: number): string {\n  return n.toString();\n}\n"
+        );
+
+        fs::remove_dir_all(root).expect("test project root should be removed");
+    }
+
+    #[tokio::test]
+    async fn rejects_unsafe_agent_paths() {
+        let root = temp_project_root();
+        let markdown = r#"
+```text
+// path: ../outside.txt
+nope
+```
+"#;
+
+        let result = apply_markdown_file_blocks(&root, markdown).await;
+        assert!(result.is_err());
+        fs::remove_dir_all(root).expect("test project root should be removed");
+    }
 }

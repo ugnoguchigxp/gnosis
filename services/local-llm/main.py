@@ -75,11 +75,34 @@ def _validate_session_id(session_id: str) -> bool:
 def _is_truthy_env(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
+
+def _format_mcp_tool_catalog(tools: list[dict] | None) -> str:
+    if not tools:
+        return ""
+
+    lines: list[str] = []
+    for tool in tools[:80]:
+        name = str(tool.get("name", "")).strip()
+        if not name:
+            continue
+        schema = tool.get("inputSchema") if isinstance(tool.get("inputSchema"), dict) else {}
+        properties = schema.get("properties", {}) if isinstance(schema, dict) else {}
+        args = ", ".join(properties.keys()) if isinstance(properties, dict) else ""
+        description = str(tool.get("description", "") or "").replace("\n", " ").strip()
+        if len(description) > 140:
+            description = f"{description[:137]}..."
+        lines.append(f"- {name}({args}): {description}")
+
+    if len(tools) > len(lines):
+        lines.append(f"- ... and {len(tools) - len(lines)} more tools")
+
+    return "\n".join(lines)
+
 async def main():
     parser = argparse.ArgumentParser(description="Multi-Backend AI Chat Agent (Local Direct Tooling)")
-    parser.add_argument("--backend", choices=["mlx", "ollama", "bonsai", "mock"], default="mlx", help="Inference backend")
+    parser.add_argument("--backend", choices=["mlx", "qwen", "ollama", "bonsai", "mock"], default="mlx", help="Inference backend")
     parser.add_argument("--model", type=str, help="Model path or name")
-    parser.add_argument("--max-tokens", type=int, default=1024)
+    parser.add_argument("--max-tokens", type=int, default=10240)
     parser.add_argument("--temp", type=float, default=0.0)
     parser.add_argument("--verbose", "-v", action="store_true", help="Display debug logs and raw model output")
     parser.add_argument("prompt", nargs="?", help="Single-turn prompt (non-interactive mode)")
@@ -89,6 +112,7 @@ async def main():
     parser.add_argument("--no-session", action="store_true", help="Disable session persistence in single-turn mode")
     parser.add_argument("--no-mcp", action="store_true", help="Disable MCP server connections")
     parser.add_argument("--output", choices=["json", "text"], default="json", help="Output format in single-turn mode")
+    parser.add_argument("--root", type=str, help="Project root directory for MCP tools")
     args = parser.parse_args()
 
     # NOTE:
@@ -110,10 +134,13 @@ async def main():
         sys.exit(78)
 
     # バックエンドの動的インポート
-    if args.backend == "mlx":
+    if args.backend in {"mlx", "qwen"}:
         from backends.mlx import MLXBackend
         backend = MLXBackend(verbose=args.verbose)
-        model_path = args.model or "mlx-community/gemma-4-e4b-it-4bit"
+        if args.backend == "qwen":
+            model_path = args.model or "mlx-community/Qwen3-14B-4bit"
+        else:
+            model_path = args.model or "mlx-community/gemma-4-e4b-it-4bit"
     elif args.backend == "ollama":
         from backends.ollama import OllamaBackend
         backend = OllamaBackend(verbose=args.verbose)
@@ -138,9 +165,16 @@ async def main():
 
     # MCP クライアントの初期化 (Gnosis TS Server へのブリッジ)
     mcp_client = None
+    root_dir = os.path.abspath(args.root) if args.root else os.getcwd()
+    
+    # ログファイルの保存場所を services/local-llm/.debug/ に集約
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    debug_log_dir = os.path.join(current_dir, ".debug")
+    os.makedirs(debug_log_dir, exist_ok=True)
+    debug_log_path = os.path.join(debug_log_dir, "mcp_debug.log")
+
     if not args.no_mcp:
         try:
-            root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
             mcp_client = VibeMcpClient(root_dir)
             if args.verbose:
                 print(f"[Debug] Starting MCP bridge to {root_dir}...", file=sys.stderr)
@@ -158,12 +192,19 @@ async def main():
             mcp_client = None
 
     # Engineの初期化
-    engine = ChatEngine(backend, verbose=args.verbose, mcp_client=mcp_client)
+    engine = ChatEngine(
+        backend, 
+        verbose=args.verbose, 
+        mcp_client=mcp_client, 
+        debug_log_path=debug_log_path
+    )
     
     # MCPツールの取得とキャッシュ
     if mcp_client:
         try:
             engine._mcp_tools_cache = await mcp_client.list_tools()
+            with open(debug_log_path, "w") as f:
+                f.write(f"Linked {len(engine._mcp_tools_cache)} MCP tools: {[t['name'] for t in engine._mcp_tools_cache]}\n")
             if args.verbose:
                 print(f"[Debug] Linked {len(engine._mcp_tools_cache)} MCP tools.", file=sys.stderr)
         except Exception as e:
@@ -172,6 +213,8 @@ async def main():
     
     # バックエンドに応じたコンテキスト設定
     current_date = datetime.now().strftime("%Y年%m月%d日")
+    mcp_tool_catalog = _format_mcp_tool_catalog(getattr(engine, "_mcp_tools_cache", None))
+
     if args.backend == "bonsai":
         sys_instr = (
             f"あなたは有能な助手です。本日は {current_date} です。必ず日本語で答えてください。\n"
@@ -180,20 +223,25 @@ async def main():
             "- 検索: <|tool_call|>call:search_web{query:\"検索ワード\"}<tool_call|>\n\n"
             "例: 「今日の東京の天気」→ 即座に以下を出力:\n"
             "<|tool_call|>call:search_web{query:\"今日の東京の天気\"}<tool_call|>"
+
         )
-    elif args.backend == "mlx":
+    elif args.backend in {"mlx", "qwen"}:
         sys_instr = (
             f"あなたは有能なアシスタントです。本日は {current_date} です。日本語で回答してください。\n"
-            "内部思考、推論過程、タグの説明は出力せず、ユーザーに必要な最終回答だけを返してください。\n"
-            "天気、ニュース、日付依存の情報、現在の状況、最新情報が必要な場合は、必ず前置きなしでツール呼び出しだけを出力してください。\n"
-            "1. search_web(query): ウェブ検索。形式: <|tool_call|>call:search_web{query:\"検索語\"}<tool_call|>\n"
-            "2. fetch_content(url): サイト内容取得。形式: <|tool_call|>call:fetch_content{url:\"URL\"}<tool_call|>\n\n"
-            "例: 「今日の東京の天気」→ <|tool_call|>call:search_web{query:\"今日の東京の天気\"}<tool_call|>\n"
-            "この例のような現在情報の質問では、最初の応答に通常文を混ぜず、ツール呼び出しだけを返してください。\n"
-            "検索結果を受け取るまでは回答を捏造せず、「検索結果によると」と事実に基づいて答えてください。"
+            "思考過程は <think> タグで囲んでください。\n\n"
+            "【ツール呼び出し形式】\n"
+            "必ず以下の形式を使用してください。引数は JSON 形式で、文字列はダブルクォートで囲んでください。\n"
+            "<|tool_call|>call:tool_name{arg_name:\"value\"}<tool_call|>\n\n"
+            "【基本ツール】\n"
+            "1. search_web(query): ウェブ検索。例: <|tool_call|>call:search_web{query:\"検索語\"}<tool_call|>\n"
+            "2. fetch_content(url): サイト内容取得。例: <|tool_call|>call:fetch_content{url:\"URL\"}<tool_call|>\n\n"
+
         )
     else:
-        sys_instr = "優秀なAI助手。日本語で答えて。<|tool_call|>形式で検索ツールを使用可能。"
+        sys_instr = (
+            "優秀なAI助手。日本語で答えて。<|tool_call|>形式で検索ツールを使用可能。"
+
+        )
 
     prompt = args.prompt_opt if args.prompt_opt is not None else args.prompt
     use_single_turn = bool(prompt)
@@ -222,11 +270,13 @@ async def main():
         engine.reset(sys_instr)
 
     if use_single_turn:
-        response_text = engine.run_turn(
+        response_text = await engine.run_turn(
             prompt,
             max_tokens=args.max_tokens,
             temperature=args.temp,
         )
+        with open(debug_log_path, "a") as f:
+            f.write(f"\n--- TURN ---\nRaw Response: {response_text}\n")
 
         if session_store and session_id and not args.no_session:
             session_store.save(
@@ -249,10 +299,15 @@ async def main():
             print(json.dumps(result, ensure_ascii=False))
         else:
             print(response_text)
+        if mcp_client:
+            if args.verbose:
+                print("[Debug] Stopping MCP bridge...", file=sys.stderr)
+            await mcp_client.stop()
         return
 
     backend_labels = {
         "mlx": "Gemma 4",
+        "qwen": "Qwen 2.5 Coder",
         "bonsai": "Bonsai",
         "ollama": "Ollama",
         "mock": "Mock",

@@ -48,7 +48,7 @@ class VibeMcpClient:
         gnosis_enabled = _is_truthy(os.getenv("LOCAL_LLM_MCP_ENABLE_GNOSIS"), default=True)
         if gnosis_enabled:
             log_path = os.path.abspath(
-                os.path.join(self.root_dir, "services/local-llm/mcp_server.log")
+                os.path.join(self.root_dir, "services/local-llm/.debug/mcp_server.log")
             )
             index_path = os.path.join(self.root_dir, "src/index.ts")
             configs.append(
@@ -78,7 +78,9 @@ class VibeMcpClient:
                     os.path.join(self.root_dir, "src/scripts/semanticCodeMcpServer.ts"),
                 ]
 
-            semantic_env: Dict[str, str] = {}
+            semantic_env: Dict[str, str] = {
+                "GNOSIS_ROOT_DIR": self.root_dir,
+            }
             semantic_env_raw = os.getenv("LOCAL_LLM_SEMANTIC_ENV")
             if semantic_env_raw and semantic_env_raw.strip():
                 # format: KEY=VALUE,ANOTHER=VALUE
@@ -90,11 +92,20 @@ class VibeMcpClient:
                     if key:
                         semantic_env[key] = value.strip()
 
+            log_path = os.path.abspath(
+                os.path.join(self.root_dir, "services/local-llm/.debug/mcp_server.log")
+            )
+            
+            # Use bash -c to change directory and redirect stderr
+            semantic_script = os.path.join(self.root_dir, "src/scripts/semanticCodeMcpServer.ts")
             configs.append(
                 McpServerConfig(
                     name="semantic",
-                    command=semantic_command,
-                    args=semantic_args,
+                    command="bash",
+                    args=[
+                        "-c",
+                        f"cd {shlex.quote(self.root_dir)} && {shlex.quote(semantic_command)} {' '.join(shlex.quote(a) for a in semantic_args)} 2>> {shlex.quote(log_path)}",
+                    ],
                     env=semantic_env,
                 )
             )

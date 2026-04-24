@@ -1,6 +1,6 @@
 import { eq, or } from 'drizzle-orm';
-import { db } from '../db/index.js';
-import { topicTasks } from '../db/schema.js';
+import { db } from '../src/db/index.js';
+import { topicTasks } from '../src/db/schema.js';
 
 async function resetTasks() {
   console.log('Resetting stagnant KnowFlow tasks...');

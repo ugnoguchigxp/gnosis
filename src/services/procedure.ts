@@ -131,6 +131,38 @@ const normalizeToken = (value: string): string => value.trim().toLowerCase();
 const normalizeFilterList = (values?: string[]): string[] =>
   (values ?? []).map(normalizeToken).filter((v) => v.length > 0);
 
+function episodeContainsFollowedFailure(story: string, taskId: string): boolean {
+  const marker = `[task:${taskId}]`;
+  if (!story.includes(marker)) return false;
+  return story.split('\n').some((line) => {
+    if (!line.includes(marker)) return false;
+    const normalized = line.toLowerCase();
+    return normalized.includes('followed=true') && normalized.includes('succeeded=false');
+  });
+}
+
+function buildFailureCautionConstraints(tasks: ProcedureTask[]): ProcedureConstraint[] {
+  const cautions: ProcedureConstraint[] = [];
+
+  for (const task of tasks) {
+    const failedEpisodes = task.episodes
+      .filter((episode) => episodeContainsFollowedFailure(episode.story, task.id))
+      .map((episode) => episode.id);
+    if (failedEpisodes.length === 0) continue;
+
+    const episodePreview = failedEpisodes.slice(0, 3).join(', ');
+    cautions.push({
+      id: `caution:${task.id}`,
+      name: `Caution for ${task.name}`,
+      description: `Caution: task "${task.name}" has followed_failure history (${episodePreview}). Include mitigation steps before execution.`,
+      severity: 'warning',
+      validationCriteria: ['確認: 過去の失敗エピソードを参照し、対策を実装計画へ明記すること'],
+    });
+  }
+
+  return cautions;
+}
+
 function resolveProcedureOptions(contextOrOptions?: string | QueryProcedureOptions): {
   contextText?: string;
   filters: NormalizedApplicabilityFilters;
@@ -473,18 +505,28 @@ export async function queryProcedure(
     .filter((t) => t.confidence < 0.3)
     .map((t) => ({ ...t, order: 9999 }));
 
+  const orderedTasks = [...highConfidenceTasks, ...normalTasks, ...lowConfidenceTasks];
+  const baseConstraints = constraintEntities.map((ce) => ({
+    id: ce.id,
+    name: ce.name,
+    description: ce.description ?? '',
+    severity: (ce.confidence ?? 1.0) < 0.3 ? ('warning' as const) : ('info' as const),
+    validationCriteria: (ce.metadata as Record<string, unknown>)?.validationCriteria as
+      | string[]
+      | undefined,
+  }));
+  const cautionConstraints =
+    highConfidenceTasks.length > 0 ? buildFailureCautionConstraints(highConfidenceTasks) : [];
+  const existingConstraintIds = new Set(baseConstraints.map((constraint) => constraint.id));
+  const mergedConstraints = [
+    ...baseConstraints,
+    ...cautionConstraints.filter((constraint) => !existingConstraintIds.has(constraint.id)),
+  ];
+
   return {
     goal: { id: goalEntity.id, name: goalEntity.name, description: goalEntity.description ?? '' },
-    tasks: [...highConfidenceTasks, ...normalTasks, ...lowConfidenceTasks],
-    constraints: constraintEntities.map((ce) => ({
-      id: ce.id,
-      name: ce.name,
-      description: ce.description ?? '',
-      severity: (ce.confidence ?? 1.0) < 0.3 ? 'warning' : 'info',
-      validationCriteria: (ce.metadata as Record<string, unknown>)?.validationCriteria as
-        | string[]
-        | undefined,
-    })),
+    tasks: orderedTasks,
+    constraints: mergedConstraints,
   };
 }
 

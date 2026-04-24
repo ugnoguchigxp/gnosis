@@ -128,6 +128,17 @@ export const TOOL_DEFINITIONS = [
       required: ['symbolName'],
     },
   },
+  {
+    name: 'semantic_read_file',
+    description: 'Read the full content of a file.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        filePath: { type: 'string', description: 'Path to the file to read.' },
+      },
+      required: ['filePath'],
+    },
+  },
 ] as const;
 
 function clampLimit(value: unknown, fallback: number, max = 1000): number {
@@ -528,6 +539,18 @@ export function findReferences(
   return JSON.stringify({ total: refs.length, references: refs }, null, 2);
 }
 
+export function readFile(args: JsonObject, context: SemanticContext = DEFAULT_CONTEXT): string {
+  const filePath = getStringArg(args, 'filePath');
+  if (!filePath) throw new Error('filePath is required');
+
+  const abs = resolveWithinRoot(context, filePath);
+  if (!fs.existsSync(abs)) {
+    return JSON.stringify({ error: `File not found: ${filePath}` });
+  }
+  const content = fs.readFileSync(abs, 'utf-8');
+  return JSON.stringify({ filePath, content }, null, 2);
+}
+
 export function runSemanticTool(
   toolName: string,
   args: JsonObject,
@@ -546,13 +569,23 @@ export function runSemanticTool(
       return readSymbol(args, context);
     case 'semantic_find_references':
       return findReferences(args, context);
+    case 'semantic_read_file':
+      return readFile(args, context);
+
     default:
       return JSON.stringify({ error: `Unknown tool: ${toolName}` });
   }
 }
 
 async function main(): Promise<void> {
-  const context: SemanticContext = { rootDir: process.cwd() };
+  const context: SemanticContext = {
+    rootDir: process.env.GNOSIS_ROOT_DIR || process.cwd(),
+  };
+  console.error(
+    `[Semantic] Starting server at ${context.rootDir} (env: ${
+      process.env.GNOSIS_ROOT_DIR
+    }, cwd: ${process.cwd()})`,
+  );
   const server = new Server(
     { name: 'semantic-code-tools', version: '0.1.0' },
     { capabilities: { tools: {} } },

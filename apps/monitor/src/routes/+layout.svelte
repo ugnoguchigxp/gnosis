@@ -13,6 +13,7 @@ const { children } = $props();
 <div class="app-layout">
 	<nav class="app-nav">
 		<a href="/" class="nav-link" class:active={$page.url.pathname === '/'}>Monitor</a>
+
 		<a href="/tasks" class="nav-link" class:active={$page.url.pathname === '/tasks'}>Queue</a>
 		<a href="/procedures" class="nav-link" class:active={$page.url.pathname === '/procedures'}>Procedures</a>
 		<a href="/graph" class="nav-link" class:active={$page.url.pathname === '/graph'}>Graph</a>

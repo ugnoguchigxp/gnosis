@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import re
 import asyncio
-from typing import Any, Iterable, Generator, List, Dict
+import os
+import sys
+from typing import Any, Iterable, Generator, List, Dict, Optional
 
 from core.model import MLXModelManager, get_model_manager
 from tools import fetch_content, search_web
@@ -17,12 +19,12 @@ JSON_TOOL_CALL_RE = re.compile(
     r"(?:<\|tool_call\|>|<tool_call>)\s*(\{.*?\})\s*(?:<tool_call\|>|<\|tool_call\|>|</tool_call>)",
     re.DOTALL,
 )
-TOOL_ARGS_RE = re.compile(r"(\w+)\s*:\s*<\|\"\|>(.*?)<\|\"\|>", re.DOTALL)
-TOOL_ARGS_QUOTED_RE = re.compile(r"(\w+)\s*:\s*\"(.*?)\"", re.DOTALL)
-TOOL_ARGS_SINGLE_QUOTED_RE = re.compile(r"(\w+)\s*:\s*'(.*?)'", re.DOTALL)
-TOOL_ARGS_BARE_RE = re.compile(r"(\w+)\s*:\s*([^,\n}]+)")
+TOOL_ARGS_RE = re.compile(r"\"?(\w+)\"?\s*:\s*<\|\"\|>(.*?)<\|\"\|>", re.DOTALL)
+TOOL_ARGS_QUOTED_RE = re.compile(r"\"?(\w+)\"?\s*:\s*\"((?:\\.|[^\"])*)\"", re.DOTALL)
+TOOL_ARGS_SINGLE_QUOTED_RE = re.compile(r"\"?(\w+)\"?\s*:\s*'((?:\\.|[^'])*)'", re.DOTALL)
+TOOL_ARGS_BARE_RE = re.compile(r"\"?(\w+)\"?\s*:\s*([^,\n}]+)")
 THINK_BLOCK_RE = re.compile(r"<\|channel>thought.*?(?:<channel\|>|$)", re.DOTALL)
-LEGACY_THINK_BLOCK_RE = re.compile(r"<think>.*?(?:</think>|$)", re.DOTALL)
+LEGACY_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 INCOMPLETE_TOOL_CALL_RE = re.compile(r"(?:<\|tool_call\|>|<tool_call>).*$", re.DOTALL)
 JSON_CODE_BLOCK_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL | re.IGNORECASE)
 
@@ -55,12 +57,20 @@ def _normalize_tool_name(name: str) -> str:
 class ChatEngine:
     """Gemma chat engine with optional tool execution and streaming support."""
 
-    def __init__(self, model_manager: Any | None = None, verbose: bool = False, max_tool_rounds: int = 3, mcp_client: Any | None = None) -> None:
+    def __init__(
+        self, 
+        model_manager: Any | None = None, 
+        verbose: bool = False, 
+        max_tool_rounds: int = 3, 
+        mcp_client: Any | None = None,
+        debug_log_path: Optional[str] = None
+    ) -> None:
         # model_manager can be MLXModelManager or a backend object from backends/*.py
         self.model_manager = model_manager
         self.verbose = verbose
         self.max_tool_rounds = max_tool_rounds
         self.mcp_client = mcp_client
+        self.debug_log_path = debug_log_path
         self.messages = []
         self._mcp_tools_cache = None
 
@@ -105,7 +115,11 @@ class ChatEngine:
     @staticmethod
     def parse_tool_call(text: str) -> dict[str, Any] | None:
         # call:name{...} の形式を探す。周囲にノイズがあっても拾えるようにする
-        match = re.search(r"call:(\w+)\s*\{(.*?)\}", text, re.DOTALL)
+        # 閉じタグがある場合はそこまで、無い場合は最後の } までを取得する
+        match = re.search(r"call:(\w+)\s*\{(.*?)\}(?:\s*<[/\|]?tool_call[\|]?>)", text, re.DOTALL)
+        if not match:
+            match = re.search(r"call:(\w+)\s*\{(.*)\}", text, re.DOTALL)
+            
         if match:
             func_name, args_str = match.group(1), match.group(2)
             args: dict[str, str] = {}
@@ -114,10 +128,15 @@ class ChatEngine:
                 args[arg_match.group(1)] = arg_match.group(2)
             if not args:
                 for arg_match in TOOL_ARGS_QUOTED_RE.finditer(args_str):
-                    args[arg_match.group(1)] = arg_match.group(2)
+                    val = arg_match.group(2)
+                    try:
+                        # Try to unescape using JSON loader logic
+                        args[arg_match.group(1)] = json.loads(f'"{val}"')
+                    except Exception:
+                        args[arg_match.group(1)] = val.replace('\\"', '"').replace('\\n', '\n').replace('\\t', '\t').replace('\\\\', '\\')
             if not args:
                 for arg_match in TOOL_ARGS_SINGLE_QUOTED_RE.finditer(args_str):
-                    args[arg_match.group(1)] = arg_match.group(2)
+                    args[arg_match.group(1)] = arg_match.group(2).replace("\\'", "'").replace('\\n', '\n')
             if not args:
                 for arg_match in TOOL_ARGS_BARE_RE.finditer(args_str):
                     args[arg_match.group(1)] = arg_match.group(2).strip()
@@ -197,7 +216,11 @@ class ChatEngine:
             if code_block_match:
                 sanitized = code_block_match.group(1)
             
-        return sanitized.strip()
+        sanitized = sanitized.strip()
+        if not sanitized and text.strip():
+            # If everything was stripped, it might be an unparsed tool call or think block
+            return f"[System] Tool call or think block was generated but failed to parse.\nRaw Output:\n{text.strip()}"
+        return sanitized
 
     def _prepare_messages(self, messages: Iterable[dict[str, Any]], allow_tools: bool) -> list[dict[str, str]]:
         prepared: list[dict[str, str]] = []
@@ -219,18 +242,8 @@ class ChatEngine:
 
         if allow_tools:
             available_tools = ["search_web(query)", "fetch_content(url)"]
-            if self.mcp_client and not self._mcp_tools_cache:
-                try:
-                    # Sync loop context might need care, but in run_chat it's okay if called from async.
-                    # For now we assume tools are cached or fetched elsewhere.
-                    # Actually we'll just use the cache if available.
-                    pass
-                except:
-                    pass
-            
             if self._mcp_tools_cache:
                 for t in self._mcp_tools_cache:
-                    # Gnosis tools have mcp_gnosis_ prefix or are specific to memory/graph
                     available_tools.append(f"{t['name']}({', '.join(t['inputSchema'].get('properties', {}).keys())})")
 
             tool_instruction = (
@@ -257,25 +270,22 @@ class ChatEngine:
         return prepared
 
     def _run_tool_sync(self, tool_call: dict[str, Any]) -> str:
+        # Note: This is now a legacy method for non-async contexts if needed.
+        # But we prefer async path for MCP.
         name = _normalize_tool_name(tool_call["name"])
         arguments = tool_call.get("arguments", {})
 
         try:
             if name == "search_web":
                 query = arguments.get("query") or arguments.get("q")
-                if not query:
-                    return "Error: query parameter is required"
+                if not query: return "Error: query parameter is required"
                 return search_web(query)
             if name == "fetch_content":
                 url = arguments.get("url")
-                if not url:
-                    return "Error: url parameter is required"
+                if not url: return "Error: url parameter is required"
                 return fetch_content(url)
-                
             if self.mcp_client:
-                # We need to bridge to async for MCP client calls
                 return asyncio.run(self.mcp_client.call_tool(name, arguments))
-                
             return f"Error: Unknown tool '{name}'"
         except Exception as e:
             return f"Error: Local tool execution failed ({str(e)})"
@@ -287,18 +297,25 @@ class ChatEngine:
         try:
             if name == "search_web":
                 query = arguments.get("query") or arguments.get("q")
-                if not query:
-                    return "Error: query parameter is required"
+                if not query: return "Error: query parameter is required"
                 return await asyncio.to_thread(search_web, query)
             if name == "fetch_content":
                 url = arguments.get("url")
-                if not url:
-                    return "Error: url parameter is required"
+                if not url: return "Error: url parameter is required"
                 return await asyncio.to_thread(fetch_content, url)
                 
             if self.mcp_client:
-                mcp_res = await self.mcp_client.call_tool(name, arguments)
-                # Convert list of content parts to string
+                try:
+                    if self.debug_log_path:
+                        with open(self.debug_log_path, "a") as f:
+                            f.write(f"\n[Tool Call] {name}({arguments})\n")
+                    mcp_res = await self.mcp_client.call_tool(name, arguments)
+                except Exception as e:
+                    if self.debug_log_path:
+                        with open(self.debug_log_path, "a") as f:
+                            f.write(f"\n[Tool Error] {name}: {e}\n")
+                    raise e
+                
                 if isinstance(mcp_res, list):
                     return "\n".join(str(p.get("text", "")) for p in mcp_res if isinstance(p, dict))
                 return str(mcp_res)
@@ -312,7 +329,7 @@ class ChatEngine:
         self,
         messages: list[dict[str, Any]],
         model: str | None = None,
-        max_tokens: int = 1024,
+        max_tokens: int = 10240,
         temperature: float = 0.0,
         tools: list[str] | None = None,
     ) -> str:
@@ -345,7 +362,6 @@ class ChatEngine:
 
             tool_call = self.parse_tool_call(raw_response)
             if tool_call and _normalize_tool_name(tool_call["name"]) in allowed_tools:
-                # API context uses sync tool call (already threaded in API route normally, but here we use search_web directly)
                 name = _normalize_tool_name(tool_call["name"])
                 args = tool_call.get("arguments", {})
                 if name == "search_web": tool_result = search_web(args.get("query", ""))
@@ -369,19 +385,20 @@ class ChatEngine:
         return "上限に達しました。"
 
     # CLI 単発実行用 (セッション履歴を維持)
-    def run_turn(
+    async def run_turn(
         self,
         user_input: str,
-        max_tokens: int = 1024,
+        max_tokens: int = 10240,
         temperature: float = 0.0,
     ) -> str:
-        # Repair mode check
+        if self.model_manager is None:
+            self.model_manager = get_model_manager()
+            
         repair_data = detect_repair_json(user_input)
         if repair_data:
             user_input = format_repair_prompt(repair_data)
-            
+
         self.add_message("user", user_input)
-        retried_plain_answer = False
 
         for _ in range(self.max_tool_rounds + 1):
             raw_response = "".join(
@@ -394,119 +411,16 @@ class ChatEngine:
 
             tool_call = self.parse_tool_call(raw_response)
             if tool_call:
-                if self.verbose: # -v の時だけ詳細を表示
+                if self.verbose:
                     print(f"\n[Searching: {tool_call['name']}...]", flush=True)
                 
-                tool_result = self._run_tool_sync(tool_call)
+                tool_result = await self._run_tool_async(tool_call)
                 self.add_message("assistant", raw_response.strip())
                 self.add_message("user", f"（検索結果）\n{tool_result}\nこの結果をもとに、回答を日本語で生成してください。")
                 continue
 
             sanitized = self.sanitize_response(raw_response, force_json=bool(repair_data))
-            if sanitized:
-                self.add_message("assistant", raw_response.strip())
-                return sanitized
-
-            if not retried_plain_answer:
-                retried_plain_answer = True
-                self.add_message("assistant", raw_response.strip())
-                self.add_message("user", "思考過程やタグを出力せず、最終回答のみを返してください。")
-                continue
-
             self.add_message("assistant", raw_response.strip())
-            return "回答を生成できませんでした。"
+            return sanitized
 
-        self.add_message("assistant", "上限に達しました。")
         return "上限に達しました。"
-
-    # CLI 用 (ストリーミング対話)
-    async def chat_loop(self, user_input: str, **kwargs):
-        self.add_message("user", user_input)
-        
-        while True:
-            full_resp = ""
-            is_thinking = False
-            is_tool_calling_detected = False
-            assistant_label_printed = False
-            
-            think_start_tags = ["<|channel>thought", "<think>"]
-            think_end_tags = ["<channel|>", "</think>"]
-            buffer = ""
-
-            def print_visible(text: str) -> None:
-                nonlocal assistant_label_printed
-                if not text:
-                    return
-                if not assistant_label_printed:
-                    print("Assistant: ", end="", flush=True)
-                    assistant_label_printed = True
-                print(text, end="", flush=True)
-            
-            # self.model_manager が generate_stream を持っていることを期待 (Backends or ModelManager)
-            for chunk in self.model_manager.generate_stream(self.messages, **kwargs):
-                full_resp += chunk
-                buffer += chunk
-
-                # 【DEBUG】verbose時は生の出力をstderr等に吐き出す
-                if self.verbose:
-                    # 改行や特殊文字を可視化しつつ出力
-                    print(f"\033[90m{chunk}\033[0m", end="", flush=True)
-
-                for t in think_start_tags:
-                    if t in buffer:
-                        if not is_thinking:
-                            pre_text = buffer[:buffer.find(t)]
-                            if pre_text and not self.verbose:
-                                print_visible(pre_text)
-                            is_thinking = True
-                        buffer = buffer[buffer.find(t) + len(t):]
-
-                for t in think_end_tags:
-                    if t in buffer:
-                        if is_thinking:
-                            is_thinking = False
-                        buffer = buffer[buffer.find(t) + len(t):]
-
-                if ("<|tool_call|>" in full_resp or "<tool_call>" in full_resp) and self.parse_tool_call(full_resp):
-                    is_tool_calling_detected = True
-                    if self.verbose:
-                        print("[Searching...]", end="", flush=True)
-                    break
-
-                if is_thinking and not self.verbose:
-                    if len(buffer) > 100:
-                        buffer = buffer[-50:]
-                else:
-                    if "<" in buffer:
-                        safe_idx = buffer.find("<")
-                        if safe_idx > 0:
-                            if not self.verbose:
-                                print_visible(buffer[:safe_idx])
-                            buffer = buffer[safe_idx:]
-                        # バッファが長すぎる場合はタグではないと判断して出力
-                        # 検索クエリが長い場合に備え、上限を 500 文字に拡張
-                        if len(buffer) > 500:
-                            if not self.verbose:
-                                print_visible(buffer)
-                            buffer = ""
-                    else:
-                        if not self.verbose:
-                            print_visible(buffer)
-                        buffer = ""
-                await asyncio.sleep(0)
-
-            if not is_tool_calling_detected:
-                if assistant_label_printed:
-                    print("", flush=True)
-            call = self.parse_tool_call(full_resp)
-            if call:
-                if not is_tool_calling_detected and self.verbose:
-                    print("[Searching...]", flush=True)
-                tool_res = await self._run_tool_async(call)
-                self.add_message("assistant", full_resp.strip())
-                self.add_message("user", f"（検索結果）\n{tool_res}\nこの結果をもとに、回答を日本語で生成してください。")
-                continue
-
-            self.add_message("assistant", full_resp.strip())
-            break
-        print("\n")

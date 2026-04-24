@@ -28,5 +28,6 @@ axum = { version = "0.8", features = ["ws"] }
 futures-util = "0.3"
 notify = "8.2.0"
 rand = "0.8"
+rfd = "0.15"
 time = { version = "0.3", features = ["parsing"] }
 tokio = { version = "1.48.0", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }

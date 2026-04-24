@@ -10,6 +10,7 @@ export async function getAlwaysOnGuidance(
 ) {
   const results = await db
     .select({
+      id: vibeMemories.id,
       content: vibeMemories.content,
       metadata: vibeMemories.metadata,
       priority: sql<number>`(${vibeMemories.metadata}->>'priority')::int`,
@@ -41,6 +42,7 @@ export async function getOnDemandGuidance(
 
   const results = await db
     .select({
+      id: vibeMemories.id,
       content: vibeMemories.content,
       metadata: vibeMemories.metadata,
       similarity,

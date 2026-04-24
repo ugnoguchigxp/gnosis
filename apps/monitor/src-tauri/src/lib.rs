@@ -20,6 +20,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             monitor::commands::monitor_config,
+            monitor::commands::monitor_browse_project,
+
             monitor::commands::monitor_list_tasks,
             monitor::commands::monitor_task_detail,
             monitor::commands::monitor_graph_snapshot,

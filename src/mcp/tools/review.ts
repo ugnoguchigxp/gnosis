@@ -13,6 +13,7 @@ import {
   extractChangedFiles,
   normalizeDiff,
 } from '../../services/review/diff/normalizer.js';
+import { ReviewError } from '../../services/review/errors.js';
 import { getDiff } from '../../services/review/foundation/gitDiff.js';
 import { getReviewLLMService } from '../../services/review/llm/reviewer.js';
 import {
@@ -43,9 +44,76 @@ const reviewParamsSchema = z.object({
   headRef: z.string().optional().describe('ヘッドリファレンス (例: HEAD)'),
   mode: ReviewModeSchema.optional().default('git_diff').describe('レビューモード'),
   goal: z.string().optional().describe('レビューの目的や重点事項'),
+  specDocPath: z
+    .string()
+    .optional()
+    .describe('関連する仕様書の相対パス。指定時はレビュー文脈として読み込みます。'),
+  planningDocPath: z
+    .string()
+    .optional()
+    .describe('関連する実装計画書の相対パス。指定時はレビュー文脈として読み込みます。'),
+  sessionId: z
+    .string()
+    .optional()
+    .describe('Gnosis 記憶参照に使うセッションID（未指定時は自動生成）'),
   llmPreference: z.enum(['local', 'cloud']).optional().describe('使用する LLM の優先度'),
   stage: z.enum(['a', 'b', 'c', 'd', 'e']).optional().default('e').describe('実行するステージ'),
 });
+
+const MAX_CONTEXT_DOC_BYTES = 200 * 1024;
+const MAX_CONTEXT_DOC_CHARS = 12_000;
+
+function isWithin(base: string, target: string): boolean {
+  const relative = path.relative(base, target);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function loadDocumentContext(repoPath: string, filePath: string, label: string): string {
+  const normalized = filePath.trim();
+  const fullPath = path.resolve(repoPath, normalized);
+  if (!isWithin(repoPath, fullPath)) {
+    throw new ReviewError('E014', `${label} must be inside repository: ${normalized}`);
+  }
+  let content: string;
+  try {
+    content = fs.readFileSync(fullPath, 'utf8');
+  } catch (error) {
+    throw new ReviewError(
+      'E014',
+      `Failed to read ${label} (${normalized}): ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+
+  const bytes = Buffer.byteLength(content, 'utf8');
+  if (bytes > MAX_CONTEXT_DOC_BYTES) {
+    throw new ReviewError(
+      'E015',
+      `${label} is too large (${bytes} bytes, limit: ${MAX_CONTEXT_DOC_BYTES})`,
+    );
+  }
+
+  const clipped = content.slice(0, MAX_CONTEXT_DOC_CHARS);
+  const truncated = content.length > MAX_CONTEXT_DOC_CHARS;
+  return `### ${label}: ${normalized}\n${clipped}${truncated ? '\n... (truncated)' : ''}`;
+}
+
+function buildReviewGoalWithDocumentContext(
+  parsed: z.infer<typeof reviewParamsSchema>,
+  repoPath: string,
+): string | undefined {
+  const sections: string[] = [];
+  if (parsed.goal?.trim()) sections.push(parsed.goal.trim());
+  if (parsed.specDocPath?.trim()) {
+    sections.push(loadDocumentContext(repoPath, parsed.specDocPath, 'Spec Document'));
+  }
+  if (parsed.planningDocPath?.trim()) {
+    sections.push(loadDocumentContext(repoPath, parsed.planningDocPath, 'Planning Document'));
+  }
+  if (sections.length === 0) return undefined;
+  return sections.join('\n\n');
+}
 
 function isReviewDebugEnabled(): boolean {
   const raw = process.env.GNOSIS_REVIEW_DEBUG?.trim().toLowerCase();
@@ -76,6 +144,8 @@ async function runReviewViaCli(
   parsed: z.infer<typeof reviewParamsSchema>,
   resolvedPath: string,
   traceId: string,
+  goalText: string | undefined,
+  sessionId: string,
 ): Promise<{ markdown: string }> {
   const stage = parsed.stage ?? 'e';
   const envPreference = process.env.GNOSIS_REVIEW_LLM_PREFERENCE === 'local' ? 'local' : 'cloud';
@@ -99,11 +169,11 @@ async function runReviewViaCli(
     '--task-id',
     parsed.taskId ?? `mcp-review-${Date.now()}`,
     '--session-id',
-    `mcp-session-${Date.now()}`,
+    sessionId,
     '--json',
   ];
-  if (parsed.goal) {
-    args.push('--goal', parsed.goal);
+  if (goalText) {
+    args.push('--goal', goalText);
   }
 
   emitReviewDebugLog({
@@ -164,6 +234,8 @@ Stage E (agentic) を使用すると、AI が自律的に情報を収集して�
       const runId = parsed.runId ?? traceId;
       const repoPath = parsed.repoPath ?? process.cwd();
       const resolvedPath = fs.realpathSync(repoPath);
+      const goalText = buildReviewGoalWithDocumentContext(parsed, resolvedPath);
+      const sessionId = parsed.sessionId?.trim() || `mcp-session-${Date.now()}`;
       const stage = parsed.stage ?? 'e';
       const execMode = getMcpReviewExecutionMode();
       const hookReviewContext = await buildHookReviewContext(
@@ -233,7 +305,13 @@ Stage E (agentic) を使用すると、AI が自律的に情報を収集して�
           });
 
           if (execMode === 'cli') {
-            const result = await runReviewViaCli(parsed, resolvedPath, traceId);
+            const result = await runReviewViaCli(
+              parsed,
+              resolvedPath,
+              traceId,
+              goalText,
+              sessionId,
+            );
             await dispatchHookEvent({
               event: 'review.completed',
               traceId,
@@ -264,9 +342,9 @@ Stage E (agentic) を使用すると、AI が自律的に情報を収集して�
             baseRef: parsed.baseRef ?? 'main',
             headRef: parsed.headRef ?? 'HEAD',
             trigger: 'manual',
-            sessionId: `mcp-session-${Date.now()}`,
+            sessionId,
             mode: parsed.mode,
-            taskGoal: parsed.goal,
+            taskGoal: goalText,
           });
 
           const envPreference =

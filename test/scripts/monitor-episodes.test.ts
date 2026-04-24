@@ -4,8 +4,8 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import pkg from 'pg';
 const { Pool } = pkg;
 import { eq, inArray, sql } from 'drizzle-orm';
-import { config } from '../config.js';
-import { entities, relations, vibeMemories } from '../db/schema.js';
+import { config } from '../../src/config.js';
+import { entities, relations, vibeMemories } from '../../src/db/schema.js';
 
 // Global mocks in other files often break the shared db instance.
 // For this integration test, we create a local isolated connection.
