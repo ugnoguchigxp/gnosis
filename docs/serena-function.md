@@ -96,7 +96,7 @@ read-only の安定後に以下を追加:
 - 既存導線を壊さず、TS主導への移行足場を作る
 
 作業:
-- 現行 `scripts/gemma4` / `scripts/qwen27b` は維持
+- 現行 `scripts/gemma4` / `scripts/qwen` は維持
 - MultiMCP は既存実装を利用（暫定）
 
 ## Phase R1: TS Agent Runtime 新設
@@ -118,7 +118,7 @@ read-only の安定後に以下を追加:
 - Pythonの責務を「MLX推論のみ」に限定
 
 作業:
-- `src/scripts/local-llm-cli.ts` の `gemma4/qwen27b/bonsai` 実行先を段階的にTS runtimeへ切替
+- `src/scripts/local-llm-cli.ts` の `gemma4/qwen/bonsai` 実行先を段階的にTS runtimeへ切替
 - `services/local-llm/main.py` のMCP/Tool処理を非推奨化
 
 ## Phase R3: 旧経路の整理

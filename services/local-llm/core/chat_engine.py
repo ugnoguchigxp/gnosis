@@ -243,8 +243,10 @@ class ChatEngine:
                 "Gnosis VibeMemoryの記憶や知識グラフを操作、検索するための専用ツールです。\n"
                 + "\n".join([f"- {t}" for t in available_tools if not t.startswith(("search", "fetch"))]) + "\n\n"
                 "## ツール呼び出し形式\n"
-                "以下の形式を厳守してください。思考プロセスが必要な場合は `<|channel>thought` を使用してください。\n"
+                "以下の形式を厳守してください。内部思考や説明文は出力しないでください。\n"
                 "<|tool_call|>call:ツール名{引数名:<|\"|>値<|\"|>}<tool_call|>\n\n"
+                "今日、現在、最新、天気、ニュース、価格、予定など、現在情報が必要な質問では、最初の応答は回答文ではなくツール呼び出しだけにしてください。\n"
+                "例: <|tool_call|>call:search_web{query:<|\"|>今日の東京の天気<|\"|>}<tool_call|>\n\n"
                 "ツール実行結果を受け取った後、それに基づいた回答を日本語で生成してください。"
             )
             if has_system and prepared:
@@ -422,14 +424,23 @@ class ChatEngine:
         self.add_message("user", user_input)
         
         while True:
-            print("Assistant: ", end="", flush=True)
             full_resp = ""
             is_thinking = False
             is_tool_calling_detected = False
+            assistant_label_printed = False
             
             think_start_tags = ["<|channel>thought", "<think>"]
             think_end_tags = ["<channel|>", "</think>"]
             buffer = ""
+
+            def print_visible(text: str) -> None:
+                nonlocal assistant_label_printed
+                if not text:
+                    return
+                if not assistant_label_printed:
+                    print("Assistant: ", end="", flush=True)
+                    assistant_label_printed = True
+                print(text, end="", flush=True)
             
             # self.model_manager が generate_stream を持っていることを期待 (Backends or ModelManager)
             for chunk in self.model_manager.generate_stream(self.messages, **kwargs):
@@ -445,16 +456,15 @@ class ChatEngine:
                     if t in buffer:
                         if not is_thinking:
                             pre_text = buffer[:buffer.find(t)]
-                            if pre_text and not self.verbose: print(pre_text, end="", flush=True)
+                            if pre_text and not self.verbose:
+                                print_visible(pre_text)
                             is_thinking = True
-                            if not self.verbose: print("[Thinking...]", end="", flush=True)
                         buffer = buffer[buffer.find(t) + len(t):]
 
                 for t in think_end_tags:
                     if t in buffer:
                         if is_thinking:
                             is_thinking = False
-                            if not self.verbose: print(" Done.\n", end="", flush=True)
                         buffer = buffer[buffer.find(t) + len(t):]
 
                 if ("<|tool_call|>" in full_resp or "<tool_call>" in full_resp) and self.parse_tool_call(full_resp):
@@ -464,25 +474,30 @@ class ChatEngine:
                     break
 
                 if is_thinking and not self.verbose:
-                    if len(buffer) > 100: buffer = buffer[-50:]
+                    if len(buffer) > 100:
+                        buffer = buffer[-50:]
                 else:
                     if "<" in buffer:
                         safe_idx = buffer.find("<")
                         if safe_idx > 0:
-                            if not self.verbose: print(buffer[:safe_idx], end="", flush=True)
+                            if not self.verbose:
+                                print_visible(buffer[:safe_idx])
                             buffer = buffer[safe_idx:]
                         # バッファが長すぎる場合はタグではないと判断して出力
                         # 検索クエリが長い場合に備え、上限を 500 文字に拡張
                         if len(buffer) > 500:
-                            if not self.verbose: print(buffer, end="", flush=True)
+                            if not self.verbose:
+                                print_visible(buffer)
                             buffer = ""
                     else:
-                        if not self.verbose: print(buffer, end="", flush=True)
+                        if not self.verbose:
+                            print_visible(buffer)
                         buffer = ""
                 await asyncio.sleep(0)
 
             if not is_tool_calling_detected:
-                print("", flush=True)
+                if assistant_label_printed:
+                    print("", flush=True)
             call = self.parse_tool_call(full_resp)
             if call:
                 if not is_tool_calling_detected and self.verbose:
@@ -491,7 +506,7 @@ class ChatEngine:
                 self.add_message("assistant", full_resp.strip())
                 self.add_message("user", f"（検索結果）\n{tool_res}\nこの結果をもとに、回答を日本語で生成してください。")
                 continue
-            
+
             self.add_message("assistant", full_resp.strip())
             break
         print("\n")

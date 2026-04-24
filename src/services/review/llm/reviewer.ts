@@ -134,7 +134,7 @@ export function resolveReviewerAlias(): ReviewerAlias {
   const env = process.env.GNOSIS_REVIEWER?.trim().toLowerCase();
   if (
     env === 'gemma4' ||
-    env === 'qwen27b' ||
+    env === 'qwen' ||
     env === 'bonsai' ||
     env === 'bedrock' ||
     env === 'openai'
@@ -167,8 +167,8 @@ export async function getReviewLLMService(
     switch (alias) {
       case 'gemma4':
         return createLocalReviewLLMService({ alias: 'gemma4', invoker, requestId });
-      case 'qwen27b':
-        return createLocalReviewLLMService({ alias: 'qwen27b', invoker, requestId });
+      case 'qwen':
+        return createLocalReviewLLMService({ alias: 'qwen', invoker, requestId });
       case 'bonsai':
         return createLocalReviewLLMService({ alias: 'bonsai', invoker, requestId });
       case 'bedrock':

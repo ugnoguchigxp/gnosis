@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { withGlobalSemaphore } from '../utils/lock.js';
 
-export type LocalLlmAlias = 'gemma4' | 'qwen' | 'qwen27b' | 'bonsai' | 'openai' | 'bedrock';
+export type LocalLlmAlias = 'gemma4' | 'qwen' | 'bonsai' | 'openai' | 'bedrock';
 export type LauncherPlan = {
   command: string;
   args: string[];
@@ -21,7 +21,7 @@ const PYTHON =
 const BUN = process.env.GNOSIS_BUN_COMMAND ?? 'bun';
 
 const DEFAULT_GEMMA4_MODEL = process.env.GEMMA4_MODEL ?? 'mlx-community/gemma-4-e4b-it-4bit';
-const DEFAULT_QWEN27B_MODEL = process.env.QWEN27B_MODEL ?? 'mlx-community/Qwen3.6-27B-4bit';
+const DEFAULT_QWEN_MODEL = process.env.QWEN_MODEL ?? 'mlx-community/Qwen3-14B-4bit';
 const DEFAULT_BONSAI_MODEL = process.env.BONSAI_MODEL ?? 'prism-ml/Bonsai-8B-mlx-1bit';
 
 const getArgValue = (argv: string[], key: string): string | undefined => {
@@ -34,7 +34,6 @@ export function parseAlias(argv: string[]): LocalLlmAlias {
   if (
     alias === 'gemma4' ||
     alias === 'qwen' ||
-    alias === 'qwen27b' ||
     alias === 'bonsai' ||
     alias === 'openai' ||
     alias === 'bedrock'
@@ -66,7 +65,6 @@ export function resolveLauncherPlan(alias: LocalLlmAlias, argv: string[]): Launc
         ],
       };
     case 'qwen':
-    case 'qwen27b':
       return {
         command: PYTHON,
         args: [
@@ -74,7 +72,7 @@ export function resolveLauncherPlan(alias: LocalLlmAlias, argv: string[]): Launc
           '--backend',
           'mlx',
           '--model',
-          getArgValue(forwardedArgs, '--model') ?? DEFAULT_QWEN27B_MODEL,
+          getArgValue(forwardedArgs, '--model') ?? DEFAULT_QWEN_MODEL,
           ...forwardedArgs,
         ],
       };

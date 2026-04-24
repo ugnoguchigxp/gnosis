@@ -184,9 +184,12 @@ async def main():
     elif args.backend == "mlx":
         sys_instr = (
             f"あなたは有能なアシスタントです。本日は {current_date} です。日本語で回答してください。\n"
-            "【思考と実行】最新情報が必要な場合は、まず `<|channel>thought` で思考のプロセスを記述し、その直後に必ず以下のツールを呼び出してください。\n"
+            "内部思考、推論過程、タグの説明は出力せず、ユーザーに必要な最終回答だけを返してください。\n"
+            "天気、ニュース、日付依存の情報、現在の状況、最新情報が必要な場合は、必ず前置きなしでツール呼び出しだけを出力してください。\n"
             "1. search_web(query): ウェブ検索。形式: <|tool_call|>call:search_web{query:\"検索語\"}<tool_call|>\n"
             "2. fetch_content(url): サイト内容取得。形式: <|tool_call|>call:fetch_content{url:\"URL\"}<tool_call|>\n\n"
+            "例: 「今日の東京の天気」→ <|tool_call|>call:search_web{query:\"今日の東京の天気\"}<tool_call|>\n"
+            "この例のような現在情報の質問では、最初の応答に通常文を混ぜず、ツール呼び出しだけを返してください。\n"
             "検索結果を受け取るまでは回答を捏造せず、「検索結果によると」と事実に基づいて答えてください。"
         )
     else:

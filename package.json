@@ -35,7 +35,6 @@
     "semantic:mcp": "bun run src/scripts/semanticCodeMcpServer.ts",
     "gemma4": "./scripts/gemma4",
     "qwen": "./scripts/qwen",
-    "qwen27b": "./scripts/qwen27b",
     "bonsai": "./scripts/bonsai",
     "bedrock": "./scripts/bedrock",
     "openai": "./scripts/openai",

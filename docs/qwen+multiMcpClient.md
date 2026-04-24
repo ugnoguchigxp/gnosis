@@ -2,7 +2,7 @@
 
 ## 目的
 
-`M4 MacBook Air (32GB)` で `Qwen3.6-27B-4bit` を主力にしつつ、
+`M4 MacBook Air (32GB)` で `Qwen3-14B-4bit` を主力にしつつ、
 
 - Serena類似機能を **TypeScript/Bun で実装**
 - Pythonは **MLX推論の実行レイヤー最小限** に限定
@@ -26,8 +26,8 @@
 
 ## 完了済み
 
-1. `qwen27b` alias 追加
-- `scripts/qwen27b`
+1. `qwen` alias 追加
+- `scripts/qwen`
 - `src/scripts/local-llm-cli.ts`
 - `src/services/review/llm/*` の reviewer alias 対応
 
@@ -145,8 +145,8 @@
 ## 推奨環境変数（現行）
 
 ```env
-QWEN27B_MODEL=mlx-community/Qwen3.6-27B-4bit
-GNOSIS_REVIEWER=qwen27b
+QWEN_MODEL=mlx-community/Qwen3-14B-4bit
+GNOSIS_REVIEWER=qwen
 
 LOCAL_LLM_MCP_ENABLE_SEMANTIC=true
 LOCAL_LLM_SEMANTIC_COMMAND=bun
@@ -157,7 +157,7 @@ LOCAL_LLM_SEMANTIC_ARGS=run /Users/y.noguchi/Code/gnosis/src/scripts/semanticCod
 
 ## 受け入れ基準（更新）
 
-1. `qwen27b` が本番導線で安定利用できる  
+1. `qwen` が本番導線で安定利用できる  
 2. `gnosis + semantic-code` の MultiMCP 同時接続が安定  
 3. read-only semantic ツールの主要操作が実運用で再現可能  
 4. reviewer の編集系ツール禁止をコードで強制  

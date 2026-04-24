@@ -19,7 +19,7 @@ function isTruthy(value: string | undefined): boolean {
 }
 
 function shouldForceSafeSeatbeltMlx(alias: LocalLlmAlias, env: NodeJS.ProcessEnv): boolean {
-  if (alias !== 'gemma4' && alias !== 'qwen27b' && alias !== 'bonsai') return false;
+  if (alias !== 'gemma4' && alias !== 'qwen' && alias !== 'bonsai') return false;
   if (env.CODEX_SANDBOX !== 'seatbelt') return false;
   return !isTruthy(env.GNOSIS_REVIEW_ALLOW_UNSAFE_MLX_IN_SEATBELT);
 }
