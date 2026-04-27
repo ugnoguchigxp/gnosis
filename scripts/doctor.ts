@@ -120,7 +120,11 @@ async function checkLocalLlmHealth(): Promise<CheckResult> {
   try {
     const response = await fetch(healthUrl, { signal: controller.signal });
     if (response.ok) {
-      return { name: 'local-llm health', status: 'OK', message: `${healthUrl} responded ${response.status}` };
+      return {
+        name: 'local-llm health',
+        status: 'OK',
+        message: `${healthUrl} responded ${response.status}`,
+      };
     }
     return {
       name: 'local-llm health',
@@ -140,10 +144,37 @@ async function checkLocalLlmHealth(): Promise<CheckResult> {
   }
 }
 
+function checkMcpToolExposure(): CheckResult {
+  const raw = process.env.GNOSIS_MCP_TOOL_EXPOSURE?.trim().toLowerCase();
+  const value = raw && raw.length > 0 ? raw : 'primary';
+  if (value === 'primary') {
+    return {
+      name: 'GNOSIS_MCP_TOOL_EXPOSURE',
+      status: 'OK',
+      message: 'primary (Agent-First tool surface)',
+    };
+  }
+  if (value === 'all') {
+    return {
+      name: 'GNOSIS_MCP_TOOL_EXPOSURE',
+      status: 'OK',
+      message: 'all (legacy compatibility mode)',
+    };
+  }
+  return {
+    name: 'GNOSIS_MCP_TOOL_EXPOSURE',
+    status: 'WARN',
+    message: `Unsupported value: ${value}`,
+    fix: 'Set GNOSIS_MCP_TOOL_EXPOSURE=primary or GNOSIS_MCP_TOOL_EXPOSURE=all',
+  };
+}
+
 function printResult(result: CheckResult): void {
   const color =
     result.status === 'OK' ? COLORS.green : result.status === 'WARN' ? COLORS.yellow : COLORS.red;
-  process.stdout.write(`${color}[${result.status}]${COLORS.reset} ${result.name}: ${result.message}\n`);
+  process.stdout.write(
+    `${color}[${result.status}]${COLORS.reset} ${result.name}: ${result.message}\n`,
+  );
   if (result.fix) {
     process.stdout.write(`      fix: ${result.fix}\n`);
   }
@@ -210,7 +241,9 @@ async function main(): Promise<void> {
     results.push({
       name: 'docker compose',
       status: 'OK',
-      message: `${dockerCompose.command}${dockerCompose.args.length ? ` ${dockerCompose.args.join(' ')}` : ''}`,
+      message: `${dockerCompose.command}${
+        dockerCompose.args.length ? ` ${dockerCompose.args.join(' ')}` : ''
+      }`,
     });
 
     const ps = await runCapture({
@@ -232,7 +265,11 @@ async function main(): Promise<void> {
         args: ['inspect', '-f', '{{.State.Running}}', containerId],
       }).catch(() => null);
       if (inspect && inspect.code === 0 && inspect.stdout.trim() === 'true') {
-        results.push({ name: 'postgres container', status: 'OK', message: `running (${containerId.slice(0, 12)})` });
+        results.push({
+          name: 'postgres container',
+          status: 'OK',
+          message: `running (${containerId.slice(0, 12)})`,
+        });
       } else {
         results.push({
           name: 'postgres container',
@@ -282,6 +319,7 @@ async function main(): Promise<void> {
     });
   }
 
+  results.push(checkMcpToolExposure());
   results.push(await checkLocalLlmHealth());
 
   process.stdout.write('\n');

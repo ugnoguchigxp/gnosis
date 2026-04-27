@@ -20,11 +20,10 @@ const queryProcedureSchema = z.object({
 export const queryProcedureTools: ToolEntry[] = [
   {
     name: 'query_procedure',
-    description: `達成したい目標に対して、Graph から関連タスク・制約・エピソードを取得します。
+    description: `達成したい目標に対して、Graph から関連タスク・制約を取得します。
 - goal テキストから類似する goal エンティティを検索
 - has_step 関係でタスクを収集（最大3ホップ）
 - precondition / follows でトポロジカルソート
-- learned_from で関連エピソードを取得
 - prohibits で制約を収集
 - context が指定されれば、when 関係で適切なタスクのみに絞り込み`,
     inputSchema: zodToJsonSchema(queryProcedureSchema) as Record<string, unknown>,

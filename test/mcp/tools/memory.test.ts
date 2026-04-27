@@ -10,7 +10,7 @@ const mockSaveRelations = mock();
 
 mock.module('../../../src/services/memory.js', () => ({
   saveMemory: mockSaveMemory,
-  saveEpisodeMemory: mockSaveMemory,
+  saveMemoryWithOptions: mockSaveMemory,
   searchMemory: mockSearchMemory,
   deleteMemory: mockDeleteMemory,
 }));
@@ -63,7 +63,6 @@ describe('memory tool handlers', () => {
         content: 'text contents',
         metadata: undefined,
         memoryType: 'raw',
-        episodeAt: undefined,
         importance: undefined,
       },
       'mock-tx',

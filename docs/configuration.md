@@ -23,6 +23,13 @@ Gnosis は環境変数を中心に構成されています。一部の機能（K
 | `DATABASE_URL` | `postgres://postgres:postgres@localhost:7888/gnosis` | PostgreSQL 接続文字列 |
 | `GNOSIS_BUN_COMMAND` | `bun` | 実行に使用する Bun バイナリのパス |
 | `GNOSIS_LLM_TIMEOUT_MS` | `90000` | LLM 処理の標準タイムアウト |
+| `GNOSIS_MCP_TOOL_EXPOSURE` | `primary` | MCP `tools/list` の公開面。`primary` は Agent-First のみ、`all` は legacy/advanced も含めて公開（互換向け） |
+
+### MCP クライアント互換
+
+- 既定の `primary` は、LLM が迷わない Agent-First 公開面を優先します。
+- 既存の Antigravity / legacy workflow が `query_procedure` などの旧ツールを前提にしている場合は、`GNOSIS_MCP_TOOL_EXPOSURE=all` を設定してください。
+- 設定変更後は MCP サーバーとクライアントを再起動し、`tools/list` キャッシュを更新してください。
 
 ### 埋め込み (Embedding)
 

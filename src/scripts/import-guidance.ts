@@ -31,6 +31,11 @@ const parseArgs = (argv: string[]): CliArgs => {
 };
 
 async function main() {
+  if (process.env.GNOSIS_ENABLE_AUTOMATION !== 'true') {
+    console.log('[import-guidance] Automation is OFF. Skipping scheduled import.');
+    process.exit(0);
+  }
+
   const args = parseArgs(process.argv.slice(2));
   const summary = await importGuidanceArchives({
     inboxDir: args.inboxDir,

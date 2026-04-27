@@ -200,7 +200,7 @@ export async function distillKnowledgeFromTranscript(
   "memories": ["短い文章形式の記憶1", "記憶2"],
   "entities": [
     {
-      "type": "以下から1つ選択: task|goal|constraint|context|project|library|service|tool|concept|person|pattern|config|episode",
+      "type": "以下から1つ選択: task|goal|constraint|context|project|library|service|tool|concept|person|pattern|config",
       "name": "正規化された名前（公式名称、日本語可）",
       "description": "50文字以上の説明。何であるか、なぜ重要かを含む。短すぎる説明は不可"
     }
@@ -211,7 +211,7 @@ export async function distillKnowledgeFromTranscript(
       "sourceName": "source の name",
       "targetType": "target の type",
       "targetName": "target の name",
-      "relationType": "以下から1つ選択: has_step|precondition|follows|when|prohibits|learned_from|alternative_to|depends_on|uses|implements|extends|part_of|caused_by|resolved_by",
+      "relationType": "以下から1つ選択: has_step|precondition|follows|when|prohibits|alternative_to|depends_on|uses|implements|extends|part_of|caused_by|resolved_by",
       "weight": 0.0−1.0の数値
     }
   ]

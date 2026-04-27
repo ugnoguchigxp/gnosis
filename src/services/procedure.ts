@@ -1,13 +1,13 @@
 /**
  * 手続き記憶サービス (Phase 4 + Phase 5)
  *
- * - queryProcedure: goal テキスト → 順序付き task + constraints + episodes
+ * - queryProcedure: goal テキスト → 順序付き task + constraints
  * - updateConfidence: 実行結果による confidence スコア更新
- * - recordOutcome: フィードバックループ（confidence 更新 + エピソード記録 + 改善提案）
+ * - recordOutcome: フィードバックループ（confidence 更新 + 改善提案）
  */
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { entities, relations, vibeMemories } from '../db/schema.js';
+import { entities, relations } from '../db/schema.js';
 import { generateEntityId } from '../utils/entityId.js';
 import { saveEntities, saveRelations } from './graph.js';
 import { generateEmbedding } from './memory.js';
@@ -98,7 +98,6 @@ type ProcedureTask = {
   description: string;
   confidence: number;
   order: number;
-  episodes: Array<{ id: string; story: string; isSuccess: boolean }>;
   isGoldenPath: boolean;
   validationCriteria?: string[];
 };
@@ -130,38 +129,6 @@ const normalizeToken = (value: string): string => value.trim().toLowerCase();
 
 const normalizeFilterList = (values?: string[]): string[] =>
   (values ?? []).map(normalizeToken).filter((v) => v.length > 0);
-
-function episodeContainsFollowedFailure(story: string, taskId: string): boolean {
-  const marker = `[task:${taskId}]`;
-  if (!story.includes(marker)) return false;
-  return story.split('\n').some((line) => {
-    if (!line.includes(marker)) return false;
-    const normalized = line.toLowerCase();
-    return normalized.includes('followed=true') && normalized.includes('succeeded=false');
-  });
-}
-
-function buildFailureCautionConstraints(tasks: ProcedureTask[]): ProcedureConstraint[] {
-  const cautions: ProcedureConstraint[] = [];
-
-  for (const task of tasks) {
-    const failedEpisodes = task.episodes
-      .filter((episode) => episodeContainsFollowedFailure(episode.story, task.id))
-      .map((episode) => episode.id);
-    if (failedEpisodes.length === 0) continue;
-
-    const episodePreview = failedEpisodes.slice(0, 3).join(', ');
-    cautions.push({
-      id: `caution:${task.id}`,
-      name: `Caution for ${task.name}`,
-      description: `Caution: task "${task.name}" has followed_failure history (${episodePreview}). Include mitigation steps before execution.`,
-      severity: 'warning',
-      validationCriteria: ['確認: 過去の失敗エピソードを参照し、対策を実装計画へ明記すること'],
-    });
-  }
-
-  return cautions;
-}
 
 function resolveProcedureOptions(contextOrOptions?: string | QueryProcedureOptions): {
   contextText?: string;
@@ -250,7 +217,7 @@ function matchesApplicabilityFilter(
 }
 
 /**
- * goal テキストから関連する task / constraint / episode を取得し、
+ * goal テキストから関連する task / constraint を取得し、
  * 成功確率（Confidence）に基づいて重み付けされた手続き記憶を返す。
  */
 export async function queryProcedure(
@@ -402,46 +369,6 @@ export async function queryProcedure(
       ? await database.select().from(entities).where(inArray(entities.id, constraintIds))
       : [];
 
-  // 6. episode 収集 (learned_from 関係)
-  const episodeRelations =
-    filteredTaskIds.length > 0
-      ? await database
-          .select({ sourceId: relations.sourceId, targetId: relations.targetId })
-          .from(relations)
-          .where(
-            and(
-              inArray(relations.sourceId, filteredTaskIds),
-              eq(relations.relationType, 'learned_from'),
-            ),
-          )
-      : [];
-  const episodeEntityIds = [...new Set(episodeRelations.map((r) => r.targetId))];
-  const episodeEntities =
-    episodeEntityIds.length > 0
-      ? await database.select().from(entities).where(inArray(entities.id, episodeEntityIds))
-      : [];
-
-  // episode プロキシ → vibe_memories.story マッピング
-  const episodeInfos = new Map<string, { story: string; isSuccess: boolean }>();
-  for (const ep of episodeEntities) {
-    const memoryId = (ep.metadata as Record<string, unknown>)?.memoryId as string | undefined;
-    if (memoryId) {
-      const [mem] = await database
-        .select({ content: vibeMemories.content, metadata: vibeMemories.metadata })
-        .from(vibeMemories)
-        .where(eq(vibeMemories.id, memoryId));
-      if (mem) {
-        // メタデータまたは内容から成否を判定
-        const isSuccess =
-          (mem.metadata as Record<string, unknown>)?.succeeded === true ||
-          mem.content.includes('succeeded=true');
-        episodeInfos.set(ep.id, { story: mem.content, isSuccess });
-      }
-    } else {
-      episodeInfos.set(ep.id, { story: ep.description ?? '', isSuccess: true });
-    }
-  }
-
   // 7. トポロジカルソート (precondition / follows 関係から DAG 構築)
   const orderMap = new Map<string, number>();
   const precondRelations =
@@ -468,17 +395,6 @@ export async function queryProcedure(
   // 8. tasks 組み立て
   const tasks: ProcedureTask[] = taskEntities.map((te) => {
     const conf = (te.confidence as number | null | undefined) ?? 0.5;
-    const taskEpisodeIds = episodeRelations
-      .filter((r) => r.sourceId === te.id)
-      .map((r) => r.targetId);
-    const episodes = taskEpisodeIds.map((epId) => {
-      const info = episodeInfos.get(epId);
-      return {
-        id: epId,
-        story: info?.story ?? '',
-        isSuccess: info?.isSuccess ?? true,
-      };
-    });
 
     return {
       id: te.id,
@@ -486,7 +402,6 @@ export async function queryProcedure(
       description: te.description ?? '',
       confidence: conf,
       order: orderMap.get(te.id) ?? 999,
-      episodes,
       isGoldenPath: conf >= 0.7,
       validationCriteria: (te.metadata as Record<string, unknown>)?.validationCriteria as
         | string[]
@@ -515,18 +430,11 @@ export async function queryProcedure(
       | string[]
       | undefined,
   }));
-  const cautionConstraints =
-    highConfidenceTasks.length > 0 ? buildFailureCautionConstraints(highConfidenceTasks) : [];
-  const existingConstraintIds = new Set(baseConstraints.map((constraint) => constraint.id));
-  const mergedConstraints = [
-    ...baseConstraints,
-    ...cautionConstraints.filter((constraint) => !existingConstraintIds.has(constraint.id)),
-  ];
 
   return {
     goal: { id: goalEntity.id, name: goalEntity.name, description: goalEntity.description ?? '' },
     tasks: orderedTasks,
-    constraints: mergedConstraints,
+    constraints: baseConstraints,
   };
 }
 
@@ -535,7 +443,7 @@ export async function queryProcedure(
 // ---------------------------------------------------------------------------
 
 /**
- * 実行結果を記録し、confidence を更新 + エピソードを記録 + 改善提案を適用する。
+ * 実行結果を記録し、confidence を更新 + 改善提案を適用する。
  */
 export async function recordOutcome(
   input: {
@@ -545,7 +453,7 @@ export async function recordOutcome(
     improvements?: Improvement[];
   },
   deps: RecordOutcomeDeps = {},
-): Promise<{ updated: number; episodeId: string | null }> {
+): Promise<{ updated: number }> {
   const database = deps.database ?? db;
   const embed = deps.embed ?? generateEmbedding;
   const persistEntities = deps.saveEntities ?? saveEntities;
@@ -574,64 +482,6 @@ export async function recordOutcome(
       .set({ confidence: newConf, freshness: new Date(), lastReferencedAt: new Date() })
       .where(eq(entities.id, tr.taskId));
     updatedCount++;
-  }
-
-  // 2. エピソード記録
-  const storyLines = input.taskResults.map(
-    (tr) =>
-      `[task:${tr.taskId}] followed=${tr.followed}, succeeded=${tr.succeeded}${
-        tr.note ? ` | ${tr.note}` : ''
-      }`,
-  );
-  const storyContent = `goal:${input.goalId}\n${storyLines.join('\n')}`;
-
-  let episodeId: string | null = null;
-  try {
-    const embedding = await embed(storyContent);
-    const [episode] = await database
-      .insert(vibeMemories)
-      .values({
-        sessionId: input.sessionId,
-        content: storyContent,
-        embedding,
-        metadata: { goalId: input.goalId, sourceTaskIds: input.taskResults.map((t) => t.taskId) },
-        memoryType: 'episode',
-        episodeAt: new Date(),
-        importance: 0.6,
-        compressed: false,
-        sourceTask: input.goalId,
-      })
-      .returning();
-    episodeId = episode.id;
-
-    // episode プロキシ entity
-    const episodeEntityId = generateEntityId('episode', episode.id);
-    await persistEntities(
-      [
-        {
-          id: episodeEntityId,
-          type: 'episode',
-          name: `outcome:${episode.id.slice(0, 8)}`,
-          description: storyContent.slice(0, 200),
-          metadata: { memoryId: episode.id },
-          confidence: 0.6,
-          provenance: 'record_outcome',
-        },
-      ],
-      database,
-      async () => embedding,
-    );
-
-    // 各タスクに learned_from 関係を追加
-    const learnedRelations = input.taskResults.map((tr) => ({
-      sourceId: tr.taskId,
-      targetId: episodeEntityId,
-      relationType: 'learned_from',
-      weight: 0.8,
-    }));
-    await persistRelations(learnedRelations, database);
-  } catch (err) {
-    console.error('Failed to record episode:', err);
   }
 
   // 3. 改善提案の適用
@@ -734,5 +584,5 @@ export async function recordOutcome(
     }
   }
 
-  return { updated: updatedCount, episodeId };
+  return { updated: updatedCount };
 }

@@ -1,13 +1,7 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { config } from '../config.js';
 import { closeDbPool, db } from '../db/index.js';
-import {
-  entities,
-  experienceLogs,
-  knowflowKeywordEvaluations,
-  relations,
-  vibeMemories,
-} from '../db/schema.js';
+import { entities, experienceLogs, relations, vibeMemories } from '../db/schema.js';
 import { generateEmbedding } from '../services/memory.js';
 import { sha256 } from '../utils/crypto.js';
 import { generateEntityId } from '../utils/entityId.js';
@@ -436,46 +430,6 @@ async function deleteLesson(id: string) {
   return { success: true, id };
 }
 
-async function listKeywordEvaluations() {
-  const rows = await db
-    .select()
-    .from(knowflowKeywordEvaluations)
-    .orderBy(desc(knowflowKeywordEvaluations.createdAt))
-    .limit(100);
-  return rows;
-}
-
-async function deleteKeywordEvaluation(id: string) {
-  const [evalRow] = await db
-    .delete(knowflowKeywordEvaluations)
-    .where(eq(knowflowKeywordEvaluations.id, id))
-    .returning();
-  if (!evalRow) {
-    throw new Error(`Evaluation ${id} not found`);
-  }
-  return { success: true, id };
-}
-
-async function listEpisodes() {
-  return await db
-    .select()
-    .from(vibeMemories)
-    .where(eq(vibeMemories.memoryType, 'episode'))
-    .orderBy(desc(vibeMemories.createdAt))
-    .limit(50);
-}
-
-async function deleteEpisode(id: string) {
-  const [deleted] = await db
-    .delete(vibeMemories)
-    .where(and(eq(vibeMemories.id, id), eq(vibeMemories.memoryType, 'episode')))
-    .returning();
-  if (deleted) {
-    await db.delete(entities).where(sql`metadata->>'memoryId' = ${id}`);
-  }
-  return { success: !!deleted, id };
-}
-
 // --- Entities CRUD ---
 
 async function listEntities() {
@@ -659,32 +613,6 @@ async function main() {
     }
   }
 
-  if (resource === 'evaluations') {
-    if (command === 'list') {
-      console.log(JSON.stringify(await listKeywordEvaluations(), null, 2));
-      return;
-    }
-
-    if (command === 'delete') {
-      const id = requireString(args[2], 'evaluation id');
-      console.log(JSON.stringify(await deleteKeywordEvaluation(id), null, 2));
-      return;
-    }
-  }
-
-  if (resource === 'episodes') {
-    if (command === 'list') {
-      console.log(JSON.stringify(await listEpisodes(), null, 2));
-      return;
-    }
-
-    if (command === 'delete') {
-      const id = requireString(args[2], 'episode id');
-      console.log(JSON.stringify(await deleteEpisode(id), null, 2));
-      return;
-    }
-  }
-
   if (resource === 'entities') {
     if (command === 'list') {
       console.log(JSON.stringify(await listEntities(), null, 2));
@@ -728,7 +656,7 @@ async function main() {
   }
 
   throw new Error(
-    'Unknown command. Use: guidance list|create|update|delete, lessons list|create|update|delete, evaluations list|delete, episodes list|delete, entities list|create|update|delete, or relations list|create|delete',
+    'Unknown command. Use: guidance list|create|update|delete, lessons list|create|update|delete, entities list|create|update|delete, or relations list|create|delete',
   );
 }
 

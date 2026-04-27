@@ -36,7 +36,7 @@ export const hookTools: ToolEntry[] = [
   {
     name: 'task_checkpoint',
     description:
-      '実装区切り・完了・失敗を明示し、hook ルール（lint/typecheck/test/episode 化など）を発火します。',
+      '実装区切り・完了・失敗を明示し、hook ルール（lint/typecheck/test/lesson 抽出など）を発火します。',
     inputSchema: zodToJsonSchema(taskCheckpointSchema) as Record<string, unknown>,
     handler: async (args) => {
       const input = taskCheckpointSchema.parse(args);

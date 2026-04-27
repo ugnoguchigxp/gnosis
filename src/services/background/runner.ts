@@ -1,7 +1,6 @@
 import { db as defaultDb } from '../../db/index.js';
 import { withGlobalSemaphore } from '../../utils/lock.js';
 import { scheduler } from './scheduler.js';
-import { consolidationTask } from './tasks/consolidationTask.js';
 import { embeddingBatchTask } from './tasks/embeddingBatchTask.js';
 import { synthesisTask } from './tasks/synthesisTask.js';
 
@@ -61,18 +60,6 @@ export async function runTask(
   console.error(`[TaskRunner] Executing task: ${type}`);
 
   switch (type) {
-    case 'consolidation': {
-      const maxFailures = readNonNegativeInt(payload.maxFailures) ?? 0;
-      const result = await consolidationTask({ maxFailures });
-      return {
-        ok: true,
-        processed: result.attemptedGroups > 0,
-        summary: `eligible=${result.eligibleGroups} attempted=${result.attemptedGroups} succeeded=${result.succeededGroups} skipped=${result.skippedGroups} failed=${result.failedGroups} episodes=${result.createdEpisodes}`,
-        partialFailures: result.failedGroups,
-        stats: result,
-      };
-    }
-
     case 'synthesis': {
       const maxFailures = readNonNegativeInt(payload.maxFailures) ?? 0;
       const result = await synthesisTask({ maxFailures });

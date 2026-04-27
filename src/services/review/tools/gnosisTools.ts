@@ -112,8 +112,7 @@ export const getGuidanceToolEntry: ReviewerToolEntry = {
 export const queryProcedureToolEntry: ReviewerToolEntry = {
   definition: {
     name: 'query_procedure',
-    description:
-      '特定の目標（Goal）に関連する推奨手順、制約事項、および過去のエピソードを取得します。',
+    description: '特定の目標（Goal）に関連する推奨手順と制約事項を取得します。',
     inputSchema: {
       type: 'object',
       required: ['goal'],

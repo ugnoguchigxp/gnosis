@@ -39,7 +39,7 @@ describe('synthesizeKnowledge', () => {
     const mockDistill = mock().mockResolvedValue({
       memories: [],
       entities: [
-        // 新形式: id なし、制御語彙の type。task にすることで learned_from 関係も生成される
+        // 新形式: id なし、制御語彙の type
         {
           type: 'task',
           name: 'TypeScript を使う',
@@ -75,8 +75,8 @@ describe('synthesizeKnowledge', () => {
     expect(transcript).toContain('[Session: sess1]');
     expect(transcript).toContain('TypeScript is typed.');
 
-    expect(mockSaveEnts).toHaveBeenCalledTimes(3); // episode proxy x2 + entities x1
-    expect(mockSaveRels).toHaveBeenCalledTimes(2); // distilled.relations x1 + learnedRelations x1
+    expect(mockSaveEnts).toHaveBeenCalledTimes(1);
+    expect(mockSaveRels).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ count: 2, extractedEntities: 1, extractedRelations: 1 });
   });
 
@@ -101,7 +101,7 @@ describe('synthesizeKnowledge', () => {
       saveRels: mockSaveRels,
     });
 
-    expect(mockSaveEnts).toHaveBeenCalledTimes(1); // episode proxy x1 (pendingMemories=1)
+    expect(mockSaveEnts).not.toHaveBeenCalled();
     expect(mockSaveRels).not.toHaveBeenCalled();
     expect(result).toEqual({ count: 1, extractedEntities: 0, extractedRelations: 0 });
   });

@@ -101,9 +101,14 @@ async function main() {
 
   const transport = new StdioServerTransport();
 
-  // MCPモードではバックグラウンドワーカーを無効化（リソース競合とログ汚染の防止）
-  if (process.env.GNOSIS_NO_WORKERS !== 'true') {
+  // 実装中の暴発を避けるため、明示的に有効化した場合のみ起動する。
+  const automationEnabled = process.env.GNOSIS_ENABLE_AUTOMATION === 'true';
+  if (automationEnabled && process.env.GNOSIS_NO_WORKERS !== 'true') {
     startBackgroundWorkers();
+  } else {
+    console.error(
+      '[Main] Background workers are OFF (set GNOSIS_ENABLE_AUTOMATION=true to enable).',
+    );
   }
 
   try {

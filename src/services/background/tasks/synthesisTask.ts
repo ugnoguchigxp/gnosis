@@ -13,7 +13,7 @@ export type SynthesisTaskResult = {
 
 /**
  * 自己省察（Synthesis）タスク。
- * 集約されたエピソード記憶（ストーリー）から知識（エンティティ・リレーション）を抽出し、
+ * 未処理の raw 記憶から知識（エンティティ・リレーション）を抽出し、
  * 知識グラフを自動更新します。
  */
 export async function synthesisTask(

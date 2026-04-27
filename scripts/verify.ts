@@ -20,7 +20,7 @@ function buildSteps(mode: VerifyMode, bun: string): Step[] {
       { name: 'format-check', command: bun, args: ['x', 'biome', 'ci', '.'] },
       { name: 'lint', command: bun, args: ['run', 'lint'] },
       { name: 'typecheck', command: bun, args: ['x', 'tsc', '--noEmit'] },
-      { name: 'failure-path', command: bun, args: ['run', 'test:failure-path'] },
+      { name: 'build', command: bun, args: ['run', 'build'] },
     ];
   }
 
@@ -28,12 +28,15 @@ function buildSteps(mode: VerifyMode, bun: string): Step[] {
     { name: 'format-check', command: bun, args: ['x', 'biome', 'ci', '.'] },
     { name: 'lint', command: bun, args: ['run', 'lint'] },
     { name: 'typecheck', command: bun, args: ['x', 'tsc', '--noEmit'] },
-    { name: 'coverage', command: bun, args: ['run', 'test:coverage'], capture: true },
-    { name: 'smoke', command: bun, args: ['run', 'smoke'] },
+    { name: 'build', command: bun, args: ['run', 'build'] },
+    { name: 'test', command: bun, args: ['test'] },
   ];
 
   if (mode === 'strict') {
     standard.push(
+      { name: 'coverage', command: bun, args: ['run', 'test:coverage'], capture: true },
+      { name: 'failure-path', command: bun, args: ['run', 'test:failure-path'] },
+      { name: 'smoke', command: bun, args: ['run', 'smoke'] },
       { name: 'flaky-check', command: bun, args: ['run', 'test:flaky-check'] },
       { name: 'integration-local', command: bun, args: ['run', 'test:integration:local'] },
     );

@@ -3,12 +3,7 @@ import { config } from '../config.js';
 import { withGlobalLock } from '../utils/lock.js';
 
 export type MemoryLoopAlias = 'gemma4' | 'bonsai' | 'openai' | 'bedrock';
-export type MemoryLoopTaskKind =
-  | 'consolidation'
-  | 'distillation'
-  | 'evaluation'
-  | 'repair-json'
-  | 'classification';
+export type MemoryLoopTaskKind = 'distillation' | 'evaluation' | 'repair-json' | 'classification';
 export type MemoryLoopRiskLevel = 'low' | 'medium' | 'high';
 
 export type MemoryLoopRouteInput = {

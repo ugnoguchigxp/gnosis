@@ -34,7 +34,6 @@ export const vibeMemories = pgTable(
     createdAt: timestamp('created_at').defaultNow().notNull(),
     // Phase 2 additions
     memoryType: text('memory_type').default('raw').notNull(),
-    episodeAt: timestamp('episode_at'),
     sourceTask: text('source_task'),
     importance: real('importance').default(0.5),
     compressed: boolean('compressed').default(false),
@@ -61,10 +60,7 @@ export const vibeMemories = pgTable(
       table.sessionId,
       table.dedupeKey,
     ),
-    memoryTypeCheck: check(
-      'vibe_memories_memory_type_check',
-      sql`${table.memoryType} IN ('raw', 'episode')`,
-    ),
+    memoryTypeCheck: check('vibe_memories_memory_type_check', sql`${table.memoryType} IN ('raw')`),
   }),
 );
 
@@ -218,7 +214,7 @@ export const knowflowKeywordEvaluations = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     runId: uuid('run_id').notNull(),
-    sourceType: text('source_type').notNull(), // episode | experience
+    sourceType: text('source_type').notNull(), // experience
     sourceId: text('source_id').notNull(),
     topic: text('topic').notNull(),
     category: text('category').notNull(),
@@ -260,7 +256,7 @@ export const knowflowKeywordEvaluations = pgTable(
     ),
     sourceTypeCheck: check(
       'knowflow_keyword_eval_source_type_check',
-      sql`${table.sourceType} IN ('episode', 'experience')`,
+      sql`${table.sourceType} IN ('experience')`,
     ),
     decisionCheck: check(
       'knowflow_keyword_eval_decision_check',
@@ -493,7 +489,7 @@ export const hookCandidates = pgTable(
       .where(sql`${table.status} IN ('pending', 'scored', 'deduplicated')`),
     traceStatusIdx: index('hook_candidates_trace_status_idx').on(table.traceId, table.status),
     sourceEventIdx: index('hook_candidates_source_event_idx').on(table.sourceEvent),
-    kindCheck: check('hook_candidates_kind_check', sql`${table.kind} IN ('episode', 'lesson')`),
+    kindCheck: check('hook_candidates_kind_check', sql`${table.kind} IN ('lesson')`),
     statusCheck: check(
       'hook_candidates_status_check',
       sql`${table.status} IN ('pending', 'scored', 'deduplicated', 'promoted', 'rejected')`,

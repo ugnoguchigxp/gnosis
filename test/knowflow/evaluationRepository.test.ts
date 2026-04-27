@@ -41,7 +41,7 @@ describe('KeywordEvaluationRepository', () => {
     const rows = [
       {
         runId,
-        sourceType: 'episode' as const,
+        sourceType: 'experience' as const,
         sourceId: 's1',
         topic: 'test',
         category: 'cat',

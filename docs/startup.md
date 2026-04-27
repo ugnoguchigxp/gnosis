@@ -24,6 +24,7 @@
 - 導入コマンドを `bootstrap` / `doctor` / `onboarding:smoke` に整理
 - README 冒頭で minimal 導線を固定
 - 導線を fresh clone CI に接続
+- MCP 公開面は既定 `primary`（Agent-First）。legacy クライアント互換時は `GNOSIS_MCP_TOOL_EXPOSURE=all` を使用
 
 ## 実装バックログ（完了）
 

@@ -59,14 +59,14 @@ describe('knowledge MCP tools', () => {
     mockSearchMemory.mockReset();
   });
 
-  describe('search_knowledge', () => {
+  describe('search_knowledge_legacy', () => {
     it('calls searchKnowledgeClaims with query and returns results', async () => {
       const mockClaims = [
         { topic: 'TypeScript', text: 'TypeScript is typed.', confidence: 0.9, score: 1.0 },
       ];
       mockSearchKnowledgeClaims.mockResolvedValue(mockClaims);
 
-      const handler = getHandler('search_knowledge');
+      const handler = getHandler('search_knowledge_legacy');
       const result = await handler({ query: 'TypeScript', limit: 3 });
 
       expect(mockSearchKnowledgeClaims).toHaveBeenCalledWith('TypeScript', 3);
@@ -77,7 +77,7 @@ describe('knowledge MCP tools', () => {
     it('uses default limit of 5 when not specified', async () => {
       mockSearchKnowledgeClaims.mockResolvedValue([]);
 
-      const handler = getHandler('search_knowledge');
+      const handler = getHandler('search_knowledge_legacy');
       await handler({ query: 'test' });
 
       // biome-ignore lint/suspicious/noExplicitAny: mock

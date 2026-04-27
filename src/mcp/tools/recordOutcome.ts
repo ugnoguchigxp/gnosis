@@ -37,9 +37,7 @@ export const recordOutcomeTools: ToolEntry[] = [
     name: 'record_outcome',
     description: `タスク実行結果を記録し、Graph の confidence を更新します。
 ① confidence 更新: followed × succeeded の組み合わせで各タスクを評価
-② エピソード記録: 実行サマリを vibe_memories (episode) + entities プロキシとして保存
-③ learned_from 関係を各タスクへ追加
-④ 改善提案の適用: modify_task / add_task / add_precondition / add_constraint`,
+② 改善提案の適用: modify_task / add_task / add_precondition / add_constraint`,
     inputSchema: zodToJsonSchema(recordOutcomeSchema) as Record<string, unknown>,
     handler: async (args) => {
       const input = recordOutcomeSchema.parse(args);

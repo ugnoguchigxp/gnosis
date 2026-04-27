@@ -182,7 +182,10 @@ export async function getReviewLLMService(
   const pref =
     preference ?? (process.env.GNOSIS_REVIEW_LLM_PREFERENCE === 'local' ? 'local' : 'cloud');
   const local = createLocalReviewLLMService({ alias: 'gemma4', invoker, requestId });
-  const cloudFallback = () => createCloudReviewLLMService();
+  const cloudFallback = () =>
+    createCloudReviewLLMService({
+      provider: pref === 'openai' || pref === 'bedrock' ? pref : undefined,
+    });
 
   if (pref === 'local') {
     return {
@@ -212,6 +215,35 @@ export async function getReviewLLMService(
         throw new ReviewError('E007', 'Local LLM does not support structured tool calls');
       },
     };
+  }
+
+  if (pref === 'openai' || pref === 'bedrock') {
+    try {
+      const cloud = createCloudReviewLLMService({ provider: pref });
+      return {
+        provider: 'cloud',
+        async generate(prompt: string, options?: { format?: 'json' | 'text' }): Promise<string> {
+          return cloud.generate(prompt, options);
+        },
+        async generateMessages(messages, options) {
+          if (cloud.generateMessages) {
+            return cloud.generateMessages(messages, options);
+          }
+          return cloud.generate('', options);
+        },
+        async generateMessagesStructured(messages, options) {
+          if (cloud.generateMessagesStructured) {
+            return cloud.generateMessagesStructured(messages, options);
+          }
+          throw new ReviewError('E007', 'Cloud LLM does not support structured tool calls');
+        },
+      };
+    } catch (error) {
+      if (error instanceof ReviewError) {
+        return local;
+      }
+      throw new ReviewError('E007', `No review LLM providers available: ${error}`);
+    }
   }
 
   try {

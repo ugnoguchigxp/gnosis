@@ -10,6 +10,11 @@ let lastTickStart = 0;
  * すべてのバックグラウンドプロセスを管理するマネージャー。
  */
 export function startBackgroundWorkers(): void {
+  if (process.env.GNOSIS_ENABLE_AUTOMATION !== 'true') {
+    console.error('[BackgroundManager] Automation is OFF. Skipping background worker startup.');
+    return;
+  }
+
   if (!config.backgroundWorker.enabled) {
     console.error('[BackgroundManager] Background workers are disabled by configuration.');
     return;
@@ -20,7 +25,6 @@ export function startBackgroundWorkers(): void {
   const tick = async () => {
     try {
       // 定期タスクの登録/更新 (ID固定で重複排除)
-      await scheduler.enqueue('consolidation', {}, { id: 'periodic-consolidation', priority: 10 });
       await scheduler.enqueue('synthesis', {}, { id: 'periodic-synthesis', priority: 10 });
       await scheduler.enqueue(
         'embedding_batch',

@@ -21,6 +21,11 @@ import { runWorkerLoop } from '../services/knowflow/worker/loop.js';
 import { withGlobalSemaphore } from '../utils/lock.js';
 
 async function main() {
+  if (process.env.GNOSIS_ENABLE_AUTOMATION !== 'true') {
+    console.error('[Worker] Automation is OFF. Skipping daemon startup.');
+    process.exit(0);
+  }
+
   const runLogger = await createRunLogger({ runId: `worker-daemon-${Date.now()}` });
   let healthReportTimer: ReturnType<typeof setInterval> | undefined;
 

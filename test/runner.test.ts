@@ -2,15 +2,6 @@ import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { processQueue, runTask } from '../src/services/background/runner.js';
 
 // Mock worker functions
-const mockConsolidation = mock(async () => ({
-  eligibleGroups: 0,
-  attemptedGroups: 0,
-  succeededGroups: 0,
-  skippedGroups: 0,
-  failedGroups: 0,
-  createdEpisodes: 0,
-  failures: [],
-}));
 const mockEmbedding = mock(async () => ({ processed: 0 }));
 const mockSynthesis = mock(async () => ({
   processedMemories: 0,
@@ -31,9 +22,6 @@ const mockRunKeywordSeederOnce = mock(async () => ({
   sourceFailures: 0,
 }));
 
-mock.module('../src/services/background/tasks/consolidationTask.js', () => ({
-  consolidationTask: mockConsolidation,
-}));
 mock.module('../src/services/background/tasks/embeddingBatchTask.js', () => ({
   embeddingBatchTask: mockEmbedding,
 }));
@@ -100,7 +88,6 @@ describe('background runner', () => {
       runKeywordSeederOnce: mockRunKeywordSeederOnce,
     };
 
-    mockConsolidation.mockClear();
     mockEmbedding.mockClear();
     mockSynthesis.mockClear();
     mockRunWorkerOnce.mockClear();
@@ -112,12 +99,6 @@ describe('background runner', () => {
   });
 
   describe('runTask', () => {
-    it('executes consolidation task', async () => {
-      const outcome = await runTask('consolidation', {}, testDeps);
-      expect(mockConsolidation).toHaveBeenCalled();
-      expect(outcome.ok).toBe(true);
-    });
-
     it('executes embedding_batch task', async () => {
       const outcome = await runTask('embedding_batch', { batchSize: 10 }, testDeps);
       expect(mockEmbedding).toHaveBeenCalledWith(10);
@@ -148,7 +129,7 @@ describe('background runner', () => {
 
   describe('processQueue', () => {
     it('processes tasks until empty', async () => {
-      const task = { id: '1', type: 'consolidation', payload: '{}' };
+      const task = { id: '1', type: 'synthesis', payload: '{}' };
       mockScheduler.dequeueTask
         .mockReturnValueOnce(task) // First iteration
         .mockReturnValueOnce(null); // Second iteration (stop)
@@ -157,13 +138,13 @@ describe('background runner', () => {
       await processQueue(mockScheduler as any, testDeps as any);
 
       expect(mockScheduler.dequeueTask).toHaveBeenCalledTimes(2);
-      expect(mockConsolidation).toHaveBeenCalled();
+      expect(mockSynthesis).toHaveBeenCalled();
     });
 
     it('handles task failure and sets retry with stack trace', async () => {
-      const task = { id: '1', type: 'consolidation', payload: '{}' };
+      const task = { id: '1', type: 'synthesis', payload: '{}' };
       mockScheduler.dequeueTask.mockReturnValueOnce(task).mockReturnValueOnce(null);
-      mockConsolidation.mockRejectedValueOnce(new Error('Test error'));
+      mockSynthesis.mockRejectedValueOnce(new Error('Test error'));
 
       // biome-ignore lint/suspicious/noExplicitAny: mock
       await processQueue(mockScheduler as any, testDeps as any);

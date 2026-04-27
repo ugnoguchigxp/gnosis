@@ -28,7 +28,6 @@ describe('generateImplementationPlan', () => {
           description: 'choose library',
           confidence: 0.9,
           order: 0,
-          episodes: [],
           isGoldenPath: true,
           validationCriteria: ['library decision documented'],
         },

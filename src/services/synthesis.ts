@@ -2,7 +2,6 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { config } from '../config.js';
 import { db } from '../db/index.js';
 import { vibeMemories } from '../db/schema.js';
-import { generateEntityId } from '../utils/entityId.js';
 import { saveEntities, saveRelations } from './graph.js';
 import { distillKnowledgeFromTranscript } from './llm.js';
 
@@ -18,7 +17,7 @@ export type SynthesizeKnowledgeDeps = {
 
 /**
  * 自己省察（Reflective Synthesis）を実行します。
- * 未処理の Vibe Memory を分析し、Knowledge Graph（エンティティとリレーション）に統合します。
+ * 未処理の raw Vibe Memory を分析し、Knowledge Graph（エンティティとリレーション）に統合します。
  */
 export async function synthesizeKnowledge(deps: SynthesizeKnowledgeDeps = {}) {
   const database = deps.database ?? db;
@@ -27,11 +26,11 @@ export async function synthesizeKnowledge(deps: SynthesizeKnowledgeDeps = {}) {
   const saveRels = deps.saveRels ?? saveRelations;
   const batchSize = deps.batchSize ?? config.synthesisBatchSize;
 
-  // 1. 未処理のエピソード記憶を取得（Phase 3-3: memory_type = 'episode' のみ）
+  // 1. 未処理の raw 記憶を取得
   const pendingMemories = await database
     .select()
     .from(vibeMemories)
-    .where(and(eq(vibeMemories.isSynthesized, false), eq(vibeMemories.memoryType, 'episode')))
+    .where(and(eq(vibeMemories.isSynthesized, false), eq(vibeMemories.memoryType, 'raw')))
     .limit(batchSize);
 
   if (pendingMemories.length === 0) {
@@ -50,47 +49,13 @@ export async function synthesizeKnowledge(deps: SynthesizeKnowledgeDeps = {}) {
     // 3. LLMで知識を蒸留 (既存の関数を流用)
     const distilled = await distill(combinedTranscript);
 
-    // 4. グラフに反映（エピソードごとに処理して learned_from 関係を正確に紐付ける）
-    for (const episode of pendingMemories) {
-      const episodeEntityId = generateEntityId('episode', episode.id);
-      const episodeProxy = {
-        id: episodeEntityId,
-        type: 'episode',
-        name: `episode:${episode.id.slice(0, 8)}`,
-        description: episode.content.slice(0, 200),
-        metadata: { memoryId: episode.id },
-        confidence: (episode.importance as number | null | undefined) ?? 0.5,
-        provenance: 'synthesis',
-      };
-      await saveEnts([episodeProxy]);
-    }
-
+    // 4. 抽出された知識をグラフに反映
     if (distilled.entities.length > 0) {
       await saveEnts(distilled.entities);
     }
 
-    // Phase 4-5: task / goal / constraint → learned_from → episode プロキシ
-    const learnedRelations = [];
-    for (const ent of distilled.entities) {
-      if (['task', 'goal', 'constraint'].includes(ent.type)) {
-        const sourceId = generateEntityId(ent.type, ent.name);
-        for (const episode of pendingMemories) {
-          const episodeEntityId = generateEntityId('episode', episode.id);
-          learnedRelations.push({
-            sourceId,
-            targetId: episodeEntityId,
-            relationType: 'learned_from',
-            weight: 0.8,
-          });
-        }
-      }
-    }
-
     if (distilled.relations.length > 0) {
       await saveRels(distilled.relations);
-    }
-    if (learnedRelations.length > 0) {
-      await saveRels(learnedRelations);
     }
 
     // 5. 処理済みフラグを更新

@@ -4,7 +4,8 @@ import { eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { entities } from '../db/schema.js';
 import { isGnosisError } from '../domain/errors.js';
-import { toolEntries } from './tools/index.js';
+import { buildToolSnapshotForDoctor } from '../services/agentFirst.js';
+import { getExposedToolEntries, toolEntries } from './tools/index.js';
 
 // ---------------------------------------------------------------------------
 // Process Metadata
@@ -62,8 +63,19 @@ export const server = new Server(
   },
 );
 
+(globalThis as Record<string, unknown>).__GNOSIS_TOOL_SNAPSHOT = buildToolSnapshotForDoctor(
+  getExposedToolEntries().map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+  })),
+);
+(globalThis as Record<string, unknown>).__GNOSIS_EXPOSED_TOOL_NAMES = getExposedToolEntries().map(
+  (tool) => tool.name,
+);
+
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: toolEntries.map((t) => ({
+  tools: getExposedToolEntries().map((t) => ({
     name: t.name,
     description: t.description,
     inputSchema: t.inputSchema,

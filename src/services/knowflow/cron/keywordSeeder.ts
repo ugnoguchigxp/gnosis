@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { and, asc, eq, gte } from 'drizzle-orm';
+import { asc, eq, gte } from 'drizzle-orm';
 import { type KeywordEvalAlias, config } from '../../../config.js';
 import { db as defaultDb } from '../../../db/index.js';
-import { experienceLogs, syncState, vibeMemories } from '../../../db/schema.js';
+import { experienceLogs, syncState } from '../../../db/schema.js';
 import { PgJsonbQueueRepository } from '../queue/pgJsonbRepository.js';
 import { KeywordEvaluationRepository } from './evaluationRepository.js';
 import { parseJsonFromLlmText, runPromptWithAlias } from './llmRouter.js';
@@ -182,44 +182,18 @@ const defaultSourceLoader = async (input: {
 }): Promise<KeywordSource[]> => {
   const safeLimit = Math.max(1, Math.trunc(input.limit));
 
-  const [episodes, experiences] = await Promise.all([
-    input.database
-      .select({
-        id: vibeMemories.id,
-        content: vibeMemories.content,
-        createdAt: vibeMemories.createdAt,
-      })
-      .from(vibeMemories)
-      .where(
-        and(
-          eq(vibeMemories.memoryType, 'episode'),
-          gte(vibeMemories.createdAt, input.since),
-          eq(vibeMemories.isSynthesized, false),
-        ),
-      )
-      .orderBy(asc(vibeMemories.createdAt))
-      .limit(safeLimit),
-    input.database
-      .select({
-        id: experienceLogs.id,
-        content: experienceLogs.content,
-        createdAt: experienceLogs.createdAt,
-      })
-      .from(experienceLogs)
-      .where(gte(experienceLogs.createdAt, input.since))
-      .orderBy(asc(experienceLogs.createdAt))
-      .limit(safeLimit),
-  ]);
+  const experiences = await input.database
+    .select({
+      id: experienceLogs.id,
+      content: experienceLogs.content,
+      createdAt: experienceLogs.createdAt,
+    })
+    .from(experienceLogs)
+    .where(gte(experienceLogs.createdAt, input.since))
+    .orderBy(asc(experienceLogs.createdAt))
+    .limit(safeLimit);
 
   const sources = [
-    ...episodes.map((row) =>
-      KeywordSourceSchema.parse({
-        sourceType: 'episode',
-        sourceId: row.id,
-        content: row.content,
-        createdAt: row.createdAt,
-      }),
-    ),
     ...experiences.map((row) =>
       KeywordSourceSchema.parse({
         sourceType: 'experience',

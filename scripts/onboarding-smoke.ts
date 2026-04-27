@@ -53,7 +53,7 @@ async function checkVectorExtension(): Promise<void> {
 async function checkSeedMarker(): Promise<void> {
   await withDb(async (pool) => {
     const result = await pool.query<{ exists: boolean }>(
-      "select exists(select 1 from vibe_memories where metadata @> '{\"seedMarker\":\"gnosis-bootstrap-v1\"}'::jsonb) as exists",
+      'select exists(select 1 from vibe_memories where metadata @> \'{"seedMarker":"gnosis-bootstrap-v1"}\'::jsonb) as exists',
     );
     if (!result.rows[0]?.exists) {
       throw new Error('Seed marker was not found. Run `bun run db:seed`.');

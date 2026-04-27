@@ -66,14 +66,6 @@ export const EnqueueReviewActionSchema = z
   })
   .strict();
 
-export const CreateEpisodeCandidateActionSchema = z
-  .object({
-    type: z.literal('create_episode_candidate'),
-    episode_kind: z.enum(['success', 'failure']).default('success'),
-    include: z.array(z.string().min(1)).optional(),
-  })
-  .strict();
-
 export const CreateLessonCandidateActionSchema = z
   .object({
     type: z.literal('create_lesson_candidate'),
@@ -102,7 +94,6 @@ export const HookActionSchema = z.discriminatedUnion('type', [
   AddGuidanceActionSchema,
   TagRiskActionSchema,
   EnqueueReviewActionSchema,
-  CreateEpisodeCandidateActionSchema,
   CreateLessonCandidateActionSchema,
   BlockProgressActionSchema,
   SoftWarnActionSchema,

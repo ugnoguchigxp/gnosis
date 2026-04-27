@@ -24,21 +24,19 @@ describe('mcp contract', () => {
     };
 
     const toolNames = result.tools.map((tool) => tool.name);
-    expect(toolNames).toContain('store_memory');
-    expect(toolNames).toContain('search_unified');
-    expect(toolNames).toContain('register_guidance');
-
-    const searchUnified = result.tools.find((tool) => tool.name === 'search_unified');
-    expect(searchUnified).toBeDefined();
-    const modeEnum = (searchUnified?.inputSchema as { properties?: Record<string, unknown> })
-      .properties as Record<string, { enum?: unknown[] }> | undefined;
-    expect(modeEnum?.mode?.enum).toEqual(['fts', 'kg', 'semantic']);
-
-    const storeMemory = result.tools.find((tool) => tool.name === 'store_memory');
-    expect(storeMemory).toBeDefined();
-    const required = (storeMemory?.inputSchema as { required?: string[] }).required ?? [];
-    expect(required).toContain('sessionId');
-    expect(required).toContain('content');
+    expect(toolNames).not.toContain('store_memory');
+    expect(toolNames).not.toContain('search_unified');
+    expect(toolNames).not.toContain('register_guidance');
+    expect(toolNames).toContain('initial_instructions');
+    expect(toolNames).toContain('activate_project');
+    expect(toolNames).toContain('start_task');
+    expect(toolNames).toContain('search_knowledge');
+    expect(toolNames).toContain('search_knowledge_legacy');
+    expect(toolNames).toContain('record_task_note');
+    expect(toolNames).toContain('finish_task');
+    expect(toolNames).toContain('review_task');
+    expect(toolNames).toContain('doctor');
+    expect(toolNames.length).toBe(9);
   });
 
   it('returns isError=true for unknown tool and invalid arguments', async () => {

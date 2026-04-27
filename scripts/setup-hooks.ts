@@ -94,7 +94,7 @@ function buildHookPromptBlock(manualPath: string): string {
 - Before saying a coding segment is done, call \`task_checkpoint\`.
 - Before starting a review, trigger \`task.ready_for_review\` via the review flow.
 - If hook gate fails, prioritize fixing lint/typecheck/test before continuing.
-- Record completion and failures so episode/lesson candidates are created.
+- Record completion and failures so reusable lesson candidates are created.
 `.trim();
 }
 

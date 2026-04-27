@@ -62,7 +62,7 @@ describe('runKeywordSeederOnce', () => {
     const now = new Date('2026-04-18T10:00:00.000Z');
 
     const source: KeywordSource = {
-      sourceType: 'episode',
+      sourceType: 'experience',
       sourceId: 's-1',
       content: 'example',
       createdAt: now,

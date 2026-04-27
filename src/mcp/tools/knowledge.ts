@@ -26,9 +26,9 @@ const searchUnifiedSchema = z.object({
 
 export const knowledgeTools: ToolEntry[] = [
   {
-    name: 'search_knowledge',
-    description: `knowFlow が蓄積した構造化知識（knowledge_claims）を全文検索します。
-登録済みクレームのみを対象に、FTS スコア順で返します。`,
+    name: 'search_knowledge_legacy',
+    description: `Legacy API: knowFlow が蓄積した構造化知識（knowledge_claims）を全文検索します。
+新しい検索は search_knowledge を使用してください。`,
     inputSchema: zodToJsonSchema(searchKnowledgeSchema) as Record<string, unknown>,
     handler: async (args) => {
       const { query, limit } = searchKnowledgeSchema.parse(args);

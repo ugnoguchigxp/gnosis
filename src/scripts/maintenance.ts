@@ -9,6 +9,11 @@ import { PgJsonbQueueRepository } from '../services/knowflow/queue/pgJsonbReposi
  * cron 起動や、定期的な整理のために実行されることを想定しています。
  */
 async function main() {
+  if (process.env.GNOSIS_ENABLE_AUTOMATION !== 'true') {
+    console.error('[Maintenance] Automation is OFF. Skipping scheduled maintenance.');
+    process.exit(0);
+  }
+
   console.error('=== Gnosis Maintenance Start ===');
   const start = Date.now();
 

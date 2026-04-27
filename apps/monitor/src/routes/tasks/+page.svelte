@@ -91,7 +91,7 @@ onMount(() => {
         <div>
             <h1>Task Queue</h1>
             <div style="margin-top: 4px; font-size: 0.82rem; color: var(--text-muted);">
-                KnowFlow & Episode synthesis scheduling
+                KnowFlow scheduling
             </div>
         </div>
         <button type="button" class="refresh-btn" onclick={loadTasks} disabled={loading}>

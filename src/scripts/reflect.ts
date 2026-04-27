@@ -5,6 +5,11 @@
 import { synthesizeKnowledge } from '../services/synthesis.js';
 
 async function main() {
+  if (process.env.GNOSIS_ENABLE_AUTOMATION !== 'true') {
+    console.log('[reflect] Automation is OFF. Skipping scheduled reflect.');
+    process.exit(0);
+  }
+
   console.log('--- Gnosis Reflective Synthesis Start ---');
   try {
     const result = await synthesizeKnowledge();

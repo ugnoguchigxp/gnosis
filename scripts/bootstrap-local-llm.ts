@@ -367,6 +367,8 @@ async function run(): Promise<void> {
     'GNOSIS_EMBED_COMMAND',
     toEnvPath(getExecutablePath(path.join(ROOT_DIR, 'services/embedding'), 'embed')),
   );
+  // Keep local-llm bootstrap compatibility with legacy MCP clients by exposing full tool surface.
+  upsertEnvValue(ROOT_ENV_PATH, 'GNOSIS_MCP_TOOL_EXPOSURE', 'all');
   loadLocalEnv(ROOT_ENV_PATH);
 
   printStep('Setting up embedding service');

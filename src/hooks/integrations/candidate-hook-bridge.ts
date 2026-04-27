@@ -4,9 +4,8 @@ import { config } from '../../config.js';
 import { db } from '../../db/index.js';
 import { hookCandidates } from '../../db/schema.js';
 import { saveExperience } from '../../services/experience.js';
-import { saveEpisodeMemory } from '../../services/memory.js';
 
-type CandidateKind = 'episode' | 'lesson';
+type CandidateKind = 'lesson';
 type CandidateStatus = 'pending' | 'scored' | 'deduplicated' | 'promoted' | 'rejected';
 
 type HookCandidateRow = typeof hookCandidates.$inferSelect;
@@ -93,32 +92,6 @@ function summarizeCandidate(candidate: HookCandidateRow, payload: CandidatePaylo
   return lines.join('\n');
 }
 
-async function promoteEpisodeCandidate(
-  candidate: HookCandidateRow,
-  payload: CandidatePayload,
-): Promise<void> {
-  const sessionId = resolveSessionId(candidate, payload);
-  const content = summarizeCandidate(candidate, payload);
-  const importance =
-    candidate.severity === 'high' ? 0.85 : candidate.severity === 'medium' ? 0.7 : 0.55;
-
-  await saveEpisodeMemory({
-    sessionId,
-    content,
-    memoryType: 'episode',
-    episodeAt: new Date(),
-    importance,
-    metadata: {
-      traceId: candidate.traceId,
-      sourceEvent: candidate.sourceEvent,
-      kind: candidate.kind,
-      severity: candidate.severity,
-      candidateId: candidate.id,
-      ...payload,
-    },
-  });
-}
-
 async function promoteLessonCandidate(
   candidate: HookCandidateRow,
   payload: CandidatePayload,
@@ -198,11 +171,7 @@ export async function promoteHookCandidates(limit = 20): Promise<{
     const payload = toRecord(candidate.payload);
 
     try {
-      if (candidate.kind === 'episode') {
-        await promoteEpisodeCandidate(candidate, payload);
-      } else {
-        await promoteLessonCandidate(candidate, payload);
-      }
+      await promoteLessonCandidate(candidate, payload);
 
       await updateCandidateStatus(candidate.id, 'promoted', score);
       promoted += 1;

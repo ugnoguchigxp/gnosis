@@ -16,7 +16,6 @@ export const ENTITY_TYPES = [
   'person',
   'pattern',
   'config',
-  'episode',
 ] as const;
 
 export const EntityTypeSchema = z.enum(ENTITY_TYPES);
@@ -31,7 +30,6 @@ export const RELATION_TYPES = [
   'follows',
   'when',
   'prohibits',
-  'learned_from',
   'alternative_to',
   'depends_on',
   'uses',
@@ -189,8 +187,7 @@ export const VibeMemoryInputSchema = z.object({
   content: z.string().min(1),
   metadata: z.record(z.unknown()).default({}),
   // Phase 2 additions
-  memoryType: z.enum(['raw', 'episode']).optional().default('raw'),
-  episodeAt: z.date().optional(),
+  memoryType: z.enum(['raw']).optional().default('raw'),
   sourceTask: z.string().optional(),
   importance: z.number().min(0).max(1).optional().default(0.5),
   compressed: z.boolean().optional().default(false),

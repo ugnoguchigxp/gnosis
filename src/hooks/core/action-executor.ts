@@ -124,7 +124,7 @@ async function runCommandWithTimeout(
 
 async function createHookCandidate(options: {
   database: DbLike;
-  kind: 'episode' | 'lesson';
+  kind: 'lesson';
   traceId: string;
   sourceEvent: string;
   dedupeKey: string;
@@ -289,47 +289,6 @@ export async function executeHookAction(
       message: queued?.queued
         ? `queued:${queued.requestId ?? 'true'}`
         : 'enqueue handler not configured',
-    };
-  }
-
-  if (action.type === 'create_episode_candidate') {
-    const candidateId = await createHookCandidate({
-      database,
-      kind: 'episode',
-      traceId: input.event.traceId,
-      sourceEvent: input.event.event,
-      dedupeKey: `${input.event.traceId}:episode:${action.episode_kind}`,
-      payload: {
-        episodeKind: action.episode_kind,
-        include: action.include ?? [],
-        traceId: input.event.traceId,
-        runId: input.event.runId,
-        taskId: input.event.taskId,
-        ruleId: input.rule.id,
-        eventId: input.event.eventId,
-        sourceEvent: input.event.event,
-        eventPayload: input.event.payload ?? {},
-        context: input.context,
-        guidance: input.state.guidance,
-        warnings: input.state.warnings,
-        commandResults: input.state.commandResults.map((result) => ({
-          command: result.command,
-          durationMs: result.durationMs,
-          output: summarizeOutput(result.stdout, result.stderr),
-        })),
-      },
-      severity: action.episode_kind === 'failure' ? 'high' : 'low',
-    });
-
-    if (candidateId) {
-      input.state.candidateIds.push(candidateId);
-    }
-
-    return {
-      actionType: action.type,
-      ok: true,
-      durationMs: now() - startedAt,
-      message: candidateId ?? 'candidate deduped',
     };
   }
 

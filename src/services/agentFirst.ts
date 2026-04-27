@@ -1,0 +1,1046 @@
+import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import { desc, sql } from 'drizzle-orm';
+import { db } from '../db/index.js';
+import { entities, relations } from '../db/schema.js';
+import { getLoadedHookRuleCount } from '../hooks/service.js';
+import { generateEntityId } from '../utils/entityId.js';
+import { generateEmbedding } from './memory.js';
+
+export type KnowledgeKind =
+  | 'project_doc'
+  | 'rule'
+  | 'procedure'
+  | 'skill'
+  | 'decision'
+  | 'lesson'
+  | 'observation'
+  | 'risk'
+  | 'command_recipe'
+  | 'reference';
+
+export type KnowledgeCategory =
+  | 'project_overview'
+  | 'architecture'
+  | 'mcp'
+  | 'hook'
+  | 'memory'
+  | 'workflow'
+  | 'testing'
+  | 'operation'
+  | 'debugging'
+  | 'coding_convention'
+  | 'security'
+  | 'performance'
+  | 'reference';
+
+type InferredProjectLanguage = 'TypeScript' | 'JavaScript' | 'Python' | 'Rust' | 'Go' | 'Unknown';
+
+type EntityRow = typeof entities.$inferSelect;
+type RelationRow = typeof relations.$inferSelect;
+
+const DEFAULT_KNOWLEDGE_KIND: KnowledgeKind = 'observation';
+const DEFAULT_KNOWLEDGE_CATEGORY: KnowledgeCategory = 'reference';
+const KNOWLEDGE_KIND_SET = new Set<KnowledgeKind>([
+  'project_doc',
+  'rule',
+  'procedure',
+  'skill',
+  'decision',
+  'lesson',
+  'observation',
+  'risk',
+  'command_recipe',
+  'reference',
+]);
+const KNOWLEDGE_CATEGORY_SET = new Set<KnowledgeCategory>([
+  'project_overview',
+  'architecture',
+  'mcp',
+  'hook',
+  'memory',
+  'workflow',
+  'testing',
+  'operation',
+  'debugging',
+  'coding_convention',
+  'security',
+  'performance',
+  'reference',
+]);
+export const REQUIRED_PRIMARY_TOOLS = [
+  'initial_instructions',
+  'activate_project',
+  'start_task',
+  'search_knowledge',
+  'record_task_note',
+  'finish_task',
+  'review_task',
+] as const;
+
+export type DoctorRuntimeHealth = {
+  toolVisibility: {
+    status: 'ok' | 'missing_required_primary_tool';
+    exposedToolCount: number;
+    requiredPrimaryTools: string[];
+    presentPrimaryTools: string[];
+    missingPrimaryTools: string[];
+  };
+  db: {
+    status: 'ok' | 'unavailable';
+    detail?: string;
+  };
+  knowledgeIndex: {
+    status: 'fresh' | 'stale' | 'empty' | 'unknown';
+    totalEntities?: number;
+    lastUpdatedAt?: string;
+    ageHours?: number;
+    staleAfterHours: number;
+    detail?: string;
+  };
+};
+
+export type SearchKnowledgeV2Input = {
+  query?: string;
+  preset?: 'task_context' | 'project_characteristics' | 'review_context' | 'procedures' | 'risks';
+  kinds?: KnowledgeKind[];
+  categories?: KnowledgeCategory[];
+  filterMode?: 'and' | 'or';
+  filters?: {
+    kinds?: { mode?: 'and' | 'or'; values: KnowledgeKind[] };
+    categories?: { mode?: 'and' | 'or'; values: KnowledgeCategory[] };
+    tags?: { mode?: 'and' | 'or'; values: string[] };
+    files?: { mode?: 'and' | 'or'; values: string[] };
+    relationTypes?: { mode?: 'and' | 'or'; values: string[] };
+  };
+  files?: string[];
+  intent?: 'plan' | 'edit' | 'debug' | 'review' | 'finish';
+  limitPerCategory?: number;
+  maxCategories?: number;
+  includeContent?: 'summary' | 'snippet' | 'full';
+  grouping?: 'by_category' | 'flat';
+  traversal?: {
+    enabled?: boolean;
+    maxDepth?: number;
+    relationTypes?: string[];
+  };
+};
+
+type ToolSnapshot = {
+  name: string;
+  schemaHash?: string;
+  descriptionHash?: string;
+  schemaVersion?: string;
+  descriptionVersion?: string;
+};
+
+type NormalizedToolSnapshot = {
+  name: string;
+  schemaHash: string;
+  descriptionHash: string;
+};
+
+export type StaleMetadataSignal = {
+  status: 'ok' | 'suspected_stale' | 'unknown';
+  reasons: Array<
+    | 'missing_required_primary_tool'
+    | 'tool_schema_version_mismatch'
+    | 'tool_description_version_mismatch'
+    | 'client_snapshot_unavailable'
+  >;
+  evidence: Array<{
+    tool: string;
+    expectedVersion?: string;
+    observedVersion?: string;
+    detail: string;
+  }>;
+};
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+}
+
+function toSlug(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((item) => stableStringify(item)).join(',')}]`;
+  const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
+    a.localeCompare(b),
+  );
+  return `{${entries
+    .map(([key, val]) => `${JSON.stringify(key)}:${stableStringify(val)}`)
+    .join(',')}}`;
+}
+
+function sha256(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+export function buildToolSnapshotForDoctor(
+  tools: Array<{
+    name: string;
+    description: string;
+    inputSchema: Record<string, unknown>;
+  }>,
+): NormalizedToolSnapshot[] {
+  return tools.map((tool) => ({
+    name: tool.name,
+    schemaHash: sha256(stableStringify(tool.inputSchema)),
+    descriptionHash: sha256(tool.description),
+  }));
+}
+
+function fallbackCategoryByKind(kind: KnowledgeKind): KnowledgeCategory {
+  if (kind === 'rule') return 'coding_convention';
+  if (kind === 'procedure' || kind === 'command_recipe') return 'workflow';
+  if (kind === 'risk') return 'security';
+  if (kind === 'decision') return 'architecture';
+  if (kind === 'lesson') return 'debugging';
+  return DEFAULT_KNOWLEDGE_CATEGORY;
+}
+
+function normalizeKind(rawType: string | null | undefined): KnowledgeKind {
+  if (rawType && KNOWLEDGE_KIND_SET.has(rawType as KnowledgeKind)) {
+    return rawType as KnowledgeKind;
+  }
+  return DEFAULT_KNOWLEDGE_KIND;
+}
+
+function normalizeCategory(rawCategory: unknown, kind: KnowledgeKind): KnowledgeCategory {
+  if (
+    typeof rawCategory === 'string' &&
+    KNOWLEDGE_CATEGORY_SET.has(rawCategory as KnowledgeCategory)
+  ) {
+    return rawCategory as KnowledgeCategory;
+  }
+  return fallbackCategoryByKind(kind);
+}
+
+function inferLanguage(root: string): InferredProjectLanguage[] {
+  const langs = new Set<InferredProjectLanguage>();
+  if (existsSync(path.join(root, 'tsconfig.json'))) langs.add('TypeScript');
+  if (existsSync(path.join(root, 'package.json'))) langs.add('JavaScript');
+  if (
+    existsSync(path.join(root, 'pyproject.toml')) ||
+    existsSync(path.join(root, 'requirements.txt'))
+  ) {
+    langs.add('Python');
+  }
+  if (existsSync(path.join(root, 'Cargo.toml'))) langs.add('Rust');
+  if (existsSync(path.join(root, 'go.mod'))) langs.add('Go');
+  if (langs.size === 0) langs.add('Unknown');
+  return [...langs];
+}
+
+function normalizeEntity(entity: EntityRow) {
+  const metadata = asRecord(entity.metadata);
+  const kind = normalizeKind(entity.type);
+  const category = normalizeCategory(metadata.category, kind);
+  const title = entity.name?.trim() || `Knowledge ${entity.id}`;
+  const description = entity.description?.trim() || '';
+  const purposeRaw = metadata.purpose;
+  const purpose =
+    typeof purposeRaw === 'string' && purposeRaw.length > 0
+      ? purposeRaw
+      : `Use this ${kind} when handling ${category} concerns.`;
+  const tags = asStringArray(metadata.tags);
+  const files = asStringArray(metadata.files);
+  const slugRaw = metadata.slug;
+  const slug =
+    typeof slugRaw === 'string' && slugRaw.length > 0 ? slugRaw : toSlug(title || entity.id);
+  const confidence = typeof entity.confidence === 'number' ? entity.confidence : 0.5;
+  return {
+    entity,
+    metadata,
+    kind,
+    category,
+    title,
+    description,
+    purpose,
+    tags,
+    files,
+    slug,
+    confidence,
+    status: typeof metadata.status === 'string' ? metadata.status : 'active',
+  };
+}
+
+function splitTerms(value: string): string[] {
+  return value
+    .toLowerCase()
+    .split(/\s+/)
+    .map((v) => v.trim())
+    .filter((v) => v.length > 1);
+}
+
+function buildQueryByPreset(input: SearchKnowledgeV2Input): string {
+  if (input.query && input.query.trim().length > 0) return input.query.trim();
+  if (input.preset === 'procedures') return 'procedure skill command';
+  if (input.preset === 'risks') return 'risk lesson rule';
+  if (input.preset === 'review_context') return 'review correctness architecture security';
+  if (input.preset === 'task_context')
+    return `${input.intent ?? 'task'} ${(input.files ?? []).join(' ')}`.trim();
+  if (input.preset === 'project_characteristics') return 'project architecture workflow';
+  return '';
+}
+
+function includesByMode(pool: string[], candidate: string[], mode: 'and' | 'or'): boolean {
+  if (candidate.length === 0) return true;
+  if (pool.length === 0) return false;
+  if (mode === 'and') return candidate.every((value) => pool.includes(value));
+  return candidate.some((value) => pool.includes(value));
+}
+
+function matchWithMode(values: boolean[], mode: 'and' | 'or'): boolean {
+  if (values.length === 0) return true;
+  if (mode === 'and') return values.every(Boolean);
+  return values.some(Boolean);
+}
+
+function toNumberVector(value: unknown): number[] | null {
+  if (!Array.isArray(value)) return null;
+  const vector = value.filter((entry): entry is number => typeof entry === 'number');
+  return vector.length > 0 ? vector : null;
+}
+
+function cosineSimilarity(a: number[], b: number[]): number {
+  if (a.length === 0 || b.length === 0 || a.length !== b.length) return 0;
+  let dot = 0;
+  let aNorm = 0;
+  let bNorm = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    const av = a[i];
+    const bv = b[i];
+    dot += av * bv;
+    aNorm += av * av;
+    bNorm += bv * bv;
+  }
+  if (aNorm === 0 || bNorm === 0) return 0;
+  return dot / (Math.sqrt(aNorm) * Math.sqrt(bNorm));
+}
+
+function scoreEntity(
+  normalized: ReturnType<typeof normalizeEntity>,
+  queryTerms: string[],
+  files: string[],
+  queryEmbedding: number[] | null,
+) {
+  const text = `${normalized.title} ${normalized.description} ${normalized.purpose}`.toLowerCase();
+  const lexicalHits = queryTerms.filter((term) => text.includes(term));
+  const lexicalScore = queryTerms.length === 0 ? 0 : lexicalHits.length / queryTerms.length;
+  const entityEmbedding = toNumberVector(normalized.entity.embedding);
+  const vectorSimilarity =
+    queryEmbedding && entityEmbedding
+      ? Math.max(0, cosineSimilarity(queryEmbedding, entityEmbedding))
+      : 0;
+  const vectorScore = vectorSimilarity > 0.35 ? vectorSimilarity : 0;
+  const fileMatch = files.length > 0 && includesByMode(normalized.files, files, 'or');
+  const confidenceScore = Math.max(0, Math.min(1, normalized.confidence));
+  const recencyDate = normalized.entity.lastReferencedAt ?? normalized.entity.createdAt;
+  const recencyScore = recencyDate
+    ? Math.max(0, 1 - (Date.now() - recencyDate.getTime()) / (14 * 86_400_000))
+    : 0;
+  const score =
+    lexicalScore * 0.45 +
+    vectorScore * 0.25 +
+    confidenceScore * 0.2 +
+    recencyScore * 0.05 +
+    (fileMatch ? 0.05 : 0);
+  const matchSources: Array<
+    'vector' | 'lexical' | 'graph' | 'applicability' | 'recency' | 'confidence'
+  > = [];
+  if (lexicalHits.length > 0) matchSources.push('lexical');
+  if (vectorScore > 0) matchSources.push('vector');
+  if (fileMatch) matchSources.push('applicability');
+  if (recencyScore > 0) matchSources.push('recency');
+  matchSources.push('confidence');
+  if (matchSources.length === 0) matchSources.push('lexical');
+  return { score, lexicalHits, matchSources, recencyDate, vectorScore };
+}
+
+export async function resolveStaleMetadataSignal(
+  clientSnapshot?: ToolSnapshot[],
+): Promise<StaleMetadataSignal> {
+  if (!clientSnapshot || clientSnapshot.length === 0) {
+    return {
+      status: 'unknown',
+      reasons: ['client_snapshot_unavailable'],
+      evidence: [
+        {
+          tool: 'client_snapshot',
+          detail: 'No client-side tool snapshot was provided for stale metadata inspection.',
+        },
+      ],
+    };
+  }
+
+  const reasons = new Set<StaleMetadataSignal['reasons'][number]>();
+  const evidence: StaleMetadataSignal['evidence'] = [];
+  const serverSnapshot = ((globalThis as Record<string, unknown>).__GNOSIS_TOOL_SNAPSHOT ??
+    []) as NormalizedToolSnapshot[];
+  const observedNames = new Set(clientSnapshot.map((tool) => tool.name));
+  const missingPrimary = REQUIRED_PRIMARY_TOOLS.filter((toolName) => !observedNames.has(toolName));
+  for (const missing of missingPrimary) {
+    reasons.add('missing_required_primary_tool');
+    evidence.push({
+      tool: missing,
+      detail: 'Required primary tool is missing in client snapshot.',
+    });
+  }
+
+  const serverByName = new Map(serverSnapshot.map((tool) => [tool.name, tool]));
+  for (const tool of clientSnapshot) {
+    const serverTool = serverByName.get(tool.name);
+    if (serverTool) {
+      if (tool.schemaHash && tool.schemaHash !== serverTool.schemaHash) {
+        reasons.add('tool_schema_version_mismatch');
+        evidence.push({
+          tool: tool.name,
+          expectedVersion: serverTool.schemaHash,
+          observedVersion: tool.schemaHash,
+          detail: 'Tool input schema hash mismatched with current server snapshot.',
+        });
+      }
+      if (tool.descriptionHash && tool.descriptionHash !== serverTool.descriptionHash) {
+        reasons.add('tool_description_version_mismatch');
+        evidence.push({
+          tool: tool.name,
+          expectedVersion: serverTool.descriptionHash,
+          observedVersion: tool.descriptionHash,
+          detail: 'Tool description hash mismatched with current server snapshot.',
+        });
+      }
+    }
+    if (tool.schemaVersion && tool.schemaVersion !== '1') {
+      reasons.add('tool_schema_version_mismatch');
+      evidence.push({
+        tool: tool.name,
+        expectedVersion: '1',
+        observedVersion: tool.schemaVersion,
+        detail: 'Tool schema version is not the expected baseline value.',
+      });
+    }
+    if (tool.descriptionVersion && tool.descriptionVersion !== '1') {
+      reasons.add('tool_description_version_mismatch');
+      evidence.push({
+        tool: tool.name,
+        expectedVersion: '1',
+        observedVersion: tool.descriptionVersion,
+        detail: 'Tool description version is not the expected baseline value.',
+      });
+    }
+  }
+
+  return {
+    status: reasons.size > 0 ? 'suspected_stale' : 'ok',
+    reasons: [...reasons],
+    evidence,
+  };
+}
+
+export async function buildDoctorRuntimeHealth(
+  exposedToolNames: string[],
+): Promise<DoctorRuntimeHealth> {
+  const presentPrimaryTools = REQUIRED_PRIMARY_TOOLS.filter((name) =>
+    exposedToolNames.includes(name),
+  );
+  const missingPrimaryTools = REQUIRED_PRIMARY_TOOLS.filter(
+    (name) => !exposedToolNames.includes(name),
+  );
+  const toolVisibility: DoctorRuntimeHealth['toolVisibility'] = {
+    status: missingPrimaryTools.length === 0 ? 'ok' : 'missing_required_primary_tool',
+    exposedToolCount: exposedToolNames.length,
+    requiredPrimaryTools: [...REQUIRED_PRIMARY_TOOLS],
+    presentPrimaryTools,
+    missingPrimaryTools,
+  };
+
+  let dbHealth: DoctorRuntimeHealth['db'] = { status: 'ok' };
+  let knowledgeIndex: DoctorRuntimeHealth['knowledgeIndex'] = {
+    status: 'unknown',
+    staleAfterHours: 72,
+  };
+  try {
+    const snapshot = await db
+      .select({
+        total: sql<number>`count(*)`,
+        lastUpdatedAt: sql<string | null>`max(${entities.freshness})`,
+      })
+      .from(entities);
+    const row = snapshot[0];
+    const total = Number(row?.total ?? 0);
+    const lastUpdatedAtRaw = row?.lastUpdatedAt;
+    const lastUpdatedAt =
+      typeof lastUpdatedAtRaw === 'string' && lastUpdatedAtRaw.length > 0
+        ? lastUpdatedAtRaw
+        : undefined;
+    if (total === 0) {
+      knowledgeIndex = {
+        status: 'empty',
+        totalEntities: 0,
+        staleAfterHours: 72,
+      };
+    } else if (!lastUpdatedAt) {
+      knowledgeIndex = {
+        status: 'unknown',
+        totalEntities: total,
+        staleAfterHours: 72,
+        detail: 'Could not determine last freshness timestamp.',
+      };
+    } else {
+      const ageHours = Math.max(
+        0,
+        (Date.now() - new Date(lastUpdatedAt).getTime()) / (60 * 60 * 1000),
+      );
+      knowledgeIndex = {
+        status: ageHours > 72 ? 'stale' : 'fresh',
+        totalEntities: total,
+        lastUpdatedAt: new Date(lastUpdatedAt).toISOString(),
+        ageHours: Number(ageHours.toFixed(2)),
+        staleAfterHours: 72,
+      };
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    dbHealth = { status: 'unavailable', detail: message };
+    knowledgeIndex = {
+      status: 'unknown',
+      staleAfterHours: 72,
+      detail: `Knowledge index freshness check failed: ${message}`,
+    };
+  }
+
+  return {
+    toolVisibility,
+    db: dbHealth,
+    knowledgeIndex,
+  };
+}
+
+export async function buildActivateProjectResult(projectRoot: string, mode?: string) {
+  const warnings: string[] = [];
+  let dbStatus: 'ok' | 'degraded' | 'unavailable' = 'ok';
+  let rows: EntityRow[] = [];
+  try {
+    await db.execute(sql`select 1`);
+    rows = await db.select().from(entities).orderBy(desc(entities.referenceCount)).limit(300);
+  } catch (error) {
+    dbStatus = 'unavailable';
+    const message = error instanceof Error ? error.message : String(error);
+    warnings.push(`Database unavailable: ${message}`);
+  }
+
+  const normalizedRows = rows
+    .map(normalizeEntity)
+    .filter((item) => item.status !== 'deprecated' && item.status !== 'rejected');
+  const byKind: Record<string, number> = {};
+  const byCategory: Record<string, number> = {};
+  for (const item of normalizedRows) {
+    byKind[item.kind] = (byKind[item.kind] ?? 0) + 1;
+    byCategory[item.category] = (byCategory[item.category] ?? 0) + 1;
+  }
+
+  const kindsForOnboarding: KnowledgeKind[] = ['rule', 'procedure', 'decision', 'lesson', 'risk'];
+  const categoriesForOnboarding: KnowledgeCategory[] = [
+    'architecture',
+    'workflow',
+    'testing',
+    'security',
+  ];
+  const missingKinds = kindsForOnboarding.filter((kind) => !byKind[kind]);
+  const missingCategories = categoriesForOnboarding.filter((category) => !byCategory[category]);
+  const onboardingStatus: 'complete' | 'missing' | 'partial' =
+    normalizedRows.length === 0
+      ? 'missing'
+      : missingKinds.length === 0 && missingCategories.length === 0
+        ? 'complete'
+        : 'partial';
+
+  const projectKeywords = normalizedRows
+    .slice(0, 12)
+    .flatMap((item) => [item.title, ...item.tags])
+    .map((value) => value.toLowerCase())
+    .filter((value, index, arr) => value.length > 0 && arr.indexOf(value) === index)
+    .slice(0, 8);
+
+  const representativeEntities = normalizedRows.slice(0, 5).map((item) => ({
+    entityId: item.entity.id,
+    title: item.title,
+    kind: item.kind,
+    category: item.category,
+    reason: `Top entity by reference count (${item.entity.referenceCount}).`,
+  }));
+
+  const topItems = normalizedRows.slice(0, 5).map((item) => ({
+    entityId: item.entity.id,
+    slug: item.slug,
+    title: item.title,
+    kind: item.kind,
+    category: item.category,
+    purpose: item.purpose,
+    reason: `Frequently referenced ${item.kind} in ${item.category}.`,
+    updatedAt: (item.entity.lastReferencedAt ?? item.entity.createdAt).toISOString(),
+  }));
+
+  const recommendedNextCalls = [];
+  if (mode === 'review') {
+    recommendedNextCalls.push(
+      { tool: 'search_knowledge', reason: 'Collect architecture/risk knowledge before review.' },
+      { tool: 'review_task', reason: 'Run knowledge-aware review with local or cloud provider.' },
+    );
+  } else {
+    recommendedNextCalls.push(
+      { tool: 'search_knowledge', reason: 'Retrieve relevant rules, lessons, and procedures.' },
+      { tool: 'start_task', reason: 'Start a task trace before editing work.' },
+    );
+  }
+  if (onboardingStatus !== 'complete') {
+    recommendedNextCalls.push({
+      tool: 'record_task_note',
+      reason: 'Capture missing onboarding knowledge categories incrementally.',
+    });
+  }
+
+  return {
+    project: {
+      name: path.basename(projectRoot),
+      root: projectRoot,
+      languages: inferLanguage(projectRoot),
+    },
+    health: {
+      db: dbStatus,
+      hooks: getLoadedHookRuleCount() > 0 ? 'enabled' : 'disabled',
+      toolVersion: process.env.GNOSIS_TOOL_VERSION ?? process.env.npm_package_version ?? '0.2.0',
+      warnings,
+      automation:
+        process.env.GNOSIS_ENABLE_AUTOMATION === 'true'
+          ? ('enabled' as const)
+          : ('disabled' as const),
+    },
+    onboarding: {
+      status: onboardingStatus,
+      missingKinds,
+      missingCategories,
+      guidance:
+        onboardingStatus === 'complete'
+          ? undefined
+          : 'Use record_task_note to add rule/procedure/decision/lesson/risk notes as you work.',
+    },
+    knowledgeIndex: {
+      totalActive: normalizedRows.length,
+      byKind,
+      byCategory,
+      projectKeywords,
+      projectCharacteristics: Object.entries(byCategory)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 4)
+        .map(([label, count]) => ({
+          label,
+          reason: `Category has ${count} active entities.`,
+          confidence: Math.min(1, 0.4 + count / Math.max(1, normalizedRows.length)),
+        })),
+      representativeEntities,
+      topItems,
+    },
+    recommendedNextCalls,
+    instructions:
+      'First call should be activate_project. Then use search_knowledge and start_task before edits.',
+  };
+}
+
+export async function searchKnowledgeV2(input: SearchKnowledgeV2Input) {
+  const query = buildQueryByPreset(input);
+  const queryTerms = splitTerms(query);
+  let queryEmbedding: number[] | null = null;
+  if (query.length > 0) {
+    try {
+      queryEmbedding = await generateEmbedding(query);
+    } catch {
+      queryEmbedding = null;
+    }
+  }
+  let rows: EntityRow[] = [];
+  try {
+    rows = await db.select().from(entities).orderBy(desc(entities.referenceCount)).limit(400);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      groups: [],
+      flatTopHits: [],
+      suggestedNextAction: 'refine_query' as const,
+      degraded: {
+        reason: 'db_unavailable',
+        detail: message,
+      },
+    };
+  }
+  const normalizedRows = rows
+    .map(normalizeEntity)
+    .filter((item) => item.status !== 'deprecated' && item.status !== 'rejected');
+  const topLevelMode = input.filterMode ?? 'or';
+  const explicitKinds = input.kinds ?? [];
+  const explicitCategories = input.categories ?? [];
+
+  const scored = normalizedRows
+    .map((item) => {
+      const filterChecks: boolean[] = [];
+      if (explicitKinds.length > 0) {
+        filterChecks.push(explicitKinds.includes(item.kind));
+      }
+      if (explicitCategories.length > 0) {
+        filterChecks.push(explicitCategories.includes(item.category));
+      }
+      if (input.filters?.kinds?.values?.length) {
+        filterChecks.push(
+          includesByMode(
+            [item.kind],
+            input.filters.kinds.values,
+            input.filters.kinds.mode ?? topLevelMode,
+          ),
+        );
+      }
+      if (input.filters?.categories?.values?.length) {
+        filterChecks.push(
+          includesByMode(
+            [item.category],
+            input.filters.categories.values,
+            input.filters.categories.mode ?? topLevelMode,
+          ),
+        );
+      }
+      if (input.filters?.tags?.values?.length) {
+        filterChecks.push(
+          includesByMode(
+            item.tags,
+            input.filters.tags.values,
+            input.filters.tags.mode ?? topLevelMode,
+          ),
+        );
+      }
+      if (input.filters?.files?.values?.length) {
+        filterChecks.push(
+          includesByMode(
+            item.files,
+            input.filters.files.values,
+            input.filters.files.mode ?? topLevelMode,
+          ),
+        );
+      }
+      const passFilters = matchWithMode(filterChecks, topLevelMode);
+      const scoring = scoreEntity(item, queryTerms, input.files ?? [], queryEmbedding);
+      return { item, passFilters, ...scoring };
+    })
+    .filter((row) => row.passFilters)
+    .filter((row) => (queryTerms.length === 0 && !queryEmbedding ? true : row.score > 0))
+    .sort((a, b) => b.score - a.score);
+
+  const limitPerCategory = Math.max(1, input.limitPerCategory ?? 3);
+  const maxCategories = Math.max(1, input.maxCategories ?? 5);
+  const grouped: Record<string, typeof scored> = {};
+  for (const row of scored) {
+    const key = row.item.category;
+    grouped[key] ??= [];
+    if (grouped[key].length < limitPerCategory) {
+      grouped[key].push(row);
+    }
+  }
+
+  const topGroups = Object.entries(grouped)
+    .sort((a, b) => b[1][0].score - a[1][0].score)
+    .slice(0, maxCategories);
+
+  const topHitIds = new Set(topGroups.flatMap(([, hits]) => hits.map((hit) => hit.item.entity.id)));
+  const relationRows = (await db.select().from(relations).limit(300)) as RelationRow[];
+  const relationTypeFilter = input.traversal?.relationTypes;
+  const allowGraph = input.traversal?.enabled ?? true;
+
+  const groups = topGroups.map(([category, hits]) => ({
+    category,
+    categoryReason: `Top matches in ${category} for current query.`,
+    suggestedUse: `Apply ${category} knowledge before implementation decisions.`,
+    hits: hits.map((hit) => {
+      const snippetSource = hit.item.description || hit.item.purpose;
+      const snippet =
+        input.includeContent === 'full'
+          ? snippetSource
+          : snippetSource.length > 300
+            ? `${snippetSource.slice(0, 297)}...`
+            : snippetSource;
+      const graphContext =
+        allowGraph && topHitIds.has(hit.item.entity.id)
+          ? relationRows
+              .filter(
+                (rel) => rel.sourceId === hit.item.entity.id || rel.targetId === hit.item.entity.id,
+              )
+              .filter((rel) =>
+                relationTypeFilter && relationTypeFilter.length > 0
+                  ? relationTypeFilter.includes(rel.relationType)
+                  : true,
+              )
+              .slice(0, 3)
+              .map((rel) => {
+                const neighborId =
+                  rel.sourceId === hit.item.entity.id ? rel.targetId : rel.sourceId;
+                const neighbor = normalizedRows.find((row) => row.entity.id === neighborId);
+                return {
+                  entityId: neighborId,
+                  relationType: rel.relationType,
+                  title: neighbor?.title ?? neighborId,
+                  kind: neighbor?.kind ?? DEFAULT_KNOWLEDGE_KIND,
+                };
+              })
+          : [];
+
+      return {
+        entityId: hit.item.entity.id,
+        slug: hit.item.slug,
+        title: hit.item.title.slice(0, 80),
+        kind: hit.item.kind,
+        category: hit.item.category,
+        purpose: hit.item.purpose,
+        score: Number(hit.score.toFixed(4)),
+        confidence: hit.item.confidence,
+        reason:
+          hit.lexicalHits.length > 0
+            ? `Matched terms: ${hit.lexicalHits.join(', ')}`
+            : 'Ranked by confidence and recency.',
+        snippet,
+        applicabilityMatch: hit.item.files.length > 0 ? hit.item.files.join(', ') : undefined,
+        evidenceSummary:
+          typeof hit.item.metadata.evidenceSummary === 'string'
+            ? hit.item.metadata.evidenceSummary
+            : undefined,
+        matchSources: hit.matchSources,
+        graphContext,
+        updatedAt: (hit.recencyDate ?? hit.item.entity.createdAt).toISOString(),
+      };
+    }),
+  }));
+
+  return {
+    groups: input.grouping === 'flat' ? [] : groups,
+    flatTopHits: scored.slice(0, 8).map((row) => ({
+      entityId: row.item.entity.id,
+      title: row.item.title,
+      kind: row.item.kind,
+      category: row.item.category,
+      score: Number(row.score.toFixed(4)),
+    })),
+    suggestedNextAction: scored.length === 0 ? 'refine_query' : 'read_hit',
+  };
+}
+
+export type RecordTaskNoteInput = {
+  taskId?: string;
+  content: string;
+  kind?: KnowledgeKind;
+  category?: KnowledgeCategory;
+  title?: string;
+  purpose?: string;
+  tags?: string[];
+  evidence?: Array<{ type?: string; value?: string; uri?: string }>;
+  files?: string[];
+  confidence?: number;
+  source?: 'manual' | 'task' | 'hook' | 'review' | 'onboarding' | 'import';
+};
+
+export async function startTaskTrace(input: {
+  title: string;
+  intent?: 'plan' | 'edit' | 'debug' | 'review' | 'finish';
+  files?: string[];
+  projectRoot?: string;
+  taskId?: string;
+}) {
+  const taskId = input.taskId?.trim() || `task/${Date.now()}`;
+  const now = new Date();
+  const metadata = {
+    kind: 'task_trace',
+    intent: input.intent ?? 'edit',
+    files: input.files ?? [],
+    projectRoot: input.projectRoot ?? process.cwd(),
+    status: 'active',
+    startedAt: now.toISOString(),
+  };
+  await db
+    .insert(entities)
+    .values({
+      id: taskId,
+      type: 'task_trace',
+      name: input.title.trim().length > 0 ? input.title.trim() : taskId,
+      description: `Task started (${metadata.intent}).`,
+      metadata,
+      confidence: 0.8,
+      provenance: 'task',
+      scope: 'on_demand',
+      freshness: now,
+    })
+    .onConflictDoUpdate({
+      target: entities.id,
+      set: {
+        type: sql`excluded.type`,
+        name: sql`excluded.name`,
+        description: sql`excluded.description`,
+        metadata: sql`excluded.metadata`,
+        confidence: sql`excluded.confidence`,
+        provenance: sql`excluded.provenance`,
+        freshness: sql`excluded.freshness`,
+      },
+    });
+  return {
+    taskId,
+    status: 'started',
+    activationWarning: 'If not already done, call activate_project first for project context.',
+    recommendedNextCalls: [
+      { tool: 'search_knowledge', reason: 'Collect rules/procedures before editing.' },
+      { tool: 'record_task_note', reason: 'Capture reusable findings during work.' },
+    ],
+  };
+}
+
+export async function recordTaskNote(input: RecordTaskNoteInput) {
+  const now = new Date();
+  const kind = input.kind ?? DEFAULT_KNOWLEDGE_KIND;
+  const category = input.category ?? fallbackCategoryByKind(kind);
+  const title =
+    input.title?.trim() && input.title.trim().length > 0
+      ? input.title.trim()
+      : input.content.trim().replace(/\s+/g, ' ').slice(0, 80) || `note-${now.getTime()}`;
+  const entityId = generateEntityId(kind, `${title}-${now.getTime()}`);
+  const metadata = {
+    slug: toSlug(title),
+    category,
+    purpose: input.purpose ?? `Reusable ${kind} for ${category} work.`,
+    tags: input.tags ?? [],
+    files: input.files ?? [],
+    evidence: input.evidence ?? [],
+    source: input.source ?? 'task',
+    taskId: input.taskId,
+    status: 'active',
+    enrichmentState: 'pending',
+    inferred: {
+      title: !input.title,
+      kind: !input.kind,
+      category: !input.category,
+      purpose: !input.purpose,
+      tags: !input.tags || input.tags.length === 0,
+    },
+  };
+
+  await db
+    .insert(entities)
+    .values({
+      id: entityId,
+      type: kind,
+      name: title,
+      description: input.content,
+      metadata,
+      confidence: input.confidence ?? 0.7,
+      provenance: input.source ?? 'task',
+      scope: 'on_demand',
+      freshness: now,
+    })
+    .onConflictDoUpdate({
+      target: entities.id,
+      set: {
+        name: sql`excluded.name`,
+        description: sql`excluded.description`,
+        metadata: sql`excluded.metadata`,
+        confidence: sql`excluded.confidence`,
+        freshness: sql`excluded.freshness`,
+      },
+    });
+
+  return {
+    saved: true,
+    entityId,
+    slug: metadata.slug,
+    kind,
+    category,
+    enrichmentState: 'pending',
+  };
+}
+
+export async function finishTaskTrace(input: {
+  taskId: string;
+  outcome: string;
+  checks?: string[];
+  followUps?: string[];
+  learnedItems?: Array<Omit<RecordTaskNoteInput, 'taskId'>>;
+}) {
+  const [taskRow] = await db
+    .select()
+    .from(entities)
+    .where(sql`${entities.id} = ${input.taskId}`)
+    .limit(1);
+  const taskMetadata = asRecord(taskRow?.metadata);
+  const updatedMetadata = {
+    ...taskMetadata,
+    status: 'completed',
+    outcome: input.outcome,
+    checks: input.checks ?? [],
+    followUps: input.followUps ?? [],
+    finishedAt: new Date().toISOString(),
+  };
+  await db
+    .insert(entities)
+    .values({
+      id: input.taskId,
+      type: taskRow?.type ?? 'task_trace',
+      name: taskRow?.name ?? input.taskId,
+      description: input.outcome,
+      metadata: updatedMetadata,
+      confidence: taskRow?.confidence ?? 0.8,
+      provenance: taskRow?.provenance ?? 'task',
+      scope: taskRow?.scope ?? 'on_demand',
+      freshness: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: entities.id,
+      set: {
+        description: sql`excluded.description`,
+        metadata: sql`excluded.metadata`,
+        freshness: sql`excluded.freshness`,
+      },
+    });
+
+  const learnedEntities: Array<{ entityId: string; kind: string; category: string }> = [];
+  for (const item of input.learnedItems ?? []) {
+    const saved = await recordTaskNote({
+      ...item,
+      taskId: input.taskId,
+      source: item.source ?? 'task',
+    });
+    learnedEntities.push({
+      entityId: saved.entityId,
+      kind: saved.kind,
+      category: saved.category,
+    });
+  }
+
+  return {
+    taskId: input.taskId,
+    status: 'completed',
+    learnedCount: learnedEntities.length,
+    learnedEntities,
+    suggestedNextAction:
+      learnedEntities.length > 0
+        ? 'search_knowledge to verify retrieval quality'
+        : 'record_task_note',
+  };
+}

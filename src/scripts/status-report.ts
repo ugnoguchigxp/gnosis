@@ -23,6 +23,11 @@ async function getDbSize(): Promise<string> {
 }
 
 async function main() {
+  if (process.env.GNOSIS_ENABLE_AUTOMATION !== 'true') {
+    console.log('[status-report] Automation is OFF. Skipping scheduled report.');
+    process.exit(0);
+  }
+
   try {
     const size = await getDbSize();
 

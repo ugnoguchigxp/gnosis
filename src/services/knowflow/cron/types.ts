@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { KeywordEvalAliasSchema } from '../../../config.js';
 
-export const KeywordSourceTypeSchema = z.enum(['episode', 'experience']);
+export const KeywordSourceTypeSchema = z.enum(['experience']);
 export type KeywordSourceType = z.infer<typeof KeywordSourceTypeSchema>;
 
 export const KeywordEvaluationItemSchema = z

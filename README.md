@@ -1,17 +1,16 @@
-# Gnosis: AI Autonomous Memory Stack
+# Gnosis: Agent-First Memory and Review MCP
 
-Gnosis は、AI エージェント向けのローカル記憶スタックです。MCP サーバーとして動作し、長期記憶（ベクトル検索）と知識グラフを統合します。
+Gnosis は、LLM エージェント向けの agent-first な知識・記憶・レビュー基盤です。  
+MCP サーバーとして動作し、一次導線は `activate_project -> search_knowledge -> start_task` を中心に設計されています。
+
+Episode 機能は中核ワークフローから外し、再利用可能な knowledge（rule/lesson/procedure/skill/decision/risk/command recipe）に寄せています。
 
 ## 5分で最小起動 (minimal)
 
 ### 前提条件
 - Bun 1.1+
-- Docker (PostgreSQL + pgvector 用)
-- Python 3.10+
-
-### サポート方針
-- 正式対象: macOS / Linux
-- Windows: まだ正式サポート外（ただし新規セットアップ実装は Windows 展開を阻害しない方針）
+- Docker (`postgres` コンテナ起動用)
+- Python 3.10+（embedding サービス初期化で使用）
 
 ### 最短手順
 ```bash
@@ -22,85 +21,95 @@ bun run doctor
 bun run onboarding:smoke
 ```
 
-`onboarding:smoke` が成功すれば、最小導線は完了です。
+`onboarding:smoke` が成功すれば最小導線は完了です。
 
-## 構成別の導線
+## 構成別セットアップ
 
-| 構成 | 想定用途 | セットアップ |
+| 構成 | 想定用途 | 実行コマンド |
 | :--- | :--- | :--- |
-| minimal | まず起動確認だけしたい | `bun run bootstrap` |
-| local-llm | ローカル LLM も同時に運用したい | `bun run bootstrap:local-llm` |
-| cloud-review | cloud reviewer を使いたい | `.env.minimal` へ `.env.cloud-review` の必要項目を追記 |
+| minimal | まず起動確認したい | `bun run bootstrap` |
+| local-llm | ローカル LLM も使いたい | `bun run bootstrap:local-llm` |
+| cloud-review | cloud reviewer を使いたい | `.env` に `.env.cloud-review` の必要項目を追記 |
 
-テンプレート:
+利用テンプレート:
 - `.env.minimal`
 - `.env.local-llm`
 - `.env.cloud-review`
-- `.env.example`（互換用の入口）
+- `.env.example`（テンプレート案内用）
 
-## よくある失敗
+## MCP 公開面（Antigravity 互換）
 
-1. Docker が起動していない  
-`docker compose up -d db` を実行してから `bun run doctor` を再実行。
+- 既定: `GNOSIS_MCP_TOOL_EXPOSURE=primary`（Agent-First ツールのみ）
+- 互換モード: `GNOSIS_MCP_TOOL_EXPOSURE=all`（legacy/advanced も公開）
 
-2. `.env` がない  
-`bun run bootstrap` が未実行。先に bootstrap を実行。
+Antigravity 側でツール不足エラーが出る場合は `all` に切り替え、MCP サーバーとクライアントを再起動してください。
 
-3. DB 初期化が未完了  
-`bun run db:init` を実行後、`bun run onboarding:smoke` を再実行。
+## 品質チェック
+
+`verify` は品質ゲートを一括実行します。
+
+```bash
+bun run verify:fast
+bun run verify
+bun run verify:strict
+```
+
+実行内容:
+- `verify:fast`: `format-check` / `lint` / `typecheck` / `build`
+- `verify`: `format-check` / `lint` / `typecheck` / `build` / `test`
+- `verify:strict`: `verify` + `coverage` + `failure-path` + `smoke` + `flaky-check` + `integration-local`
 
 ## 日常コマンド
 
 ```bash
 bun run start
-bun run verify:fast
+bun run doctor
+bun run db:init
 bun run verify
-bun run verify:strict
 bun run maintenance
 ```
 
-## 概要
-
-### 主要機能
+## 主要機能
 
 | 機能 | 説明 |
 | :--- | :--- |
-| Vibe Memory | ベクトル + メタデータのハイブリッド検索 |
-| Knowledge Graph | 関係性を持つ Graph RAG 基盤 |
-| Gnosis Hook | 変更検知ベースの自動検証・ガード |
-| KnowFlow | Web 検索連携の知識収集・検証フロー |
-| Unified Scheduler | バックグラウンド整理タスクの統合運用 |
-| Monitor UI | Tauri + SvelteKit の監視 UI |
+| Agent-First MCP | `initial_instructions`, `activate_project`, `search_knowledge`, `start_task` などの一次導線 |
+| Vibe Memory | ベクトル + メタデータ検索による長期記憶 |
+| Knowledge Graph | 関係性を扱う Graph RAG |
+| Review | コード/ドキュメント/実装計画レビュー |
+| KnowFlow | 自律的な知識収集タスク（キュー/ワーカー） |
+| Monitor UI | Tauri + SvelteKit の管理画面 |
 
-### アーキテクチャ
+## アーキテクチャ（概要）
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
-│                      MCP Clients (IDE)                      │
+│                    MCP Clients (IDE/Agents)                 │
 └──────────────────────────────┬──────────────────────────────┘
                                │ MCP Protocol
 ┌──────────────────────────────▼──────────────────────────────┐
 │                      Gnosis Core (Bun)                      │
 │  ┌────────────────────────────────────────────────────────┐ │
-│  │   Memory Services (Semantic / Episode / Procedural)   │ │
-│  └──────┬───────────────┬───────────────┬─────────────────┘ │
-│         │               │               │                   │
-│  ┌──────▼──────┐ ┌──────▼──────┐ ┌──────▼──────┐            │
-│  │ PostgreSQL  │ │   SQLite    │ │  Local LLM  │            │
-│  │ (pgvector)  │ │ (Scheduler) │ │ (optional)  │            │
-│  └─────────────┘ └─────────────┘ └─────────────┘            │
+│  │ Agent-First Tools / Memory / Graph / Review / KnowFlow│ │
+│  └──────┬───────────────────────────┬─────────────────────┘ │
+│         │                           │                       │
+│  ┌──────▼──────┐             ┌──────▼──────┐                │
+│  │ PostgreSQL  │             │  Local LLM  │                │
+│  │ (pgvector)  │             │ (optional)  │                │
+│  └─────────────┘             └─────────────┘                │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ## ドキュメント
 
-- [アーキテクチャ詳細](docs/architecture.md)
-- [設定リファレンス](docs/configuration.md)
-- [データレイヤー](docs/data-layers.md)
-- [MCP ツール](docs/mcp-tools.md)
-- [Hook ガイド](docs/hooks-guide.md)
-- [KnowFlow ガイド](docs/knowflow-guide.md)
-- [Automation 運用](docs/automation.md)
+- [Startup Guide](docs/startup.md)
+- [Configuration](docs/configuration.md)
+- [MCP Tools](docs/mcp-tools.md)
+- [Architecture](docs/architecture.md)
+- [Data Layers](docs/data-layers.md)
+- [Hooks Guide](docs/hooks-guide.md)
+- [KnowFlow Guide](docs/knowflow-guide.md)
+- [Agent-First Refactoring Plan](docs/agent-first-gnosis-refactoring-plan.md)
 
 ## ライセンス
 

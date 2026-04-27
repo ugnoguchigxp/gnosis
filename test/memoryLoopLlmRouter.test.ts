@@ -23,7 +23,7 @@ const runtime: MemoryLoopRuntimeConfigForTest = {
 describe('routeMemoryLoopLlm', () => {
   it('uses local primary route for first attempt', () => {
     const result = routeMemoryLoopLlm(
-      { taskKind: 'consolidation', retryCount: 0, riskLevel: 'low' },
+      { taskKind: 'distillation', retryCount: 0, riskLevel: 'low' },
       runtime,
     );
     expect(result.alias).toBe('gemma4');
@@ -41,7 +41,7 @@ describe('routeMemoryLoopLlm', () => {
 
   it('falls back to secondary local alias on retry', () => {
     const result = routeMemoryLoopLlm(
-      { taskKind: 'consolidation', retryCount: 1, riskLevel: 'low' },
+      { taskKind: 'distillation', retryCount: 1, riskLevel: 'low' },
       runtime,
     );
     expect(result.alias).toBe('bonsai');
