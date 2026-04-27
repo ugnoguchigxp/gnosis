@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
+import { reviewDocument, type ReviewDocumentFinding } from '../../services/reviewAgent/documentReviewer.js';
+import { generateImplementationPlan } from '../../services/specAgent/implementationPlanner.js';
+import { analyzePlanAlignment } from '../../services/specAgent/planAlignment.js';
+import { analyzeSpecAlignment } from '../../services/specAgent/specAlignment.js';
 import {
   buildActivateProjectResult,
   buildDoctorRuntimeHealth,
@@ -23,9 +28,6 @@ import {
   ReviewRequestSchema,
 } from '../../services/review/types.js';
 import type { ToolEntry } from '../registry.js';
-import { reviewDocumentTools } from './reviewDocument.js';
-import { reviewImplementationPlanTools } from './reviewImplementationPlan.js';
-import { reviewSpecDocumentTools } from './reviewSpecDocument.js';
 
 const KNOWLEDGE_KINDS = [
   'project_doc',
@@ -199,33 +201,11 @@ const reviewTaskSchema = z.object({
   knowledgePolicy: KnowledgePolicySchema.optional(),
 });
 
-function extractJsonText(content: Array<{ type: string; text: string }>): unknown {
-  for (const chunk of content) {
-    if (chunk.type !== 'text') continue;
-    const text = chunk.text.trim();
-    if (!(text.startsWith('{') || text.startsWith('['))) continue;
-    try {
-      return JSON.parse(text);
-    } catch {
-      // continue
-    }
-  }
-  return null;
-}
-
 function mapSeverityToReviewTask(severity: string): 'critical' | 'major' | 'minor' | 'info' {
   if (severity === 'error' || severity === 'critical') return 'critical';
   if (severity === 'warning' || severity === 'major') return 'major';
   if (severity === 'minor') return 'minor';
   return 'info';
-}
-
-function toOptionalString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
-
-function toOptionalNumber(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
 function mapReviewOutputFindings(review: ReviewOutput) {
@@ -240,21 +220,32 @@ function mapReviewOutputFindings(review: ReviewOutput) {
   }));
 }
 
-function mapGenericFinding(finding: Record<string, unknown>, fallbackTitle: string) {
-  const line =
-    toOptionalNumber(finding.lineNumber) ??
-    toOptionalNumber(finding.line_new) ??
-    toOptionalNumber(finding.line);
-  const file =
-    toOptionalString(finding.filePath) ??
-    toOptionalString(finding.file_path) ??
-    toOptionalString(finding.file);
+function isWithin(base: string, target: string): boolean {
+  const relative = path.relative(base, target);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+async function loadReviewTargetText(
+  repoPath: string,
+  documentPath?: string,
+  content?: string,
+): Promise<string> {
+  if (typeof content === 'string') return content;
+  if (!documentPath) return '';
+  const resolved = path.resolve(repoPath, documentPath);
+  if (!isWithin(repoPath, resolved)) return '';
+  return fs.readFile(resolved, 'utf8').catch(() => '');
+}
+
+function mapDocumentFinding(finding: ReviewDocumentFinding, fallbackFile: string) {
   return {
-    severity: mapSeverityToReviewTask(String(finding.severity ?? 'info')),
-    title: String(finding.title ?? fallbackTitle),
-    body: String(finding.rationale ?? finding.body ?? ''),
-    file,
-    line,
+    severity: mapSeverityToReviewTask(finding.severity),
+    title: finding.title,
+    body: finding.rationale,
+    file: fallbackFile,
+    line: finding.location?.line,
+    evidence: finding.evidence ? [finding.evidence] : [],
+    relatedKnowledge: finding.knowledgeRefs ?? [],
   };
 }
 
@@ -513,68 +504,108 @@ TYPICAL NEXT TOOL:
         findings = mapReviewOutputFindings(reviewResult);
         summary = reviewResult.summary;
       } else if (input.targetType === 'implementation_plan') {
+        const repoPath = input.repoPath ?? process.cwd();
         const llmPreference = providerUsed === 'local' ? 'local' : 'cloud';
-        const handler = reviewImplementationPlanTools[0]?.handler;
-        const raw = handler
-          ? await handler({
-              repoPath: input.repoPath ?? process.cwd(),
-              goal: input.goal ?? 'Review implementation plan',
-              documentPath: input.target.documentPath,
-              content: input.target.content,
-              llmPreference,
-            })
-          : { content: [{ type: 'text', text: '{}' }] };
-        const payload = extractJsonText(raw.content) as {
-          summary?: string;
-          findings?: Array<Record<string, unknown>>;
-        } | null;
-        const mappedFindings = Array.isArray(payload?.findings) ? payload.findings : [];
-        findings = mappedFindings.map((finding) =>
-          mapGenericFinding(finding, 'Implementation plan finding'),
+        const referencePlan = await generateImplementationPlan({
+          goal: input.goal ?? 'Review implementation plan',
+          includeLessons: true,
+        });
+        const mergedContext = [
+          input.goal,
+          input.target.content,
+          referencePlan?.markdown
+            ? `Reference plan generated from procedural memory:\n${referencePlan.markdown}`
+            : undefined,
+          'Review policy: focus on missing Golden Path steps and missing mitigation for caution tasks.',
+        ]
+          .filter((line): line is string => typeof line === 'string' && line.trim().length > 0)
+          .join('\n\n');
+        const review = await reviewDocument({
+          repoPath,
+          documentPath: input.target.documentPath,
+          content: input.target.content,
+          documentType: 'plan',
+          goal: input.goal ?? 'Review implementation plan',
+          context: mergedContext,
+          llmPreference,
+        });
+        const planText = await loadReviewTargetText(
+          repoPath,
+          input.target.documentPath,
+          input.target.content,
         );
-        summary = payload?.summary ?? 'Implementation plan review completed.';
+        const alignment = referencePlan ? analyzePlanAlignment(planText, referencePlan) : null;
+        const mergedFindings = [...(alignment?.findings ?? []), ...review.findings].filter(
+          (finding, index, all) => {
+            const key = `${finding.title}:${finding.rationale}`;
+            return all.findIndex((item) => `${item.title}:${item.rationale}` === key) === index;
+          },
+        );
+        findings = mergedFindings.map((finding) =>
+          mapDocumentFinding(finding, input.target.documentPath ?? 'inline:implementation_plan'),
+        );
+        summary = review.summary;
       } else if (input.targetType === 'spec') {
+        const repoPath = input.repoPath ?? process.cwd();
         const llmPreference = providerUsed === 'local' ? 'local' : 'cloud';
-        const handler = reviewSpecDocumentTools[0]?.handler;
-        const raw = handler
-          ? await handler({
-              repoPath: input.repoPath ?? process.cwd(),
-              goal: input.goal ?? 'Review specification',
-              documentPath: input.target.documentPath,
-              content: input.target.content,
-              llmPreference,
-            })
-          : { content: [{ type: 'text', text: '{}' }] };
-        const payload = extractJsonText(raw.content) as {
-          summary?: string;
-          findings?: Array<Record<string, unknown>>;
-        } | null;
-        const mappedFindings = Array.isArray(payload?.findings) ? payload.findings : [];
-        findings = mappedFindings.map((finding) =>
-          mapGenericFinding(finding, 'Specification finding'),
+        const referencePlan = await generateImplementationPlan({
+          goal: input.goal ?? 'Review specification',
+          includeLessons: false,
+        });
+        const mergedContext = [
+          input.goal,
+          input.target.content,
+          referencePlan?.markdown
+            ? `Reference plan generated from procedural memory:\n${referencePlan.markdown}`
+            : undefined,
+          'Review policy: verify requirement clarity, acceptance criteria, and Golden Path coverage.',
+        ]
+          .filter((line): line is string => typeof line === 'string' && line.trim().length > 0)
+          .join('\n\n');
+        const review = await reviewDocument({
+          repoPath,
+          documentPath: input.target.documentPath,
+          content: input.target.content,
+          documentType: 'spec',
+          goal: input.goal ?? 'Review specification',
+          context: mergedContext,
+          llmPreference,
+        });
+        const specText = await loadReviewTargetText(
+          repoPath,
+          input.target.documentPath,
+          input.target.content,
         );
-        summary = payload?.summary ?? 'Specification review completed.';
+        const alignment = analyzeSpecAlignment(specText, referencePlan);
+        const mergedFindings = [...alignment.findings, ...review.findings].filter(
+          (finding, index, all) => {
+            const key = `${finding.title}:${finding.rationale}`;
+            return all.findIndex((item) => `${item.title}:${item.rationale}` === key) === index;
+          },
+        );
+        findings = mergedFindings.map((finding) =>
+          mapDocumentFinding(finding, input.target.documentPath ?? 'inline:spec_document'),
+        );
+        summary = review.summary;
       } else {
+        const repoPath = input.repoPath ?? process.cwd();
         const llmPreference = providerUsed === 'local' ? 'local' : 'cloud';
-        const handler = reviewDocumentTools[0]?.handler;
         const documentType = input.targetType === 'design' ? 'plan' : 'spec';
-        const raw = handler
-          ? await handler({
-              repoPath: input.repoPath ?? process.cwd(),
-              documentPath: input.target.documentPath,
-              content: input.target.content,
-              documentType,
-              goal: input.goal,
-              llmPreference,
-            })
-          : { content: [{ type: 'text', text: '{}' }] };
-        const payload = extractJsonText(raw.content) as {
-          summary?: string;
-          findings?: Array<Record<string, unknown>>;
-        } | null;
-        const mappedFindings = Array.isArray(payload?.findings) ? payload.findings : [];
-        findings = mappedFindings.map((finding) => mapGenericFinding(finding, 'Document finding'));
-        summary = payload?.summary ?? 'Document review completed.';
+        const review = await reviewDocument({
+          repoPath,
+          documentPath: input.target.documentPath,
+          content: input.target.content,
+          documentType,
+          goal: input.goal,
+          llmPreference,
+        });
+        findings = review.findings.map((finding) =>
+          mapDocumentFinding(
+            finding,
+            input.target.documentPath ?? `inline:${input.targetType === 'design' ? 'plan' : 'spec'}`,
+          ),
+        );
+        summary = review.summary;
       }
 
       const suggestedNotes = findings.slice(0, 3).map((finding, index) => ({
