@@ -201,6 +201,10 @@ describe('agent-first MCP tools', () => {
       'local',
       expect.objectContaining({ invoker: 'mcp' }),
     );
+    expect(mockRunReviewStageD).toHaveBeenCalledWith(
+      expect.objectContaining({ knowledgePolicy: 'required' }),
+      expect.anything(),
+    );
     expect(payload.knowledgeUsed?.length).toBe(1);
     expect((payload as { findings?: unknown[] }).findings?.length).toBe(1);
   });

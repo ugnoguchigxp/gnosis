@@ -121,6 +121,12 @@ function normalizeFinding(
     knowledge_refs: Array.isArray(raw.knowledge_refs)
       ? raw.knowledge_refs.filter((item): item is string => typeof item === 'string')
       : undefined,
+    knowledge_basis:
+      raw.knowledge_basis === 'static_analysis' ||
+      raw.knowledge_basis === 'novel_issue' ||
+      raw.knowledge_basis === 'no_applicable_knowledge'
+        ? raw.knowledge_basis
+        : undefined,
     fingerprint: '',
     needsHumanConfirmation: Boolean(raw.needsHumanConfirmation),
     source,

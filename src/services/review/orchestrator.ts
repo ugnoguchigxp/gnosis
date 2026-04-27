@@ -39,7 +39,11 @@ import {
   type FindingSeverity,
   type FixSuggestion,
   type GuidanceItem,
+  type KnowledgePolicy,
+  type KnowledgeRetrievalStatus,
   type NormalizedDiff,
+  type RubricCriterion,
+  type RubricEvaluation,
   type ReviewMetadata,
   type ReviewOutput,
   ReviewOutputSchema,
@@ -69,6 +73,9 @@ type RunReviewDeps = {
   now?: () => number;
   diffProvider?: (repoPath: string, mode: ReviewRequest['mode']) => Promise<string>;
   mcpCaller?: ReviewMcpToolCaller;
+  retrieveGuidanceFn?: typeof retrieveGuidance;
+  searchSimilarFindingsFn?: typeof searchSimilarFindings;
+  reviewWithToolsFn?: typeof reviewWithTools;
 };
 
 function countChangedFiles(rawDiff: string): number {
@@ -449,6 +456,12 @@ export async function runReviewStageB(
 
   enforceHardLimit(rawDiff);
 
+  const knowledgePolicy = resolveKnowledgePolicy(req, 'best_effort');
+  if (knowledgePolicy === 'required') {
+    // Fast mode should not bypass required knowledge policy.
+    return runReviewStageC(req, deps);
+  }
+
   const state = await buildReviewDiffState(
     req.repoPath,
     req.enableStaticAnalysis,
@@ -509,6 +522,8 @@ export async function runReviewStageB(
       local_llm_used: llmService.provider === 'local',
       heavy_llm_used: llmService.provider === 'cloud',
       review_duration_ms: now() - startTime,
+      knowledge_policy: knowledgePolicy,
+      knowledge_retrieval_status: 'not_requested',
     },
     markdown: '',
   });
@@ -543,6 +558,94 @@ function buildKnowledgeContext(
     pastSimilarFindings,
     pastSuccessBenchmarks,
   };
+}
+
+function resolveKnowledgePolicy(req: ReviewRequest, defaultPolicy: KnowledgePolicy): KnowledgePolicy {
+  if (req.knowledgePolicy) return req.knowledgePolicy;
+  if (req.enableKnowledgeRetrieval === false) return 'off';
+  return defaultPolicy;
+}
+
+function isEmptyKnowledgeModeFail(): boolean {
+  return process.env.GNOSIS_REVIEW_EMPTY_KNOWLEDGE_MODE?.trim().toLowerCase() === 'fail';
+}
+
+function toRubricCheckpoints(content: string): string[] {
+  const checkpoints = content
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .slice(0, 2);
+  if (checkpoints.length > 0) return checkpoints;
+  return ['Apply this guidance to changed code paths and validate edge cases.'];
+}
+
+function buildRubricFromGuidance(knowledge: {
+  principles: GuidanceItem[];
+  heuristics: GuidanceItem[];
+  patterns: GuidanceItem[];
+}): RubricCriterion[] {
+  const source = [...knowledge.principles, ...knowledge.heuristics, ...knowledge.patterns].slice(
+    0,
+    5,
+  );
+  return source.map((item, index) => ({
+    criterionId: `rubric-${index + 1}`,
+    title: item.title,
+    sourceGuidanceIds: [item.id],
+    checkpoints: toRubricCheckpoints(item.content),
+  }));
+}
+
+function applyKnowledgeBasisDefaults(
+  findings: Finding[],
+  retrievalStatus: KnowledgeRetrievalStatus,
+): Finding[] {
+  return findings.map((finding) => {
+    if (finding.knowledge_refs?.length || finding.knowledge_basis) return finding;
+    if (finding.source === 'static_analysis') {
+      return { ...finding, knowledge_basis: 'static_analysis' };
+    }
+    if (retrievalStatus === 'empty_index' || retrievalStatus === 'no_applicable_knowledge') {
+      return { ...finding, knowledge_basis: 'no_applicable_knowledge' };
+    }
+    return { ...finding, knowledge_basis: 'novel_issue' };
+  });
+}
+
+function hasKnowledgeRelation(finding: Finding): boolean {
+  return Boolean((finding.knowledge_refs && finding.knowledge_refs.length > 0) || finding.knowledge_basis);
+}
+
+function validateKnowledgeCoverage(findings: Finding[]): boolean {
+  const targets = findings.filter((finding) => finding.severity === 'error' || finding.severity === 'warning');
+  if (targets.length === 0) return true;
+  return targets.every(hasKnowledgeRelation);
+}
+
+function buildRubricEvaluation(rubric: RubricCriterion[], findings: Finding[]): RubricEvaluation[] {
+  return rubric.map((criterion) => {
+    const related = findings.filter((finding) =>
+      (finding.knowledge_refs ?? []).some((id) => criterion.sourceGuidanceIds.includes(id)),
+    );
+    if (related.length === 0) {
+      return {
+        criterionId: criterion.criterionId,
+        status: 'not_applicable',
+        evidence: 'No directly related finding in this diff.',
+        sourceGuidanceIds: criterion.sourceGuidanceIds,
+      };
+    }
+    const failed = related.some((finding) => finding.severity === 'error' || finding.severity === 'warning');
+    return {
+      criterionId: criterion.criterionId,
+      status: failed ? 'failed' : 'passed',
+      evidence: failed
+        ? related.map((finding) => `${finding.file_path}:${finding.line_new} ${finding.title}`).join('; ')
+        : 'No blocking issue found for this criterion.',
+      sourceGuidanceIds: criterion.sourceGuidanceIds,
+    };
+  });
 }
 
 export async function runReviewStageC(
@@ -583,6 +686,9 @@ export async function runReviewStageC(
   const language = detectPrimaryLanguage(state.diffs);
   const framework = state.diffs.find((diff) => diff.classification.framework)?.classification
     .framework;
+  const knowledgePolicy = resolveKnowledgePolicy(req, 'best_effort');
+  const retrieveGuidanceFn = deps.retrieveGuidanceFn ?? retrieveGuidance;
+  const searchSimilarFindingsFn = deps.searchSimilarFindingsFn ?? searchSimilarFindings;
 
   let knowledge = {
     principles: [] as GuidanceItem[],
@@ -592,14 +698,51 @@ export async function runReviewStageC(
     benchmarks: [] as string[],
   };
   let pastSimilarFindings: string[] = [];
+  let knowledgeRetrievalStatus: KnowledgeRetrievalStatus = 'not_requested';
+  let knowledgeUnavailableReason: string | undefined;
+  let rubric: RubricCriterion[] = [];
 
-  if (req.enableKnowledgeRetrieval !== false) {
+  if (knowledgePolicy !== 'off') {
     try {
-      knowledge = await retrieveGuidance(projectKey, state.riskSignals, language, framework);
-      pastSimilarFindings = await searchSimilarFindings(projectKey, state.riskSignals, language);
+      knowledge = await retrieveGuidanceFn(projectKey, state.riskSignals, language, framework);
+      pastSimilarFindings = await searchSimilarFindingsFn(projectKey, state.riskSignals, language);
+      rubric = buildRubricFromGuidance(knowledge);
+      const hasKnowledgeSource =
+        knowledge.principles.length +
+          knowledge.heuristics.length +
+          knowledge.patterns.length +
+          knowledge.skills.length >
+        0;
+      if (!hasKnowledgeSource) {
+        knowledgeRetrievalStatus = 'empty_index';
+        knowledgeUnavailableReason = 'empty_index';
+        state.degradedModes.push('knowledge_empty_index');
+        if (knowledgePolicy === 'required' && isEmptyKnowledgeModeFail()) {
+          throw new ReviewError('E008', 'knowledge retrieval required but index is empty');
+        }
+      } else {
+        knowledgeRetrievalStatus = 'success';
+      }
     } catch (error) {
       console.warn(`Knowledge retrieval failed: ${error}`);
-      state.degradedModes.push('knowledge_retrieval_failed');
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes('index is empty')) {
+        knowledgeRetrievalStatus = 'empty_index';
+        knowledgeUnavailableReason = 'empty_index';
+        state.degradedModes.push('knowledge_empty_index');
+      } else {
+        state.degradedModes.push('knowledge_retrieval_failed');
+        knowledgeRetrievalStatus = 'failed';
+        knowledgeUnavailableReason = 'retrieval_failed';
+      }
+      if (knowledgePolicy === 'required') {
+        throw new ReviewError(
+          'E008',
+          `knowledge retrieval required but unavailable: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
     }
   }
 
@@ -632,14 +775,30 @@ export async function runReviewStageC(
         pastSimilarFindings,
         knowledge.benchmarks,
       ),
+      rubric,
       outputSchema: {},
     },
     llmService,
   );
 
-  const mergedFindings = deduplicateFindings(
+  const mergedFindingsRaw = deduplicateFindings(
     mergeFindings(state.staticAnalysisFindings, validateFindingsFull(llmFindings, state.diffs)),
   );
+  const mergedFindings = applyKnowledgeBasisDefaults(mergedFindingsRaw, knowledgeRetrievalStatus);
+  const hasKnowledgeApplied = buildKnowledgeApplied(mergedFindings).length > 0;
+  if (
+    knowledgeRetrievalStatus === 'success' &&
+    !hasKnowledgeApplied &&
+    mergedFindings.some((finding) => finding.source !== 'static_analysis')
+  ) {
+    knowledgeRetrievalStatus = 'no_applicable_knowledge';
+    knowledgeUnavailableReason = 'no_applicable_knowledge';
+    state.degradedModes.push('knowledge_no_applicable');
+  }
+  if (knowledgePolicy === 'required' && !validateKnowledgeCoverage(mergedFindings)) {
+    throw new ReviewError('E008', 'required knowledge policy violated: missing knowledge relation');
+  }
+  const rubricEvaluation = buildRubricEvaluation(rubric, mergedFindings);
 
   const result = ReviewOutputSchema.parse({
     review_id: randomUUID(),
@@ -659,6 +818,11 @@ export async function runReviewStageC(
       local_llm_used: llmService.provider === 'local',
       heavy_llm_used: llmService.provider === 'cloud',
       review_duration_ms: now() - startTime,
+      knowledge_policy: knowledgePolicy,
+      knowledge_retrieval_status: knowledgeRetrievalStatus,
+      knowledge_unavailable_reason: knowledgeUnavailableReason,
+      rubric,
+      rubric_evaluation: rubricEvaluation,
     },
     markdown: '',
   });
@@ -717,6 +881,65 @@ export async function runReviewStageE(
 
   enforceHardLimit(rawDiff);
 
+  const knowledgePolicy = resolveKnowledgePolicy(req, 'best_effort');
+  const retrieveGuidanceFn = deps.retrieveGuidanceFn ?? retrieveGuidance;
+  const reviewWithToolsFn = deps.reviewWithToolsFn ?? reviewWithTools;
+  const normalizedForSignals = normalizeDiff(rawDiff);
+  const riskSignals = extractRiskSignalsFromDiffs(normalizedForSignals);
+  const projectKey = getProjectKey(req.repoPath);
+  const language = detectPrimaryLanguage(normalizedForSignals);
+  const framework = normalizedForSignals.find((diff) => diff.classification.framework)?.classification
+    .framework;
+
+  let knowledge = {
+    principles: [] as GuidanceItem[],
+    heuristics: [] as GuidanceItem[],
+    patterns: [] as GuidanceItem[],
+    skills: [] as GuidanceItem[],
+    benchmarks: [] as string[],
+  };
+  let knowledgeRetrievalStatus: KnowledgeRetrievalStatus = 'not_requested';
+  let knowledgeUnavailableReason: string | undefined;
+  let rubric: RubricCriterion[] = [];
+  if (knowledgePolicy !== 'off') {
+    try {
+      knowledge = await retrieveGuidanceFn(projectKey, riskSignals, language, framework);
+      rubric = buildRubricFromGuidance(knowledge);
+      const hasKnowledgeSource =
+        knowledge.principles.length +
+          knowledge.heuristics.length +
+          knowledge.patterns.length +
+          knowledge.skills.length >
+        0;
+      if (!hasKnowledgeSource) {
+        knowledgeRetrievalStatus = 'empty_index';
+        knowledgeUnavailableReason = 'empty_index';
+        if (knowledgePolicy === 'required' && isEmptyKnowledgeModeFail()) {
+          throw new ReviewError('E008', 'knowledge retrieval required but index is empty');
+        }
+      } else {
+        knowledgeRetrievalStatus = 'success';
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes('index is empty')) {
+        knowledgeRetrievalStatus = 'empty_index';
+        knowledgeUnavailableReason = 'empty_index';
+      } else {
+        knowledgeRetrievalStatus = 'failed';
+        knowledgeUnavailableReason = 'retrieval_failed';
+      }
+      if (knowledgePolicy === 'required') {
+        throw new ReviewError(
+          'E008',
+          `knowledge retrieval required but unavailable: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+  }
+
   const llmService = deps.llmService ?? (await getReviewLLMService());
   const reviewerAlias = resolveReviewerAlias();
 
@@ -728,6 +951,16 @@ export async function runReviewStageE(
     webSearchFn: undefined,
   };
 
+  const rubricText =
+    rubric.length > 0
+      ? rubric
+          .map(
+            (item) =>
+              `- ${item.criterionId}: ${item.title} | sources=${item.sourceGuidanceIds.join(', ')}`,
+          )
+          .join('\n')
+      : '- (no rubric available)';
+
   const systemPrompt = `
 You are a highly skilled software engineer and an expert code reviewer. Perform an autonomous, agentic code review for the following diff.
 
@@ -736,6 +969,11 @@ You have access to Gnosis, a sophisticated memory system. Before reaching conclu
 1. Use 'query_procedure' to fetch project-specific instructions and constraints. Pay special attention to "Golden Paths" (tasks with high confidence).
 2. Use 'recall_lessons' if you encounter patterns that might have caused issues in the past.
 3. Use 'query_graph' to understand the relationships and dependencies of the components you are auditing.
+
+Knowledge policy: ${knowledgePolicy}
+Knowledge retrieval status (pre-check): ${knowledgeRetrievalStatus}
+Rubric:
+${rubricText}
 
 Goal: ${req.taskGoal ?? 'Review the code changes for bugs, security issues, and maintainability.'}
 
@@ -751,7 +989,17 @@ Return your final review in the following JSON format ONLY:
       "category": "bug|security|performance|design|maintainability",
       "rationale": "Why this is an issue using evidence from Gnosis memory if applicable",
       "suggested_fix": "How to fix it",
-      "evidence": "Code snippet or context"
+      "evidence": "Code snippet or context",
+      "knowledge_refs": ["guidance-id-if-used"],
+      "knowledge_basis": "static_analysis|novel_issue|no_applicable_knowledge"
+    }
+  ],
+  "rubric_evaluation": [
+    {
+      "criterionId": "rubric-1",
+      "status": "passed|failed|not_applicable",
+      "evidence": "why",
+      "sourceGuidanceIds": ["guidance-id"]
     }
   ],
   "summary": "Overall summary of the review, including how past lessons were applied",
@@ -765,7 +1013,7 @@ Return your final review in the following JSON format ONLY:
   ];
 
   try {
-    const finalResponse = await reviewWithTools(llmService, messages, ctx);
+    const finalResponse = await reviewWithToolsFn(llmService, messages, ctx);
 
     // Attempt to parse JSON from the final response
     let parsed: LLMReviewResult;
@@ -781,7 +1029,7 @@ Return your final review in the following JSON format ONLY:
       };
     }
 
-    const findings: Finding[] = (parsed.findings ?? []).map((f) => {
+    const findingsRaw: Finding[] = (parsed.findings ?? []).map((f) => {
       const fingerprint = sha256(`${f.file_path}:${f.line_new}:${f.title}:${f.rationale}`);
       return {
         ...f,
@@ -791,6 +1039,20 @@ Return your final review in the following JSON format ONLY:
         source: llmService.provider === 'local' ? 'local_llm' : 'heavy_llm',
       };
     });
+    const findings = applyKnowledgeBasisDefaults(findingsRaw, knowledgeRetrievalStatus);
+    const hasKnowledgeApplied = buildKnowledgeApplied(findings).length > 0;
+    if (
+      knowledgeRetrievalStatus === 'success' &&
+      !hasKnowledgeApplied &&
+      findings.some((finding) => finding.source !== 'static_analysis')
+    ) {
+      knowledgeRetrievalStatus = 'no_applicable_knowledge';
+      knowledgeUnavailableReason = 'no_applicable_knowledge';
+    }
+    if (knowledgePolicy === 'required' && !validateKnowledgeCoverage(findings)) {
+      throw new ReviewError('E008', 'required knowledge policy violated: missing knowledge relation');
+    }
+    const rubricEvaluation = buildRubricEvaluation(rubric, findings);
 
     const result = ReviewOutputSchema.parse({
       review_id: randomUUID(),
@@ -804,12 +1066,24 @@ Return your final review in the following JSON format ONLY:
         reviewed_files: countChangedFiles(rawDiff),
         risk_level: determineRiskLevel(findings),
         static_analysis_used: true, // Agentic review implicitly uses static tools if needed
-        knowledge_applied: [],
-        degraded_mode: false,
-        degraded_reasons: [],
+        knowledge_applied: buildKnowledgeApplied(findings),
+        degraded_mode: knowledgeRetrievalStatus !== 'success' && knowledgePolicy !== 'off',
+        degraded_reasons:
+          knowledgeRetrievalStatus === 'failed'
+            ? (['knowledge_retrieval_failed'] as DegradedMode[])
+            : knowledgeRetrievalStatus === 'empty_index'
+              ? (['knowledge_empty_index'] as DegradedMode[])
+              : knowledgeRetrievalStatus === 'no_applicable_knowledge'
+                ? (['knowledge_no_applicable'] as DegradedMode[])
+              : [],
         local_llm_used: llmService.provider === 'local',
         heavy_llm_used: llmService.provider === 'cloud',
         review_duration_ms: now() - startTime,
+        knowledge_policy: knowledgePolicy,
+        knowledge_retrieval_status: knowledgeRetrievalStatus,
+        knowledge_unavailable_reason: knowledgeUnavailableReason,
+        rubric,
+        rubric_evaluation: rubricEvaluation,
         // Custom Stage E metadata
         reviewer_alias: reviewerAlias,
         stage: 'E',

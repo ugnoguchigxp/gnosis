@@ -17,7 +17,11 @@ import {
   runReviewStageD,
   runReviewStageE,
 } from '../../services/review/orchestrator.js';
-import { type ReviewOutput, ReviewRequestSchema } from '../../services/review/types.js';
+import {
+  KnowledgePolicySchema,
+  type ReviewOutput,
+  ReviewRequestSchema,
+} from '../../services/review/types.js';
 import type { ToolEntry } from '../registry.js';
 import { reviewDocumentTools } from './reviewDocument.js';
 import { reviewImplementationPlanTools } from './reviewImplementationPlan.js';
@@ -192,6 +196,7 @@ const reviewTaskSchema = z.object({
   maxKnowledgeItems: z.number().int().positive().optional(),
   goal: z.string().optional(),
   repoPath: z.string().optional(),
+  knowledgePolicy: KnowledgePolicySchema.optional(),
 });
 
 function extractJsonText(content: Array<{ type: string; text: string }>): unknown {
@@ -269,6 +274,37 @@ TYPICAL NEXT TOOL:
       const payload = {
         firstCall: 'activate_project',
         why: 'Project health, knowledge index summary, and recommended next calls are required before editing.',
+        globalRules: [
+          'Run initial_instructions at session start.',
+          'Run initial_instructions again before review flow.',
+          'Do not call review_task before initial_instructions.',
+        ],
+        scenarioGuides: {
+          review: {
+            requiredOrder: [
+              'initial_instructions',
+              'activate_project(mode=review)',
+              'search_knowledge(preset=review_context)',
+              'review_task',
+              'record_task_note (optional)',
+            ],
+          },
+        },
+        toolPlaybook: {
+          review_task: {
+            when: 'Primary review entrypoint for code/document/spec/plan/design.',
+            doNotUseWhen: 'You need hook/background-integrated review pipeline behavior.',
+            requiredInput: 'targetType + target(diff|content|documentPath)',
+            example: {
+              targetType: 'code_diff',
+              target: { filePaths: ['src/services/review/orchestrator.ts'] },
+              reviewMode: 'standard',
+            },
+          },
+        },
+        recovery: {
+          whenOutOfOrder: ['doctor', 'activate_project', 'search_knowledge', 'review_task'],
+        },
         recommendedWorkflow: [
           'activate_project',
           'search_knowledge',
@@ -276,7 +312,7 @@ TYPICAL NEXT TOOL:
           'record_task_note / finish_task',
         ],
         caution:
-          'Existing low-level tools remain available for compatibility, but primary workflow should prefer agent-first tools.',
+          'Use the Agent-First workflow only. Non-primary tools are not part of the MCP surface.',
       };
       return { content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }] };
     },
@@ -304,7 +340,7 @@ TYPICAL NEXT TOOL:
     description: `WHEN TO USE:
 - 実装前・レビュー前に再利用知識（rule/lesson/procedure/risk 等）を取得するとき。
 DO NOT USE WHEN:
-- 旧契約の KnowFlow FTS 応答が必要なとき（その場合は search_knowledge_legacy）。
+- なし（再利用知識検索の標準入口です）。
 WHAT IT RETURNS:
 - category 別 grouped hits、flatTopHits、reason/snippet/matchSources を含む explainable 結果。
 TYPICAL NEXT TOOL:
@@ -461,6 +497,7 @@ TYPICAL NEXT TOOL:
           mode: 'worktree',
           taskGoal: input.goal ?? input.target.content ?? 'Review current code changes',
           changedFiles: input.target.filePaths,
+          knowledgePolicy: input.knowledgePolicy ?? 'required',
         });
         const llmService = await getReviewLLMService(providerUsed, {
           invoker: 'mcp',

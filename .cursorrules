@@ -1,4 +1,5 @@
 Gnosisを最大限活用するために、作業前に必ず /Users/y.noguchi/.gnosis/agent/manual.md を読み、書かれている指針を最優先してください。
+リポジトリ内の正本ルールは `AGENTS.md` です。作業前に必ず参照してください。
 
 <!-- gnosis-hooks:start -->
 # Gnosis Hook Workflow (Auto-managed)

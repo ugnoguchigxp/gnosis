@@ -37,12 +37,10 @@ bun run onboarding:smoke
 - `.env.cloud-review`
 - `.env.example`（テンプレート案内用）
 
-## MCP 公開面（Antigravity 互換）
+## MCP 公開面
 
-- 既定: `GNOSIS_MCP_TOOL_EXPOSURE=primary`（Agent-First ツールのみ）
-- 互換モード: `GNOSIS_MCP_TOOL_EXPOSURE=all`（legacy/advanced も公開）
-
-Antigravity 側でツール不足エラーが出る場合は `all` に切り替え、MCP サーバーとクライアントを再起動してください。
+- MCP `tools/list` は Agent-First の一次導線のみを公開します。
+- 公開ツールは `initial_instructions / activate_project / start_task / search_knowledge / record_task_note / finish_task / review_task / doctor` に固定です。
 
 ## 品質チェック
 

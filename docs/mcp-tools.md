@@ -1,293 +1,89 @@
 # MCP Tools API Reference
 
 Gnosis は、エージェントが長期記憶、知識グラフ、自律調査能力、計画レビューを利用するための MCP ツール群を提供します。
+現在は **Agent-First** ワークフローを推奨しており、主要な 8 つのツールのみが公開されています。
 
-## ツールカテゴリ一覧
+## 公開ツール一覧 (Agent-First)
 
-`tools/list` の既定公開面は Agent-First です（`GNOSIS_MCP_TOOL_EXPOSURE=all` で全ツール公開）。
-Antigravity など legacy ツール前提のクライアントでは `GNOSIS_MCP_TOOL_EXPOSURE=all` を設定してください。
+推奨される一次導線（初期化・タスク開始・知識検索・レビュー・完了）を構成するツール群です。
 
-- [Agent-First](#agent-first): 推奨される一次導線（初期化・タスク開始・知識検索・完了）
-- [Memory](#memory): セマンティック検索可能な長期記憶
-- [Graph](#graph): 構造化された知識グラフ
-- [Knowledge](#knowledge): 検証済み知識の検索
-- [KnowFlow](#knowflow): 自律的な知識収集タスク
-- [Experience](#experience): 過去の失敗からの学習
-- [Sync & Reflection](#sync--reflection): 外部ログ同期と自己省察
-- [Guidance](#guidance): 命令・規約の登録
-- [Hook](#hook): 自律的な品質検証とチェックポイント
-- [Procedure & Planning](#procedure--planning): 手続き記憶を使った計画生成
-- [Review](#review): コード/ドキュメント/計画レビューとフィードバック
+- [initial_instructions](#initial_instructions): 推奨ワークフローと first-call の確認
+- [activate_project](#activate_project): プロジェクト状態の初期化とヘルスチェック
+- [search_knowledge](#search_knowledge): 知識のセマンティック検索
+- [start_task](#start_task): タスク実行の記録開始
+- [record_task_note](#record_task_note): 作業中の知見や教訓の保存
+- [finish_task](#finish_task): タスク完了と学習項目の確定
+- [review_task](#review_task): 知識注入型レビューの実行
+- [doctor](#doctor): ランタイム診断とメタデータ整合性チェック
 
 ---
 
-## Agent-First
+## Agent-First Tools
 
 ### `initial_instructions`
 - **用途**: 新規セッションの最初に呼び、推奨ワークフローと first-call を確認します。
 - **出力**: `firstCall=activate_project` を含むガイド JSON。
+- **重要**: レビュー開始前にも再実行し、シナリオごとの手順を確認してください。
 
 ### `activate_project`
-- **用途**: プロジェクト状態の初期化。health/onboarding/knowledge index summary/recommended next calls を返します。
+- **用途**: プロジェクト状態を初期化し、ヘルス、オンボーディング状態、知識インデックスの要約を取得します。
 - **入力**:
-  - `projectRoot` (string, 任意)
-  - `mode` (`planning|editing|review|onboarding|no_memory`, 任意)
-
-### `start_task`
-- **用途**: task trace を開始し、`taskId` と次の推奨ツールを返します。
-- **入力**:
-  - `title` (string, 必須)
-  - `intent`, `files`, `projectRoot`, `taskId` (任意)
+  - `projectRoot` (string, 任意): プロジェクトのルートパス
+  - `mode` (`planning|editing|review|onboarding|no_memory`, 任意): 作業モード
 
 ### `search_knowledge`
-- **用途**: entity-centric 検索。category ごとに grouped hits を返し、`reason` と `matchSources` を含む explainable result を返します。
+- **用途**: 知識（ルール、手順、教訓、リスク等）を検索します。
 - **入力**:
-  - `query` または `preset`
-  - `kinds`, `categories`, `filters`, `grouping`, `traversal` など（任意）
+  - `query` (string, 任意): 検索クエリ
+  - `preset` (`task_context|project_characteristics|review_context|procedures|risks`, 任意): 検索プリセット
+  - `kinds`, `categories`, `filters`, `grouping`, `traversal` 等（任意）
+
+### `start_task`
+- **用途**: タスクのトレースを開始し、`taskId` を取得します。
+- **入力**:
+  - `title` (string, 必須): タスクのタイトル
+  - `intent`, `files`, `projectRoot`, `taskId` (任意)
 
 ### `record_task_note`
-- **用途**: task 中の再利用可能知見を保存します。`content` だけで保存可能です。
+- **用途**: 作業中に得られた再利用可能な知見（教訓、観察、決定事項）を保存します。
 - **入力**:
-  - `content` (string, 必須)
+  - `content` (string, 必須): 知見の内容
   - `kind`, `category`, `title`, `purpose`, `tags`, `files`, `evidence` (任意)
 
 ### `finish_task`
-- **用途**: task trace を完了し、outcome/check/follow-ups/learned items を保存します。
+- **用途**: タスクを完了し、成果、チェック項目、次のアクション、学習した項目を確定します。
 - **入力**:
-  - `taskId` (string, 必須)
-  - `outcome` (string, 必須)
+  - `taskId` (string, 必須): 完了するタスクの ID
+  - `outcome` (string, 必須): タスクの成果
   - `checks`, `followUps`, `learnedItems` (任意)
 
 ### `review_task`
-- **用途**: 知識注入レビューの統合入口。現段階は wrapper として `knowledgeUsed` を返します。
+- **用途**: コード、ドキュメント、実装計画、仕様書等のレビューを実行します。ナレッジグラフからの知識注入を自動的に行います。
 - **入力**:
-  - `targetType` (`code_diff|document|implementation_plan|spec|design`)
-  - `target` (`diff`/`content`/`filePaths` など)
-  - `provider`, `reviewMode`, `focus` (任意)
+  - `targetType` (`code_diff|document|implementation_plan|spec|design`, 必須)
+  - `target` (object, 必須): `diff`, `filePaths`, `content`, `documentPath` のいずれかを含む
+  - `provider` (`local|openai|bedrock`, 任意)
+  - `reviewMode` (`fast|standard|deep`, 任意)
+  - `goal` (string, 任意): レビューの目的
 
 ### `doctor`
-- **用途**: runtime health と stale metadata シグナルを返します。
+- **用途**: MCP サーバーのランタイム状態、DB 接続、知識インデックスの鮮度、メタデータの整合性を診断します。
 - **入力**:
-  - `clientSnapshot` (任意): client 側で保持している tool metadata。
-
-## Memory
-
-### `store_memory`
-- **用途**: 観察、設計判断、TODO、レビュー指摘事項など、後で参照したいあらゆるテキスト情報を保存します。
-- **入力**: 
-  - `sessionId` (string, 必須): プロジェクトやコンテキストを分離するための識別子。
-  - `content` (string, 必須): 保存するテキスト。
-  - `metadata` (object, 任意): 任意の追加データ。
-  - `entities` (array, 任意): 保存内容に含まれるエンティティ情報。
-  - `relations` (array, 任意): エンティティ間の関係性。
-- **出力**: `Memory stored successfully with ID: <uuid>`
-
-### `search_memory`
-- **用途**: セマンティック検索（意味的な類似度）により、保存されたメモリを検索します。
-- **入力**: 
-  - `sessionId` (string, 必須): 検索対象のセッション。
-  - `query` (string, 必須): 検索クエリ。
-  - `limit` (number, 任意, デフォルト: 5): 最大取得件数。
-  - `filter` (object, 任意): メタデータによるフィルタリング。
-- **出力**: メモリの配列（ID, content, similarity などを含む JSON）。
-
-### `delete_memory`
-- **用途**: 指定した ID のメモリを物理削除します。
-- **入力**: 
-  - `memoryId` (string, 必須): 削除対象の UUID。
+  - `clientSnapshot` (任意): クライアント側で保持しているツール情報のスナップショット
 
 ---
 
-## Graph
+## 内部・非推奨ツールについて
 
-### `query_graph`
-- **用途**: 指定したキーワードまたは ID を起点に、ナレッジグラフから最大 2 ホップ先の関連情報を取得します（Graph RAG）。
-- **入力**: 
-  - `query` (string, 必須): 起点となるエンティティの名前または ID。
-- **出力**: ノードとエッジのリスト（JSON）。
+以下のカテゴリに含まれるツールは、現在 `search_knowledge` や `review_task` 等の主要ツールに統合されているか、内部的な処理で使用されています。Agent が直接呼び出すことは推奨されず、現在の MCP 公開面には含まれていません。
 
-### `digest_text`
-- **用途**: 入力テキストを解析し、既存のグラフ内に存在する関連エンティティを特定・提案します。
-- **入力**: 
-  - `text` (string, 必須): 解析対象のテキスト。
-  - `limit` (number, 任意, デフォルト: 5): 提案数。
+- **Memory**: `store_memory`, `search_memory`, `delete_memory`
+- **Graph**: `query_graph`, `digest_text`, `update_graph`, `find_path`, `build_communities`
+- **Knowledge (Legacy)**: `get_knowledge`, `search_unified`
+- **KnowFlow**: `enqueue_knowledge_task`, `run_knowledge_worker`
+- **Experience**: `record_experience`, `recall_lessons`
+- **Guidance**: `register_guidance`
+- **Hook**: `task_checkpoint`
+- **Review (Legacy)**: `review`, `review_document`, `review_implementation_plan`, `review_spec_document` 等
 
-### `update_graph`
-- **用途**: エンティティ情報の修正、またはリレーションの削除を行います。
-- **入力**: 
-  - `action` (enum, 必須): `update_entity` または `delete_relation`。
-  - `entity` / `relation` (object): アクションに応じた詳細情報。
-
-### `find_path`
-- **用途**: 2 つのエンティティ間を繋ぐ最短経路を探索し、それらの関係性を明らかにします。
-- **入力**: 
-  - `queryA`, `queryB` (string, 必須): 始点と終点のエンティティ名。
-
-### `build_communities`
-- **用途**: グラフ全体のトポロジーを分析し、密接に関連するノードのグループ（コミュニティ）を検出・要約します。
-- **入力**: なし。
-
----
-
-## Knowledge
-
-### `search_knowledge_legacy`
-- **用途**: Legacy API。KnowFlow が収集・検証した「確定した事実（クレーム）」を全文検索 (FTS) します。
-- **入力**: 
-  - `query` (string, 必須): 検索クエリ。
-- **出力**: 関連するクレームのリストと信頼度。
-
-### `get_knowledge`
-- **用途**: 特定のトピックに関する詳細情報（すべてのクレーム、関連トピック、情報源 URL）をまとめて取得します。
-- **入力**: 
-  - `topic` (string, 必須): トピック名。
-
-### `search_unified`
-- **用途**: `fts` (全文検索), `kg` (グラフ探索), `semantic` (メモリ検索) の 3 つのモードを使い分けて横断検索します。
-- **入力**: 
-  - `query` (string, 必須): 検索クエリ。
-  - `mode` (enum, 必須): `fts`, `kg`, `semantic`。
-
----
-
-## KnowFlow
-
-### `enqueue_knowledge_task`
-- **用途**: 指定したトピックについて、ウェブ検索と LLM による詳細な調査をタスクキューに投入します。
-- **入力**: 
-  - `topic` (string, 必須): 調査対象。
-  - `mode` (enum, 任意): `directed` (直接), `expand` (拡張), `explore` (探索)。
-  - `priority` (number, 任意): 優先度。
-
-### `run_knowledge_worker`
-- **用途**: キューに滞留しているタスクを 1 件取り出して実行します。
-- **入力**: 
-  - `maxAttempts` (number, 任意): リトライ回数。
-
----
-
-## Experience
-
-### `record_experience`
-- **用途**: 開発中の失敗（エラー、拒絶されたパッチ）と、それに対する成功（解決策）をセットで記録します。
-- **入力**: 
-  - `sessionId`, `scenarioId`, `attempt`, `type`, `content`, `metadata`.
-
-### `recall_lessons`
-- **用途**: 現在発生している問題に類似した過去の「教訓」を検索し、解決のヒントを得ます。
-- **入力**: 
-  - `sessionId`, `query`.
-
----
-
-## Sync & Reflection
-
-### `sync_agent_logs`
-- **用途**: Claude Code や Antigravity の会話ログを解析し、未発見の知見を自動的に Vibe Memory へ同期します。
-- **入力**: なし（設定されたディレクトリをスキャン）。
-
-### `reflect_on_memories`
-- **用途**: まだ構造化されていない Vibe Memory を分析し、エンティティとリレーションを抽出して Knowledge Graph へ統合します。
-- **入力**: なし。
-
----
-
-## Guidance
-
-### `register_guidance`
-- **用途**: プロジェクト固有の規約 (rule) や手順 (skill) を登録します。これらはエージェントのプロンプト構築時に自動的に参照されます。
-- **入力**: 
-  - `title`, `content`, `guidanceType` (`rule` or `skill`), `scope`.
-- **出力**: `Guidance registered successfully`
-
----
-
-## Hook
-
-### `task_checkpoint`
-- **用途**: 実装の区切り、完了、または失敗を明示し、関連する Hook ルール（Lint/Typecheck/Test/記憶候補作成など）を一括実行します。
-- **入力**: 
-  - `event` (enum, 任意, デフォルト: `segment`): `segment`, `completed`, `failed` のいずれか。
-  - `traceId` (string, 任意): 同一タスク連鎖を識別する ID。
-  - `changedFiles` (array, 任意): 変更したファイルパスのリスト。
-  - `reviewRequested` (boolean, 任意): レビューを要求するかどうか。
-  - `summary` (string, 任意): 完了/失敗時の要約内容。
-- **出力**: 実行されたルールの一覧、警告、およびブロックされたかどうかの結果（JSON）。
-
-## 使い分けガイド
-
-- **「ちょっとしたメモや一時的な知見」** → `store_memory`
-- **「公式な規約や絶対守るべきルール」** → `register_guidance`
-- **「特定のトピックについて徹底的に調べさせたい」** → `enqueue_knowledge_task`
-- **「過去に同じエラーでハマっていないか調べたい」** → `recall_lessons`
-- **「A という概念と B という概念がどう繋がっているか知りたい」** → `find_path` または `query_graph`
-
----
-
-## Procedure & Planning
-
-### `query_procedure`
-- **用途**: 目標に対する手順（task）と制約（constraint）を取得します。互換性維持用の Advanced ツールです。
-- **入力**:
-  - `goal` (string, 必須)
-  - `context`, `project`, `domains`, `languages`, `frameworks`, `environment`, `repo` (任意)
-- **出力**: 手順候補、Golden Path 判定、制約一覧（JSON）。
-
-### `record_outcome`
-- **用途**: 実行結果を保存し、task confidence 更新と改善提案反映を行います。互換性維持用の Advanced ツールです。
-- **入力**:
-  - `goalId`, `sessionId`, `taskResults`, `improvements` (任意)
-
-### `generate_implementation_plan`
-- **用途**: `query_procedure` と `recall_lessons` を束ね、レビュー前提の実装計画を生成します。
-- **入力**:
-  - `goal` (string, 必須)
-  - `context`, `project`, `domains`, `languages`, `frameworks`, `environment`, `repo`, `sessionId`, `lessonQuery` (任意)
-  - `includeLessons` (boolean, 任意)
-- **出力**: 構造化 plan（tasks/constraints/lessons）と Markdown 計画書。
-
----
-
-## Review
-
-### `review`
-- **用途**: Git diff のコードレビュー（Stage A-E）を実行します。
-- **入力**:
-  - `repoPath`, `taskId`, `goal`, `stage`, `llmPreference` など
-  - `specDocPath`, `planningDocPath` を指定するとレビュー文脈に取り込みます。
-
-### `review_document`
-- **用途**: 仕様書/計画書（実行を伴わない文書）をレビューします。
-- **入力**:
-  - `documentType` (`spec` or `plan`)
-  - `documentPath` または `content`（排他）
-
-### `review_implementation_plan`
-- **用途**: 実装計画書を、手続き記憶から生成した参照計画（Golden Path + caution）と照合してレビューします。
-- **入力**:
-  - `repoPath`, `goal`, `documentPath` または `content`
-  - `context`, `project`, `languages` など（参照計画生成用）
-- **出力**:
-  - 参照計画 + 照合結果 + ドキュメントレビュー結果を統合した findings（`findingId` 付き）。
-
-### `review_spec_document`
-- **用途**: 仕様書をレビューし、要件・受け入れ条件・Golden Path 反映を確認します。
-- **入力**:
-  - `repoPath`, `goal`, `documentPath` または `content`
-  - `context`, `project`, `languages` など（参照計画生成用）
-- **出力**:
-  - 参照計画 + 仕様レビュー結果を統合した findings（`findingId` 付き）。
-
-### `record_review_feedback`
-- **用途**: finding の採用/却下/誤検知を記録し、レビュー精度改善に反映します。
-- **入力**:
-  - `reviewCaseId`, `findingId`, `outcomeType`, `falsePositive` (任意), `guidanceIds` (任意)
-
-### `apply_guidance_candidates`
-- **用途**: 文書レビューで抽出した guidance 候補を人手承認後に Guidance Registry へ反映します。
-
-### `get_guidance_effectiveness`
-- **用途**: guidance ごとの有効性メトリクスを取得します。
-
-### `run_guidance_autopromotion`
-- **用途**: review_outcomes 履歴にもとづく guidance 自動昇格/降格を実行します。
+これらの機能の多くは、主要ツールのバックグラウンド処理や、より高レベルな抽象化（Agent-First）を通じて利用可能です。

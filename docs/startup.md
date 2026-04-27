@@ -17,14 +17,14 @@
 | 3. bootstrap | 完了 | `bootstrap` を minimal 用に再編。`bootstrap:local-llm` を分離。 |
 | 4. doctor | 完了 | `bun run doctor` と `scripts/doctor.ts` を追加。 |
 | 5. onboarding:smoke | 完了 | `bun run onboarding:smoke` と `scripts/onboarding-smoke.ts` を追加。 |
-| 6. fresh clone CI | 完了 | `.github/workflows/onboarding.yml` を追加。 |
+| 6. fresh clone 検証導線 | 完了 | `onboarding:smoke` を fresh clone 検証の基準コマンドとして定義。 |
 
 ## 実装結果
 
 - 導入コマンドを `bootstrap` / `doctor` / `onboarding:smoke` に整理
 - README 冒頭で minimal 導線を固定
-- 導線を fresh clone CI に接続
-- MCP 公開面は既定 `primary`（Agent-First）。legacy クライアント互換時は `GNOSIS_MCP_TOOL_EXPOSURE=all` を使用
+- 導線を fresh clone 検証に接続
+- MCP 公開面は Agent-First 固定（切替なし）
 
 ## 実装バックログ（完了）
 
@@ -57,20 +57,19 @@
 完了条件:
 - fresh clone で `bun run bootstrap` だけで minimal が成立する
 
-### Phase D: doctor / smoke / CI
+### Phase D: doctor / smoke / fresh clone 検証
 
 - [x] `bun run doctor` 追加（`OK/WARN/FAIL` + fix command）
 - [x] `bun run onboarding:smoke` 追加（DB接続 / pgvector / seed marker / MCP最小起動）
-- [x] `.github/workflows/onboarding.yml` 追加
-- [x] CI の手順を README と一致させる
+- [x] fresh clone 検証手順を README と一致させる
 
 完了条件:
-- 手元と CI の両方で onboarding 成否が同一コマンドで判定できる
+- 手元と fresh clone 検証の両方で onboarding 成否が同一コマンドで判定できる
 
 ## 受け入れ指標
 
 - 導入コマンドが 3 本以内に収まる: `bootstrap`, `doctor`, `onboarding:smoke`
-- README と CI の導線が一致している
+- README と fresh clone 検証導線が一致している
 - local-llm は任意導線として後置され、minimal の成功率を下げない
 
 ## リスクと対策

@@ -43,7 +43,7 @@ Gnosisは、AIエージェントにプロジェクト固有の知識とレビュ
 ## 3. エージェントへのコア指令
 - **first-callを守る**: 新規セッションでは `activate_project` を最初の3 call以内に実行する。
 - **primary優先**: まずは Agent-First ツール群を使う。
-- **互換が必要なときだけ全公開**: legacy クライアント利用時のみ `GNOSIS_MCP_TOOL_EXPOSURE=all` を設定する。
+- **公開面は固定**: MCP は Agent-First の一次導線のみを公開する。
 - **跡を残す**: 完了時は必ず `finish_task` を実行する。
 EOF
 

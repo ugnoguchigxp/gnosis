@@ -5,7 +5,7 @@ import { db } from '../db/index.js';
 import { entities } from '../db/schema.js';
 import { isGnosisError } from '../domain/errors.js';
 import { buildToolSnapshotForDoctor } from '../services/agentFirst.js';
-import { getExposedToolEntries, toolEntries } from './tools/index.js';
+import { getExposedToolEntries } from './tools/index.js';
 
 // ---------------------------------------------------------------------------
 // Process Metadata
@@ -84,7 +84,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
-  const entry = toolEntries.find((t) => t.name === name);
+  const entry = getExposedToolEntries().find((t) => t.name === name);
   if (!entry) {
     return {
       content: [{ type: 'text', text: `Unknown tool: ${name}` }],

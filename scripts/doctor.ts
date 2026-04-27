@@ -145,27 +145,10 @@ async function checkLocalLlmHealth(): Promise<CheckResult> {
 }
 
 function checkMcpToolExposure(): CheckResult {
-  const raw = process.env.GNOSIS_MCP_TOOL_EXPOSURE?.trim().toLowerCase();
-  const value = raw && raw.length > 0 ? raw : 'primary';
-  if (value === 'primary') {
-    return {
-      name: 'GNOSIS_MCP_TOOL_EXPOSURE',
-      status: 'OK',
-      message: 'primary (Agent-First tool surface)',
-    };
-  }
-  if (value === 'all') {
-    return {
-      name: 'GNOSIS_MCP_TOOL_EXPOSURE',
-      status: 'OK',
-      message: 'all (legacy compatibility mode)',
-    };
-  }
   return {
-    name: 'GNOSIS_MCP_TOOL_EXPOSURE',
-    status: 'WARN',
-    message: `Unsupported value: ${value}`,
-    fix: 'Set GNOSIS_MCP_TOOL_EXPOSURE=primary or GNOSIS_MCP_TOOL_EXPOSURE=all',
+    name: 'MCP tool exposure',
+    status: 'OK',
+    message: 'Agent-First fixed surface',
   };
 }
 

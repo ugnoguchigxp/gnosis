@@ -31,12 +31,11 @@ describe('mcp contract', () => {
     expect(toolNames).toContain('activate_project');
     expect(toolNames).toContain('start_task');
     expect(toolNames).toContain('search_knowledge');
-    expect(toolNames).toContain('search_knowledge_legacy');
     expect(toolNames).toContain('record_task_note');
     expect(toolNames).toContain('finish_task');
     expect(toolNames).toContain('review_task');
     expect(toolNames).toContain('doctor');
-    expect(toolNames.length).toBe(9);
+    expect(toolNames.length).toBe(8);
   });
 
   it('returns isError=true for unknown tool and invalid arguments', async () => {
@@ -49,11 +48,18 @@ describe('mcp contract', () => {
     expect(unknown.isError).toBe(true);
     expect(unknown.content?.[0]?.text).toContain('Unknown tool');
 
-    const invalid = (await callHandler({
+    const hidden = (await callHandler({
       method: 'tools/call',
       params: { name: 'store_memory', arguments: { content: 'only-content' } },
     })) as { isError?: boolean; content?: Array<{ text?: string }> };
+    expect(hidden.isError).toBe(true);
+    expect(hidden.content?.[0]?.text).toContain('Unknown tool');
+
+    const invalid = (await callHandler({
+      method: 'tools/call',
+      params: { name: 'start_task', arguments: {} },
+    })) as { isError?: boolean; content?: Array<{ text?: string }> };
     expect(invalid.isError).toBe(true);
-    expect(invalid.content?.[0]?.text).toContain('sessionId');
+    expect(invalid.content?.[0]?.text).toContain('title');
   });
 });

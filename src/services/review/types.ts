@@ -45,11 +45,33 @@ export type ReviewStatus = z.infer<typeof ReviewStatusSchema>;
 export const DegradedModeSchema = z.enum([
   'static_analysis_unavailable',
   'knowledge_retrieval_failed',
+  'knowledge_empty_index',
+  'knowledge_no_applicable',
+  'knowledge_required_unavailable',
   'astmend_unavailable',
   'diff_size_limited',
   'llm_timeout',
 ]);
 export type DegradedMode = z.infer<typeof DegradedModeSchema>;
+
+export const KnowledgePolicySchema = z.enum(['off', 'best_effort', 'required']);
+export type KnowledgePolicy = z.infer<typeof KnowledgePolicySchema>;
+
+export const KnowledgeRetrievalStatusSchema = z.enum([
+  'not_requested',
+  'success',
+  'empty_index',
+  'no_applicable_knowledge',
+  'failed',
+]);
+export type KnowledgeRetrievalStatus = z.infer<typeof KnowledgeRetrievalStatusSchema>;
+
+export const KnowledgeBasisSchema = z.enum([
+  'static_analysis',
+  'novel_issue',
+  'no_applicable_knowledge',
+]);
+export type KnowledgeBasis = z.infer<typeof KnowledgeBasisSchema>;
 
 export interface ReviewRequest {
   taskId: string;
@@ -63,6 +85,7 @@ export interface ReviewRequest {
   mode: ReviewMode;
   enableStaticAnalysis?: boolean;
   enableKnowledgeRetrieval?: boolean;
+  knowledgePolicy?: KnowledgePolicy;
 }
 
 export const ReviewRequestSchema = z
@@ -78,6 +101,7 @@ export const ReviewRequestSchema = z
     mode: ReviewModeSchema,
     enableStaticAnalysis: z.boolean().optional(),
     enableKnowledgeRetrieval: z.boolean().optional(),
+    knowledgePolicy: KnowledgePolicySchema.optional(),
   })
   .strict();
 
@@ -94,6 +118,7 @@ export interface Finding {
   suggested_fix?: string;
   evidence: string;
   knowledge_refs?: string[];
+  knowledge_basis?: KnowledgeBasis;
   fingerprint: string;
   needsHumanConfirmation: boolean;
   source: FindingSource;
@@ -114,6 +139,7 @@ export const FindingSchema = z
     suggested_fix: z.string().min(1).optional(),
     evidence: z.string(),
     knowledge_refs: z.array(z.string().min(1)).optional(),
+    knowledge_basis: KnowledgeBasisSchema.optional(),
     fingerprint: z.string().min(1),
     needsHumanConfirmation: z.boolean(),
     source: FindingSourceSchema,
@@ -175,9 +201,46 @@ export interface ReviewMetadata {
   local_llm_used: boolean;
   heavy_llm_used: boolean;
   review_duration_ms: number;
+  knowledge_policy?: KnowledgePolicy;
+  knowledge_retrieval_status?: KnowledgeRetrievalStatus;
+  knowledge_unavailable_reason?: string;
+  rubric?: RubricCriterion[];
+  rubric_evaluation?: RubricEvaluation[];
   reviewer_alias?: string;
   stage?: string;
 }
+
+export interface RubricCriterion {
+  criterionId: string;
+  title: string;
+  sourceGuidanceIds: string[];
+  checkpoints: string[];
+}
+
+export interface RubricEvaluation {
+  criterionId: string;
+  status: 'passed' | 'failed' | 'not_applicable';
+  evidence: string;
+  sourceGuidanceIds: string[];
+}
+
+export const RubricCriterionSchema = z
+  .object({
+    criterionId: z.string().min(1),
+    title: z.string().min(1),
+    sourceGuidanceIds: z.array(z.string().min(1)),
+    checkpoints: z.array(z.string().min(1)),
+  })
+  .strict();
+
+export const RubricEvaluationSchema = z
+  .object({
+    criterionId: z.string().min(1),
+    status: z.enum(['passed', 'failed', 'not_applicable']),
+    evidence: z.string(),
+    sourceGuidanceIds: z.array(z.string().min(1)),
+  })
+  .strict();
 
 export const ReviewMetadataSchema = z
   .object({
@@ -190,6 +253,11 @@ export const ReviewMetadataSchema = z
     local_llm_used: z.boolean(),
     heavy_llm_used: z.boolean(),
     review_duration_ms: z.number().int().nonnegative(),
+    knowledge_policy: KnowledgePolicySchema.optional(),
+    knowledge_retrieval_status: KnowledgeRetrievalStatusSchema.optional(),
+    knowledge_unavailable_reason: z.string().optional(),
+    rubric: z.array(RubricCriterionSchema).optional(),
+    rubric_evaluation: z.array(RubricEvaluationSchema).optional(),
     reviewer_alias: z.string().optional(),
     stage: z.string().optional(),
   })
@@ -331,4 +399,5 @@ export interface ReviewContextV3 extends ReviewContextV2 {
   optionalSkills: GuidanceItem[];
   pastSimilarFindings: string[];
   pastSuccessBenchmarks: string[];
+  rubric?: RubricCriterion[];
 }

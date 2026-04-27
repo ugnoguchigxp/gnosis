@@ -151,7 +151,6 @@ GNOSIS_REVIEWER=qwen
 LOCAL_LLM_MCP_ENABLE_SEMANTIC=true
 LOCAL_LLM_SEMANTIC_COMMAND=bun
 LOCAL_LLM_SEMANTIC_ARGS=run /Users/y.noguchi/Code/gnosis/src/scripts/semanticCodeMcpServer.ts
-GNOSIS_MCP_TOOL_EXPOSURE=all
 ```
 
 ---

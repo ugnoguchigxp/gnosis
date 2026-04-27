@@ -1,4 +1,5 @@
 Always follow the instructions in /Users/y.noguchi/.gnosis/agent/manual.md to utilize the Gnosis memory stack correctly. This is the master rule for this machine environment.
+Canonical repo-local rules: `AGENTS.md` (read and follow first).
 
 <!-- gnosis-hooks:start -->
 # Gnosis Hook Workflow (Auto-managed)

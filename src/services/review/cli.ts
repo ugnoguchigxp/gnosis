@@ -8,7 +8,12 @@ import {
   runReviewStageD,
   runReviewStageE,
 } from './orchestrator.js';
-import { ReviewModeSchema, type ReviewOutput, ReviewRequestSchema } from './types.js';
+import {
+  KnowledgePolicySchema,
+  ReviewModeSchema,
+  type ReviewOutput,
+  ReviewRequestSchema,
+} from './types.js';
 
 type CliArgs = {
   repoPath: string;
@@ -20,6 +25,7 @@ type CliArgs = {
   mode: 'git_diff' | 'worktree';
   goal?: string;
   llmPreference?: 'local' | 'cloud';
+  knowledgePolicy?: 'off' | 'best_effort' | 'required';
   json: boolean;
   stage: 'a' | 'b' | 'c' | 'd' | 'e';
   enableStaticAnalysis: boolean;
@@ -51,6 +57,10 @@ function parseArgs(argv: string[]): CliArgs {
   const llmFlag = getArg(argv, '--llm');
   const llmPreference = llmFlag === 'local' ? 'local' : llmFlag === 'cloud' ? 'cloud' : undefined;
   const json = argv.includes('--json');
+  const knowledgePolicyArg = getArg(argv, '--knowledge-policy');
+  const knowledgePolicy = knowledgePolicyArg
+    ? KnowledgePolicySchema.parse(knowledgePolicyArg)
+    : undefined;
   const stageArg = getArg(argv, '--stage');
   const stage =
     stageArg === 'a' || stageArg === 'c' || stageArg === 'd' || stageArg === 'e' ? stageArg : 'b';
@@ -66,6 +76,7 @@ function parseArgs(argv: string[]): CliArgs {
     mode,
     goal,
     llmPreference,
+    knowledgePolicy,
     json,
     stage,
     enableStaticAnalysis,
@@ -93,6 +104,7 @@ export async function runReviewCli(argv = process.argv.slice(2)): Promise<void> 
     mode: args.mode,
     taskGoal: args.goal,
     enableStaticAnalysis: args.enableStaticAnalysis,
+    knowledgePolicy: args.knowledgePolicy ?? 'best_effort',
   });
 
   emitReviewDebugLog({

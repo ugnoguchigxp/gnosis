@@ -138,6 +138,18 @@ export function renderReviewMarkdown(result: ReviewOutput): string {
   if (result.metadata.knowledge_applied.length > 0) {
     lines.push(`- Knowledge applied: ${result.metadata.knowledge_applied.join(', ')}`);
   }
+  if (result.metadata.knowledge_policy) {
+    lines.push(`- Knowledge policy: ${result.metadata.knowledge_policy}`);
+  }
+  if (result.metadata.knowledge_retrieval_status) {
+    lines.push(`- Knowledge retrieval: ${result.metadata.knowledge_retrieval_status}`);
+  }
+  if (result.metadata.knowledge_unavailable_reason) {
+    lines.push(`- Knowledge unavailable reason: ${result.metadata.knowledge_unavailable_reason}`);
+  }
+  if (result.metadata.rubric_evaluation?.length) {
+    lines.push(`- Rubric evaluations: ${result.metadata.rubric_evaluation.length}`);
+  }
   lines.push('');
 
   renderFixSuggestions(lines, result);

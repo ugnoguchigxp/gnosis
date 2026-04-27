@@ -41,6 +41,30 @@ function buildGuidanceSection(
   return lines.join('\n');
 }
 
+function buildRubricSection(
+  rubric: Array<{
+    criterionId: string;
+    title: string;
+    sourceGuidanceIds: string[];
+    checkpoints: string[];
+  }>,
+): string {
+  if (rubric.length === 0) return '';
+
+  const lines = ['## 評価基準 (Rubric)', ''];
+  for (const item of rubric) {
+    lines.push(`### ${item.criterionId}: ${item.title}`);
+    if (item.sourceGuidanceIds.length > 0) {
+      lines.push(`- Source: ${item.sourceGuidanceIds.join(', ')}`);
+    }
+    for (const checkpoint of item.checkpoints) {
+      lines.push(`- Checkpoint: ${checkpoint}`);
+    }
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
 function buildDiffSummarySection(context: ReviewContextV2): string {
   const riskLabel =
     context.diffSummary.riskSignals.length > 0
@@ -226,6 +250,7 @@ export function buildReviewPromptV3(context: ReviewContextV3): string {
   parts.push(buildGuidanceSection('適用すべき原則 (Principles)', context.recalledPrinciples));
   parts.push(buildGuidanceSection('経験則 (Heuristics)', context.recalledHeuristics));
   parts.push(buildGuidanceSection('再発パターン (Patterns)', context.recalledPatterns));
+  parts.push(buildRubricSection(context.rubric ?? []));
 
   if (context.optionalSkills.length > 0) {
     parts.push(buildGuidanceSection('補助スキル (Optional Skills)', context.optionalSkills));
@@ -259,6 +284,8 @@ export function buildReviewPromptV3(context: ReviewContextV3): string {
   parts.push('7. 根拠がある指摘だけ返す（diff 本文を引用すること）');
   parts.push('8. 新行番号 line_new が必須（削除行のみへの指摘は不可）');
   parts.push('9. 不確実なものは severity: "info" に下げる');
+  parts.push('10. error/warning の各 finding に knowledge_refs または knowledge_basis を必ず付ける');
+  parts.push('11. Rubric が与えられている場合は criterion ごとに評価結果を返す');
   parts.push('');
   parts.push('## Git Diff');
   parts.push('');
@@ -267,6 +294,9 @@ export function buildReviewPromptV3(context: ReviewContextV3): string {
   parts.push('```');
   parts.push('');
   parts.push('[出力は共通基盤の ReviewOutput JSON スキーマに従うこと]');
+  parts.push(
+    '[特に finding.knowledge_refs / finding.knowledge_basis と rubric_evaluation の整合を保つこと]',
+  );
 
   return parts.join('\n');
 }
