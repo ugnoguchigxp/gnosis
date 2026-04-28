@@ -17,6 +17,7 @@ import type {
   GuidanceScope,
   GuidanceType,
 } from '../../domain/schemas.js';
+import { contentFingerprint } from '../../utils/contentFingerprint.js';
 import { sha256 } from '../../utils/crypto.js';
 import { generateEntityId } from '../../utils/entityId.js';
 import { generateEmbedding } from '../memory.js';
@@ -51,6 +52,40 @@ const metadataStringArray = (metadata: Record<string, unknown>, key: string): st
   return value
     .map((item) => (typeof item === 'string' ? item.trim() : ''))
     .filter((item, index, values) => item.length > 0 && values.indexOf(item) === index);
+};
+
+const metadataObjectArray = (
+  metadata: Record<string, unknown>,
+  key: string,
+): Record<string, unknown>[] => {
+  const value = metadata[key];
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (item): item is Record<string, unknown> =>
+      item !== null && typeof item === 'object' && !Array.isArray(item),
+  );
+};
+
+const sourceFingerprint = (source: Record<string, unknown>): string =>
+  JSON.stringify({
+    archiveKey: source.archiveKey,
+    project: source.project,
+    entryPath: source.entryPath,
+    title: source.title,
+  });
+
+const mergeGuidanceSources = (
+  existingSources: Record<string, unknown>[],
+  incomingSource: Record<string, unknown>,
+): Record<string, unknown>[] => {
+  const sources = [...existingSources, incomingSource];
+  const seen = new Set<string>();
+  return sources.filter((source) => {
+    const key = sourceFingerprint(source);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 };
 
 const guidanceEntityType = (guidanceType: GuidanceType): string => {
@@ -498,12 +533,92 @@ const defaultPersistImport = async (input: PersistImportInput): Promise<void> =>
       const entityType = guidanceEntityType(guidanceType);
       const title = metadataString(metadata, 'title') ?? row.content.slice(0, 80);
       const scope = guidanceScopeFromMetadata(metadata);
-      const entityId = generateEntityId(entityType, title);
       const tags = metadataStringArray(metadata, 'tags');
       const priority = Number(metadata.priority ?? 50);
       const confidence = Number.isFinite(priority)
         ? Math.max(0.1, Math.min(1, priority / 100))
         : 0.5;
+      const fallbackFingerprint = contentFingerprint(row.content);
+      const contentHash =
+        metadataString(metadata, 'contentHash') ?? fallbackFingerprint.contentHash;
+      const normalizedContentHash =
+        metadataString(metadata, 'normalizedContentHash') ??
+        fallbackFingerprint.normalizedContentHash;
+      const currentSource = {
+        archiveKey: input.archiveKey,
+        guidanceSessionId: input.guidanceSessionId,
+        project: metadataString(metadata, 'project'),
+        entryPath: metadataString(metadata, 'entryPath'),
+        title,
+        contentHash,
+        importedAt: input.now.toISOString(),
+      };
+
+      const [duplicateEntity] = await tx
+        .select({
+          id: entities.id,
+          metadata: entities.metadata,
+          confidence: entities.confidence,
+        })
+        .from(entities)
+        .where(sql`${entities.type} = ${entityType}
+          AND ${entities.metadata}->>'normalizedContentHash' = ${normalizedContentHash}`)
+        .limit(1);
+
+      let entityId = generateEntityId(entityType, title);
+
+      if (duplicateEntity) {
+        entityId = duplicateEntity.id;
+        const existingMetadata = metadataRecord(duplicateEntity.metadata);
+        const existingSources = metadataObjectArray(existingMetadata, 'sources');
+        const sources = mergeGuidanceSources(existingSources, currentSource);
+        const projects = uniqueStrings(
+          sources
+            .map((source) => (typeof source.project === 'string' ? source.project : ''))
+            .filter((project) => project.length > 0),
+        );
+        const existingTags = metadataStringArray(existingMetadata, 'tags');
+
+        await tx
+          .update(entities)
+          .set({
+            metadata: {
+              ...existingMetadata,
+              source: 'guidance_import',
+              project:
+                projects.length === 1 ? projects[0] : projects.length > 1 ? 'multiple' : undefined,
+              projects,
+              tags: uniqueStrings([...existingTags, ...tags]),
+              sources,
+              contentHash: metadataString(existingMetadata, 'contentHash') ?? contentHash,
+              normalizedContentHash,
+              guidanceDedupeKeys: uniqueStrings([
+                ...metadataStringArray(existingMetadata, 'guidanceDedupeKeys'),
+                row.dedupeKey,
+              ]),
+              duplicateSourceCount: sources.length,
+              lastDuplicateAt: input.now.toISOString(),
+            },
+            confidence: Math.max(duplicateEntity.confidence ?? 0.5, confidence),
+            freshness: input.now,
+          })
+          .where(eq(entities.id, entityId));
+
+        await tx
+          .insert(relations)
+          .values({
+            sourceId: archiveEntityId,
+            targetId: entityId,
+            relationType: 'contains_guidance',
+            weight: confidence,
+            confidence,
+            sourceTask: input.stateId,
+            provenance: 'guidance_import',
+          })
+          .onConflictDoNothing();
+
+        continue;
+      }
 
       await tx
         .insert(entities)
@@ -516,10 +631,17 @@ const defaultPersistImport = async (input: PersistImportInput): Promise<void> =>
           metadata: {
             ...metadata,
             tags,
+            projects: metadataString(metadata, 'project')
+              ? [metadataString(metadata, 'project')]
+              : [],
+            sources: [currentSource],
             source: 'guidance_import',
             archiveKey: input.archiveKey,
             guidanceSessionId: input.guidanceSessionId,
             guidanceDedupeKey: row.dedupeKey,
+            guidanceDedupeKeys: [row.dedupeKey],
+            contentHash,
+            normalizedContentHash,
           },
           confidence,
           provenance: 'guidance_import',
@@ -683,6 +805,7 @@ export async function importGuidanceArchives(
       const rows: GuidanceMemoryRow[] = [];
       for (const chunk of chunks) {
         const embedding = await resolvedDeps.generateEmbedding(chunk.content);
+        const { contentHash, normalizedContentHash } = contentFingerprint(chunk.content);
         const chunkDigest = sha256(
           `${archiveKey}:${chunk.entryPath}:${chunk.title}:${chunk.content}`,
         );
@@ -703,6 +826,8 @@ export async function importGuidanceArchives(
             archiveKey,
             project: chunk.project,
             entryPath: chunk.entryPath,
+            contentHash,
+            normalizedContentHash,
             importedAt: resolvedDeps.now().toISOString(),
           },
         });
