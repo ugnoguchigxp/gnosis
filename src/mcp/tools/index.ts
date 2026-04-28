@@ -1,9 +1,7 @@
 import type { ToolEntry } from '../registry.js';
 import { agentFirstTools } from './agentFirst.js';
 
-export const toolEntries: ToolEntry[] = [
-  ...agentFirstTools,
-];
+export const toolEntries: ToolEntry[] = [...agentFirstTools];
 
 const PRIMARY_TOOL_NAMES = new Set<string>([
   'initial_instructions',

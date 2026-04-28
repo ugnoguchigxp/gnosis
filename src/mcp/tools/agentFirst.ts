@@ -3,10 +3,6 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
-import { reviewDocument, type ReviewDocumentFinding } from '../../services/reviewAgent/documentReviewer.js';
-import { generateImplementationPlan } from '../../services/specAgent/implementationPlanner.js';
-import { analyzePlanAlignment } from '../../services/specAgent/planAlignment.js';
-import { analyzeSpecAlignment } from '../../services/specAgent/specAlignment.js';
 import {
   buildActivateProjectResult,
   buildDoctorRuntimeHealth,
@@ -27,6 +23,13 @@ import {
   type ReviewOutput,
   ReviewRequestSchema,
 } from '../../services/review/types.js';
+import {
+  type ReviewDocumentFinding,
+  reviewDocument,
+} from '../../services/reviewAgent/documentReviewer.js';
+import { generateImplementationPlan } from '../../services/specAgent/implementationPlanner.js';
+import { analyzePlanAlignment } from '../../services/specAgent/planAlignment.js';
+import { analyzeSpecAlignment } from '../../services/specAgent/specAlignment.js';
 import type { ToolEntry } from '../registry.js';
 
 const KNOWLEDGE_KINDS = [
@@ -602,7 +605,8 @@ TYPICAL NEXT TOOL:
         findings = review.findings.map((finding) =>
           mapDocumentFinding(
             finding,
-            input.target.documentPath ?? `inline:${input.targetType === 'design' ? 'plan' : 'spec'}`,
+            input.target.documentPath ??
+              `inline:${input.targetType === 'design' ? 'plan' : 'spec'}`,
           ),
         );
         summary = review.summary;

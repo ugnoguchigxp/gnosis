@@ -42,13 +42,13 @@ import {
   type KnowledgePolicy,
   type KnowledgeRetrievalStatus,
   type NormalizedDiff,
-  type RubricCriterion,
-  type RubricEvaluation,
   type ReviewMetadata,
   type ReviewOutput,
   ReviewOutputSchema,
   type ReviewRequest,
   type ReviewStatus,
+  type RubricCriterion,
+  type RubricEvaluation,
   type StaticAnalysisFinding,
 } from './types.js';
 
@@ -560,7 +560,10 @@ function buildKnowledgeContext(
   };
 }
 
-function resolveKnowledgePolicy(req: ReviewRequest, defaultPolicy: KnowledgePolicy): KnowledgePolicy {
+function resolveKnowledgePolicy(
+  req: ReviewRequest,
+  defaultPolicy: KnowledgePolicy,
+): KnowledgePolicy {
   if (req.knowledgePolicy) return req.knowledgePolicy;
   if (req.enableKnowledgeRetrieval === false) return 'off';
   return defaultPolicy;
@@ -614,11 +617,15 @@ function applyKnowledgeBasisDefaults(
 }
 
 function hasKnowledgeRelation(finding: Finding): boolean {
-  return Boolean((finding.knowledge_refs && finding.knowledge_refs.length > 0) || finding.knowledge_basis);
+  return Boolean(
+    (finding.knowledge_refs && finding.knowledge_refs.length > 0) || finding.knowledge_basis,
+  );
 }
 
 function validateKnowledgeCoverage(findings: Finding[]): boolean {
-  const targets = findings.filter((finding) => finding.severity === 'error' || finding.severity === 'warning');
+  const targets = findings.filter(
+    (finding) => finding.severity === 'error' || finding.severity === 'warning',
+  );
   if (targets.length === 0) return true;
   return targets.every(hasKnowledgeRelation);
 }
@@ -636,12 +643,16 @@ function buildRubricEvaluation(rubric: RubricCriterion[], findings: Finding[]): 
         sourceGuidanceIds: criterion.sourceGuidanceIds,
       };
     }
-    const failed = related.some((finding) => finding.severity === 'error' || finding.severity === 'warning');
+    const failed = related.some(
+      (finding) => finding.severity === 'error' || finding.severity === 'warning',
+    );
     return {
       criterionId: criterion.criterionId,
       status: failed ? 'failed' : 'passed',
       evidence: failed
-        ? related.map((finding) => `${finding.file_path}:${finding.line_new} ${finding.title}`).join('; ')
+        ? related
+            .map((finding) => `${finding.file_path}:${finding.line_new} ${finding.title}`)
+            .join('; ')
         : 'No blocking issue found for this criterion.',
       sourceGuidanceIds: criterion.sourceGuidanceIds,
     };
@@ -888,8 +899,8 @@ export async function runReviewStageE(
   const riskSignals = extractRiskSignalsFromDiffs(normalizedForSignals);
   const projectKey = getProjectKey(req.repoPath);
   const language = detectPrimaryLanguage(normalizedForSignals);
-  const framework = normalizedForSignals.find((diff) => diff.classification.framework)?.classification
-    .framework;
+  const framework = normalizedForSignals.find((diff) => diff.classification.framework)
+    ?.classification.framework;
 
   let knowledge = {
     principles: [] as GuidanceItem[],
@@ -1050,7 +1061,10 @@ Return your final review in the following JSON format ONLY:
       knowledgeUnavailableReason = 'no_applicable_knowledge';
     }
     if (knowledgePolicy === 'required' && !validateKnowledgeCoverage(findings)) {
-      throw new ReviewError('E008', 'required knowledge policy violated: missing knowledge relation');
+      throw new ReviewError(
+        'E008',
+        'required knowledge policy violated: missing knowledge relation',
+      );
     }
     const rubricEvaluation = buildRubricEvaluation(rubric, findings);
 
@@ -1075,7 +1089,7 @@ Return your final review in the following JSON format ONLY:
               ? (['knowledge_empty_index'] as DegradedMode[])
               : knowledgeRetrievalStatus === 'no_applicable_knowledge'
                 ? (['knowledge_no_applicable'] as DegradedMode[])
-              : [],
+                : [],
         local_llm_used: llmService.provider === 'local',
         heavy_llm_used: llmService.provider === 'cloud',
         review_duration_ms: now() - startTime,

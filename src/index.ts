@@ -88,6 +88,7 @@ async function main() {
   // シグナル・例外ハンドリングの登録
   process.on('SIGINT', () => cleanup('SIGINT'));
   process.on('SIGTERM', () => cleanup('SIGTERM'));
+  process.stdin.on('close', () => cleanup('stdin_closed'));
 
   process.on('uncaughtException', (err) => {
     console.error('[Main] Uncaught Exception:', err);

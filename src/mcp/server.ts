@@ -11,11 +11,9 @@ import { getExposedToolEntries } from './tools/index.js';
 // Process Metadata
 // ---------------------------------------------------------------------------
 if (import.meta.main) {
-  process.title = 'gnosis-mcp-standalone-warn';
-  console.error('[Warning] src/mcp/server.ts is being run directly.');
-  console.error(
-    '[Warning] Please use src/index.ts as the entry point for proper signal handling and cleanup.',
-  );
+  console.error('[Error] src/mcp/server.ts cannot be run directly.');
+  console.error('[Error] Please use src/index.ts as the entry point.');
+  process.exit(1);
 } else {
   // Logic-only title (may be overwritten by index.ts)
   process.title = 'gnosis-mcp-logic';

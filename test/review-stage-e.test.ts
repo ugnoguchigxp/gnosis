@@ -32,7 +32,7 @@ const fakeCloudLlm = {
 
 beforeEach(() => {
   process.env.GNOSIS_ALLOWED_ROOTS = '/tmp';
-  delete process.env.GNOSIS_REVIEW_EMPTY_KNOWLEDGE_MODE;
+  process.env.GNOSIS_REVIEW_EMPTY_KNOWLEDGE_MODE = undefined;
 });
 
 afterEach(() => {
