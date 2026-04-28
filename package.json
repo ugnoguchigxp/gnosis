@@ -20,6 +20,8 @@
     "doctor": "bun run scripts/doctor.ts",
     "process:diagnose": "bun run scripts/diagnose-processes.ts",
     "process:watchdog": "bun run src/scripts/process-watchdog.ts",
+    "supervisor:start": "bun run src/supervisor/daemon.ts",
+    "supervisor:status": "bun run src/scripts/supervisor-status.ts",
     "onboarding:smoke": "bun run scripts/onboarding-smoke.ts",
     "start": "bun run src/index.ts",
     "dev": "bun run --watch src/index.ts",

@@ -18,6 +18,7 @@ import {
   createMcpEvidenceProvider,
 } from '../services/knowflow/worker/knowFlowHandler.js';
 import { runWorkerLoop } from '../services/knowflow/worker/loop.js';
+import { notifyTaskEnd, notifyTaskStart } from '../supervisor/client.js';
 import { withGlobalSemaphore } from '../utils/lock.js';
 
 async function main() {
@@ -30,6 +31,7 @@ async function main() {
   let healthReportTimer: ReturnType<typeof setInterval> | undefined;
 
   const cleanup = async (reason: string) => {
+    await notifyTaskEnd().catch(() => {});
     console.error(`\n--- Gnosis Worker Shutdown (Reason: ${reason}, PID: ${process.pid}) ---`);
 
     // Watchdog: Force exit if cleanup takes too long (10s)
@@ -79,6 +81,7 @@ async function main() {
   });
 
   console.log('--- Gnosis KnowFlow Worker Daemon Start ---');
+  await notifyTaskStart(process.title).catch(() => {});
 
   const queueRepository = new PgJsonbQueueRepository();
   const knowledgeRepository = new PgKnowledgeRepository();
@@ -94,6 +97,7 @@ async function main() {
 
   const handler = createKnowFlowTaskHandler({
     repository: knowledgeRepository,
+    queueRepository,
     evidenceProvider,
     budget: config.knowflow.budget,
     logger,

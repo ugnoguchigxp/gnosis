@@ -31,7 +31,7 @@ async function searchBrave(query: string): Promise<{ results: SearchResult[]; er
   try {
     const url = new URL(BRAVE_SEARCH_URL);
     url.searchParams.set('q', query);
-    url.searchParams.set('count', '3');
+    url.searchParams.set('count', '10');
     url.searchParams.set('safesearch', 'off');
 
     const res = await fetch(url.toString(), {
@@ -45,7 +45,7 @@ async function searchBrave(query: string): Promise<{ results: SearchResult[]; er
 
     const data = (await res.json()) as Record<string, unknown>;
     const web = data.web as { results?: Array<Record<string, string>> } | undefined;
-    const results: SearchResult[] = (web?.results ?? []).slice(0, 3).map((r) => ({
+    const results: SearchResult[] = (web?.results ?? []).slice(0, 10).map((r) => ({
       title: r.title ?? 'No Title',
       url: r.url ?? '',
       snippet: r.description ?? '',
@@ -85,7 +85,7 @@ async function searchDuckDuckGo(query: string): Promise<SearchResult[]> {
       url,
       snippet: snippetMatch?.[1]?.replace(/<[^>]*>/g, '').trim() ?? '',
     });
-    if (results.length >= 3) break;
+    if (results.length >= 10) break;
   }
   return results;
 }

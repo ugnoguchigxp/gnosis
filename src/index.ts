@@ -6,6 +6,7 @@ import { server } from './mcp/server.js';
 import { RuntimeLifecycle } from './runtime/lifecycle.js';
 import { registerProcess } from './runtime/processRegistry.js';
 import { startBackgroundWorkers, stopBackgroundWorkers } from './services/background/manager.js';
+import { notifyTaskEnd, notifyTaskStart } from './supervisor/client.js';
 
 // Set process title for easier identification
 process.title = 'gnosis-mcp-server';
@@ -76,7 +77,8 @@ async function main() {
     name: 'Main',
     registration,
   });
-  lifecycle.addCleanupStep(() => {
+  lifecycle.addCleanupStep(async () => {
+    await notifyTaskEnd().catch(() => {});
     stopBackgroundWorkers();
   });
   lifecycle.addCleanupStep(async () => {
@@ -100,6 +102,9 @@ async function main() {
       '[Main] Background workers are OFF (set GNOSIS_ENABLE_AUTOMATION=true to enable).',
     );
   }
+
+  // Supervisor にタスク開始を通知
+  await notifyTaskStart(process.title).catch(() => {});
 
   try {
     lifecycle.markRunning();

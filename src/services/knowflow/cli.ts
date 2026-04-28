@@ -7,6 +7,7 @@ import { db as defaultDb } from '../../db/index.js';
 import { searchKnowledgeClaims } from '../knowledge.js';
 import { type TaskMode, type TaskSource, createTask } from './domain/task';
 import { runEvalSuite } from './eval/runner';
+import { enqueueFrontierCandidates, selectFrontierCandidates } from './frontier/selector';
 import { PgKnowledgeRepository } from './knowledge/repository';
 import { KnowledgeUpsertInputSchema } from './knowledge/types';
 import type { StructuredLogger } from './ops/logger';
@@ -31,6 +32,7 @@ const usage = `Usage:
   bun src/services/knowflow/cli.ts search-knowledge --query <text> [--limit <n>]
   bun src/services/knowflow/cli.ts get-knowledge --topic <text>
   bun src/services/knowflow/cli.ts merge-knowledge --input <json> [--dry-run]
+  bun src/services/knowflow/cli.ts seed-frontier [--limit <n>] [--max-per-community <n>] [--dry-run]
   bun src/services/knowflow/cli.ts eval-run [--suite local] [--max-degraded-rate <0-100>] [--mock]
 
 Global options:
@@ -67,6 +69,7 @@ const createHandler = (options: {
   }
 
   const repository = new PgKnowledgeRepository({}, defaultDb);
+  const queueRepository = new PgJsonbQueueRepository(defaultDb);
   let evidenceProvider: EvidenceProvider | undefined;
   if (options.localLlmPath) {
     const retriever = createLocalLlmRetriever(resolve(options.localLlmPath));
@@ -79,6 +82,7 @@ const createHandler = (options: {
 
   return createKnowFlowTaskHandler({
     repository,
+    queueRepository,
     evidenceProvider,
     budget: options.budgetOverride,
     logger: options.logger,
@@ -391,6 +395,42 @@ const run = async () => {
 
       const repository = new PgKnowledgeRepository({}, defaultDb);
       const result = await repository.merge(input);
+      writeResult({
+        command,
+        runId: runLogger.runId,
+        profilePath,
+        ...result,
+      });
+      return;
+    }
+
+    if (command === 'seed-frontier') {
+      const limit = readNumberFlag(args, 'limit') ?? 5;
+      const maxPerCommunity = readNumberFlag(args, 'max-per-community');
+      const queueRepository = buildQueueRepository();
+
+      if (dryRun) {
+        const candidates = await selectFrontierCandidates({
+          limit,
+          maxPerCommunity,
+          database: defaultDb,
+        });
+        writeResult({
+          command,
+          runId: runLogger.runId,
+          dryRun: true,
+          profilePath,
+          candidates,
+        });
+        return;
+      }
+
+      const result = await enqueueFrontierCandidates({
+        limit,
+        maxPerCommunity,
+        database: defaultDb,
+        queueRepository,
+      });
       writeResult({
         command,
         runId: runLogger.runId,

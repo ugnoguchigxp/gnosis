@@ -464,6 +464,34 @@ const degradedOutputBuilders: {
       },
     ],
   }),
+  search_result_selection: (context) => {
+    const results = Array.isArray(context.results) ? context.results : [];
+    const maxPages =
+      typeof context.max_pages === 'number' && Number.isFinite(context.max_pages)
+        ? Math.max(1, Math.trunc(context.max_pages))
+        : 5;
+    return {
+      selected: results
+        .map((item) => {
+          if (typeof item !== 'object' || item === null) return undefined;
+          const url = (item as { url?: unknown }).url;
+          return typeof url === 'string' && url.trim().length > 0
+            ? { url: url.trim(), reason: 'Fallback selected from search order.', priority: 0.1 }
+            : undefined;
+        })
+        .filter((item): item is { url: string; reason: string; priority: number } => Boolean(item))
+        .slice(0, maxPages),
+    };
+  },
+  page_usefulness_evaluation: () => ({
+    useful: false,
+    score: 0,
+    reason: 'Usefulness evaluation degraded due to LLM output failure.',
+    shouldFetchAnother: true,
+  }),
+  emergent_topic_extraction: () => ({
+    items: [],
+  }),
   gap_planner: (context) => {
     const topic =
       typeof context.topic === 'string' && context.topic.trim().length > 0

@@ -3,6 +3,9 @@ import { z } from 'zod';
 export const LlmTaskNameSchema = z.enum([
   'hypothesis',
   'query_generation',
+  'search_result_selection',
+  'page_usefulness_evaluation',
+  'emergent_topic_extraction',
   'gap_detection',
   'gap_planner',
   'summarize',
@@ -29,6 +32,62 @@ export const HypothesisOutputSchema = z
 export const QueryGenerationOutputSchema = z
   .object({
     queries: z.array(z.string().min(1)).default([]),
+  })
+  .passthrough();
+
+export const SearchResultSelectionOutputSchema = z
+  .object({
+    selected: z
+      .array(
+        z
+          .object({
+            url: z.string().min(1),
+            reason: z.string().min(1).optional(),
+            priority: z.number().min(0).max(1).optional(),
+          })
+          .passthrough(),
+      )
+      .default([]),
+  })
+  .passthrough();
+
+export const PageUsefulnessEvaluationOutputSchema = z
+  .object({
+    useful: z.boolean(),
+    score: z.number().min(0).max(1),
+    reason: z.string().min(1),
+    shouldFetchAnother: z.boolean().optional(),
+  })
+  .passthrough();
+
+export const EmergentTopicExtractionOutputSchema = z
+  .object({
+    items: z
+      .array(
+        z
+          .object({
+            topic: z.string().min(1),
+            whyResearch: z.string().min(1),
+            relationType: z
+              .enum([
+                'expands',
+                'supports',
+                'depends_on',
+                'used_for',
+                'alternative_to',
+                'contradicts',
+                'related_to',
+              ])
+              .optional(),
+            score: z.number().min(0).max(1),
+            noveltyScore: z.number().min(0).max(1).optional(),
+            specificityScore: z.number().min(0).max(1).optional(),
+            actionabilityScore: z.number().min(0).max(1).optional(),
+            communityFitScore: z.number().min(0).max(1).optional(),
+          })
+          .passthrough(),
+      )
+      .default([]),
   })
   .passthrough();
 
@@ -101,6 +160,9 @@ export const ExtractEvidenceOutputSchema = z
 
 export type HypothesisOutput = z.infer<typeof HypothesisOutputSchema>;
 export type QueryGenerationOutput = z.infer<typeof QueryGenerationOutputSchema>;
+export type SearchResultSelectionOutput = z.infer<typeof SearchResultSelectionOutputSchema>;
+export type PageUsefulnessEvaluationOutput = z.infer<typeof PageUsefulnessEvaluationOutputSchema>;
+export type EmergentTopicExtractionOutput = z.infer<typeof EmergentTopicExtractionOutputSchema>;
 export type GapDetectionOutput = z.infer<typeof GapDetectionOutputSchema>;
 export type GapPlannerOutput = z.infer<typeof GapPlannerOutputSchema>;
 export type SummarizeOutput = z.infer<typeof SummarizeOutputSchema>;
@@ -108,6 +170,9 @@ export type SummarizeOutput = z.infer<typeof SummarizeOutputSchema>;
 export type LlmTaskOutputMap = {
   hypothesis: HypothesisOutput;
   query_generation: QueryGenerationOutput;
+  search_result_selection: SearchResultSelectionOutput;
+  page_usefulness_evaluation: PageUsefulnessEvaluationOutput;
+  emergent_topic_extraction: EmergentTopicExtractionOutput;
   gap_detection: GapDetectionOutput;
   gap_planner: GapPlannerOutput;
   summarize: SummarizeOutput;
@@ -117,6 +182,9 @@ export type LlmTaskOutputMap = {
 const schemaMap: Record<LlmTaskName, z.ZodTypeAny> = {
   hypothesis: HypothesisOutputSchema,
   query_generation: QueryGenerationOutputSchema,
+  search_result_selection: SearchResultSelectionOutputSchema,
+  page_usefulness_evaluation: PageUsefulnessEvaluationOutputSchema,
+  emergent_topic_extraction: EmergentTopicExtractionOutputSchema,
   gap_detection: GapDetectionOutputSchema,
   gap_planner: GapPlannerOutputSchema,
   summarize: SummarizeOutputSchema,
@@ -136,6 +204,12 @@ export const getTaskOutputHint = (task: LlmTaskName): string => {
       return '{"hypotheses":[{"id":"h1","hypothesis":"...","rationale":"...","priority":0.7}]}';
     case 'query_generation':
       return '{"queries":["query 1","query 2"]}';
+    case 'search_result_selection':
+      return '{"selected":[{"url":"https://example.com","reason":"official source","priority":0.9}]}';
+    case 'page_usefulness_evaluation':
+      return '{"useful":true,"score":0.8,"reason":"contains directly relevant evidence","shouldFetchAnother":false}';
+    case 'emergent_topic_extraction':
+      return '{"items":[{"topic":"related concrete term","whyResearch":"why this deserves a follow-up KnowFlow task","relationType":"expands","score":0.75,"noveltyScore":0.7,"specificityScore":0.8,"actionabilityScore":0.7,"communityFitScore":0.6}]}';
     case 'gap_detection':
       return '{"gaps":[{"type":"missing_example","description":"...","priority":0.7}]}';
     case 'gap_planner':
