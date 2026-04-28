@@ -15,16 +15,7 @@ function resolveMode(raw?: string): VerifyMode {
 }
 
 function buildSteps(mode: VerifyMode, bun: string): Step[] {
-  if (mode === 'fast') {
-    return [
-      { name: 'format-check', command: bun, args: ['x', 'biome', 'ci', '.'] },
-      { name: 'lint', command: bun, args: ['run', 'lint'] },
-      { name: 'typecheck', command: bun, args: ['x', 'tsc', '--noEmit'] },
-      { name: 'build', command: bun, args: ['run', 'build'] },
-    ];
-  }
-
-  const standard: Step[] = [
+  const steps: Step[] = [
     { name: 'format-check', command: bun, args: ['x', 'biome', 'ci', '.'] },
     { name: 'lint', command: bun, args: ['run', 'lint'] },
     { name: 'typecheck', command: bun, args: ['x', 'tsc', '--noEmit'] },
@@ -33,7 +24,7 @@ function buildSteps(mode: VerifyMode, bun: string): Step[] {
   ];
 
   if (mode === 'strict') {
-    standard.push(
+    steps.push(
       { name: 'coverage', command: bun, args: ['run', 'test:coverage'], capture: true },
       { name: 'failure-path', command: bun, args: ['run', 'test:failure-path'] },
       { name: 'smoke', command: bun, args: ['run', 'smoke'] },
@@ -42,7 +33,7 @@ function buildSteps(mode: VerifyMode, bun: string): Step[] {
     );
   }
 
-  return standard;
+  return steps;
 }
 
 const run = async () => {
