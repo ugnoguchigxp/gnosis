@@ -141,7 +141,7 @@ describe('importGuidanceArchives', () => {
     expect(persisted.length).toBeGreaterThan(0);
 
     const metadata = persisted[0]?.metadata ?? {};
-    expect(String(metadata.title)).toContain('react-best');
+    expect(String(metadata.title)).toContain('Prefer small composable hooks');
     expect(metadata.entryPath).toBe('frontend/react-best.md');
     expect(metadata.guidanceType).toBe('skill');
     expect(Array.isArray(metadata.tags)).toBe(true);

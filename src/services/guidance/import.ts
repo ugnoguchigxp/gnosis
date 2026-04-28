@@ -4,7 +4,7 @@ import path from 'node:path';
 import { eq, sql } from 'drizzle-orm';
 import { config } from '../../config.js';
 import { db } from '../../db/index.js';
-import { syncState, vibeMemories } from '../../db/schema.js';
+import { entities, relations, syncState, vibeMemories } from '../../db/schema.js';
 import {
   GuidanceChunkSchema,
   GuidanceManifestSchema,
@@ -18,6 +18,7 @@ import type {
   GuidanceType,
 } from '../../domain/schemas.js';
 import { sha256 } from '../../utils/crypto.js';
+import { generateEntityId } from '../../utils/entityId.js';
 import { generateEmbedding } from '../memory.js';
 import { splitMarkdownIntoChunks, uniqueStrings } from './chunking.js';
 import type {
@@ -33,6 +34,40 @@ import type {
 import { computeFileHash, isSafeZipEntryPath, listZipEntries, readZipEntryText } from './zip.js';
 
 const ManifestSchema = GuidanceManifestSchema;
+
+const metadataRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+
+const metadataString = (metadata: Record<string, unknown>, key: string): string | undefined => {
+  const value = metadata[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+};
+
+const metadataStringArray = (metadata: Record<string, unknown>, key: string): string[] => {
+  const value = metadata[key];
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => (typeof item === 'string' ? item.trim() : ''))
+    .filter((item, index, values) => item.length > 0 && values.indexOf(item) === index);
+};
+
+const guidanceEntityType = (guidanceType: GuidanceType): string => {
+  if (guidanceType === 'rule') return 'rule';
+  if (guidanceType === 'goal') return 'goal';
+  return 'procedure';
+};
+
+const guidanceTypeFromMetadata = (metadata: Record<string, unknown>): GuidanceType => {
+  const parsed = GuidanceTypeSchema.safeParse(metadata.guidanceType);
+  return parsed.success ? parsed.data : 'skill';
+};
+
+const guidanceScopeFromMetadata = (metadata: Record<string, unknown>): GuidanceScope => {
+  const parsed = GuidanceScopeSchema.safeParse(metadata.scope);
+  return parsed.success ? parsed.data : 'on_demand';
+};
 
 const inferGuidanceType = (entryPath: string): GuidanceType => {
   const lower = entryPath.toLowerCase();
@@ -52,6 +87,169 @@ const inferPriority = (guidanceType: GuidanceType, scope: GuidanceScope): number
   if (scope === 'always' && guidanceType === 'rule') return config.guidance.priorityHigh;
   if (guidanceType === 'rule') return config.guidance.priorityMid;
   return config.guidance.priorityLow;
+};
+
+const stripMarkdownSyntax = (value: string): string =>
+  value
+    .replace(/^#{1,6}\s+/, '')
+    .replace(/^[-*+]\s+/, '')
+    .replace(/^\d+\.\s+/, '')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/^(?:\p{Extended_Pictographic}\uFE0F?|\s)+/u, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const isStructuralHeading = (value: string): boolean => {
+  const normalized = stripMarkdownSyntax(value).toLowerCase();
+  return [
+    'api・通信方針',
+    '共通部品とテスト',
+    'テスト要件',
+    'セキュリティ・データ保護',
+    'ai運用・開発ワークフロー',
+    'チケット・todo管理',
+    'mcp操作',
+    'チケットmdファイル構成',
+    '仕様書作成（必須）',
+  ].includes(normalized);
+};
+
+const isGenericHeading = (value: string): boolean => {
+  const normalized = stripMarkdownSyntax(value).toLowerCase();
+  if (/開発ガイドライン$/.test(normalized)) return true;
+  if (/coding[_\s-]?rules/i.test(normalized)) return true;
+
+  return [
+    '開発ルール',
+    '事前知識',
+    'プロジェクト概要',
+    '必須遵守',
+    'コーディング規約',
+    'ai動作制約',
+    'プロジェクト設定',
+    '命名規則',
+    '設計原則',
+    '実装ルール',
+    'ディレクトリ構成',
+    'コンポーネント実装',
+    'logger',
+    'エラーハンドリング',
+    '国際化 (i18n)',
+    'api実装 (3層アーキテクチャ)',
+    'ロジック分離',
+    'repository実装ルール',
+    '状態管理 & キャッシュ戦略',
+    'ローディング表示',
+    '初期化エラー通知',
+    'ボタンの非同期状態管理',
+    'ui/ux & プラットフォーム',
+    'タッチファーストデザイン (touch first design)',
+    '基本アクセシビリティ',
+    'tauri & デバイス通信',
+    'コンプライアンス',
+    '医療機器認定 (samd)',
+    'gdpr & プライバシー',
+    'localstorage使用ポリシー',
+    'テスト & パフォーマンス',
+    'テスト',
+    'パフォーマンス',
+    '運用ルール',
+    'コミット規約 (conventional commits)',
+    '共通ルール',
+    '必須事項',
+    '開発フロー',
+    'コードレビュー',
+    '編集ルール',
+    'todo管理',
+    '設定・機能一覧',
+    '運用上の注意点',
+  ].includes(normalized);
+};
+
+const contentSignalLines = (content: string): string[] =>
+  content
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .filter((line) => !/^#{1,6}\s+/.test(line))
+    .filter((line) => !/^```/.test(line))
+    .map(stripMarkdownSyntax)
+    .filter((line) => line.length > 0)
+    .filter((line) => !line.endsWith(':'))
+    .filter((line) => !isStructuralHeading(line));
+
+const fixedTitleForHeading = (heading: string, content: string): string | null => {
+  const normalized = stripMarkdownSyntax(heading).toLowerCase();
+  if (normalized === 'プロジェクト概要' && content.includes('タッチパネル医療画像管理アプリ')) {
+    return 'React 19 + Tauriのタッチパネル医療画像管理アプリ構成';
+  }
+  if (normalized === '命名規則') {
+    return 'TypeScript/Reactファイル・型・Query Keyの命名規則';
+  }
+  if (normalized === 'ロジック分離') {
+    return 'Custom HookとRepositoryの責務分離';
+  }
+  if (normalized.startsWith('コミット規約')) {
+    return 'Conventional Commitsのtypeと日本語subject規約';
+  }
+  return null;
+};
+
+const compactTitle = (value: string, maxLength = 96): string => {
+  const normalized = stripMarkdownSyntax(value)
+    .replace(/^目的[:：]\s*/, '')
+    .replace(/\s-\s目的[:：]\s*/g, ' - ')
+    .replace(/[。.]$/, '')
+    .replace(/すること$/, 'する')
+    .trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength - 1)}…`;
+};
+
+const buildSemanticTitle = (input: {
+  sectionTitle: string;
+  content: string;
+  entryPath: string;
+  project?: string;
+}): string | null => {
+  const sectionLeaf = input.sectionTitle.split(' / ').pop()?.trim() ?? input.sectionTitle;
+  const heading = stripMarkdownSyntax(sectionLeaf);
+  const signals = contentSignalLines(input.content);
+  const meaningfulSignals = signals
+    .filter((line) => line !== heading)
+    .filter((line) => !/以下|確認・宣言すること/.test(line));
+  const fixedTitle = fixedTitleForHeading(heading, input.content);
+  if (fixedTitle) return fixedTitle;
+
+  if (meaningfulSignals.length === 0) {
+    return isStructuralHeading(heading) || isGenericHeading(heading) ? null : compactTitle(heading);
+  }
+
+  if (heading === '開発ルール') return null;
+  if (heading === '事前知識' && input.content.includes('MonoRepo')) {
+    return 'MonoRepo構成とfrontend/backend開発ポート';
+  }
+
+  const specificSignal = meaningfulSignals.find((line) =>
+    /禁止|必須|使用|確認|実行|作成|記録|変更|削除|許可|優先|無効|検証|更新|起動|認証|テスト|ログ|DI|Query|Kanban|MCP|DB|API|React|TypeScript|pnpm|Git/i.test(
+      line,
+    ),
+  );
+  const primary = specificSignal ?? meaningfulSignals[0];
+  const secondary = meaningfulSignals.find((line) => line !== primary && line.length <= 48);
+  const detail = secondary && primary.length < 44 ? `${primary} / ${secondary}` : primary;
+
+  if (
+    heading.length > 0 &&
+    !isStructuralHeading(heading) &&
+    !isGenericHeading(heading) &&
+    !detail.includes(heading)
+  ) {
+    return compactTitle(`${heading} - ${detail}`);
+  }
+
+  return compactTitle(detail);
 };
 
 const parseManifest = async (
@@ -151,8 +349,16 @@ const createChunksFromZip = async (
     const sectionChunks = splitMarkdownIntoChunks(content, docTitle, maxChunkChars);
 
     for (const sectionChunk of sectionChunks) {
+      const title = buildSemanticTitle({
+        sectionTitle: sectionChunk.title,
+        content: sectionChunk.content,
+        entryPath: entry,
+        project: forcedProject ?? manifest?.project,
+      });
+      if (!title) continue;
+
       chunks.push({
-        title: sectionChunk.title,
+        title,
         content: sectionChunk.content,
         guidanceType,
         scope,
@@ -182,16 +388,71 @@ const defaultListArchiveFiles = async (inboxDir: string): Promise<GuidanceArchiv
 
 const defaultPersistImport = async (input: PersistImportInput): Promise<void> => {
   await db.transaction(async (tx) => {
-    if (input.previousArchiveKey) {
+    const archiveKeysToReplace = Array.from(
+      new Set(
+        [input.previousArchiveKey, input.archiveKey].filter((key): key is string => Boolean(key)),
+      ),
+    );
+    const entryPathsToReplace = Array.from(
+      new Set(
+        input.rows
+          .map((row) => metadataString(metadataRecord(row.metadata), 'entryPath'))
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+    const projectsToReplace = Array.from(
+      new Set(
+        input.rows
+          .map((row) => metadataString(metadataRecord(row.metadata), 'project'))
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+    const archiveProject = projectsToReplace[0];
+
+    const deleteImportedByMatch = async (match: Record<string, string>) => {
       await tx.delete(vibeMemories).where(
         sql`${vibeMemories.sessionId} = ${input.guidanceSessionId} AND ${
           vibeMemories.metadata
         } @> ${JSON.stringify({
           kind: 'guidance',
-          archiveKey: input.previousArchiveKey,
+          ...match,
         })}::jsonb`,
       );
+      await tx.delete(relations).where(sql`${relations.sourceId} IN (
+          SELECT id FROM entities WHERE metadata @> ${JSON.stringify({
+            source: 'guidance_import',
+            ...match,
+          })}::jsonb
+        ) OR ${relations.targetId} IN (
+          SELECT id FROM entities WHERE metadata @> ${JSON.stringify({
+            source: 'guidance_import',
+            ...match,
+          })}::jsonb
+        )`);
+      await tx.delete(entities).where(
+        sql`${entities.metadata} @> ${JSON.stringify({
+          source: 'guidance_import',
+          ...match,
+        })}::jsonb`,
+      );
+    };
+
+    for (const archiveKey of archiveKeysToReplace) {
+      await deleteImportedByMatch({ archiveKey });
     }
+    for (const entryPath of entryPathsToReplace) {
+      await deleteImportedByMatch({ entryPath });
+    }
+    for (const project of projectsToReplace) {
+      await deleteImportedByMatch({ project });
+    }
+
+    await tx.delete(entities).where(sql`${entities.type} = 'project_doc'
+      AND ${entities.metadata} @> '{"source":"guidance_import"}'::jsonb
+      AND NOT EXISTS (
+        SELECT 1 FROM relations
+        WHERE source_id = ${entities.id} OR target_id = ${entities.id}
+      )`);
 
     for (const row of input.rows) {
       await tx
@@ -200,6 +461,97 @@ const defaultPersistImport = async (input: PersistImportInput): Promise<void> =>
         .onConflictDoNothing({
           target: [vibeMemories.sessionId, vibeMemories.dedupeKey],
         });
+    }
+
+    const archiveEntityId = generateEntityId('project_doc', input.archiveKey);
+    await tx
+      .insert(entities)
+      .values({
+        id: archiveEntityId,
+        type: 'project_doc',
+        name: input.archiveKey,
+        description: `Guidance archive imported at ${input.now.toISOString()}`,
+        metadata: {
+          source: 'guidance_import',
+          archiveKey: input.archiveKey,
+          project: archiveProject,
+          guidanceSessionId: input.guidanceSessionId,
+          importedAt: input.now.toISOString(),
+        },
+        confidence: 0.6,
+        provenance: 'guidance_import',
+        scope: 'on_demand',
+        freshness: input.now,
+      })
+      .onConflictDoUpdate({
+        target: entities.id,
+        set: {
+          description: sql`excluded.description`,
+          metadata: sql`${entities.metadata} || excluded.metadata`,
+          freshness: sql`excluded.freshness`,
+        },
+      });
+
+    for (const row of input.rows) {
+      const metadata = metadataRecord(row.metadata);
+      const guidanceType = guidanceTypeFromMetadata(metadata);
+      const entityType = guidanceEntityType(guidanceType);
+      const title = metadataString(metadata, 'title') ?? row.content.slice(0, 80);
+      const scope = guidanceScopeFromMetadata(metadata);
+      const entityId = generateEntityId(entityType, title);
+      const tags = metadataStringArray(metadata, 'tags');
+      const priority = Number(metadata.priority ?? 50);
+      const confidence = Number.isFinite(priority)
+        ? Math.max(0.1, Math.min(1, priority / 100))
+        : 0.5;
+
+      await tx
+        .insert(entities)
+        .values({
+          id: entityId,
+          type: entityType,
+          name: title,
+          description: row.content,
+          embedding: row.embedding,
+          metadata: {
+            ...metadata,
+            tags,
+            source: 'guidance_import',
+            archiveKey: input.archiveKey,
+            guidanceSessionId: input.guidanceSessionId,
+            guidanceDedupeKey: row.dedupeKey,
+          },
+          confidence,
+          provenance: 'guidance_import',
+          scope,
+          freshness: input.now,
+        })
+        .onConflictDoUpdate({
+          target: entities.id,
+          set: {
+            name: sql`excluded.name`,
+            description: sql`excluded.description`,
+            embedding: sql`excluded.embedding`,
+            metadata: sql`${entities.metadata} || excluded.metadata`,
+            confidence: sql`GREATEST(COALESCE(${entities.confidence}, 0), excluded.confidence)`,
+            provenance: sql`excluded.provenance`,
+            scope: sql`excluded.scope`,
+            freshness: sql`excluded.freshness`,
+          },
+        });
+
+      await tx
+        .insert(relations)
+        .values({
+          sourceId: archiveEntityId,
+          targetId: entityId,
+          relationType: 'contains_guidance',
+          weight: confidence,
+          confidence,
+          sourceTask: input.stateId,
+          provenance: 'guidance_import',
+        })
+        .onConflictDoNothing();
     }
 
     if (!input.stateExists) {

@@ -36,6 +36,8 @@ let svgContainer: SVGSVGElement;
 
 let selectedNodeId = $state<string | null>(null);
 const selectedNode = $derived(graphData?.entities.find((e) => e.id === selectedNodeId) || null);
+let formLoading = $state(false);
+let formError = $state<string | null>(null);
 let editForm = $state({
   name: '',
   type: '',
@@ -44,6 +46,57 @@ let editForm = $state({
   scope: 'on_demand',
 });
 
+const MAX_NODE_LABEL_CHARS = 20;
+
+const truncateNodeLabel = (value: string, maxLength = MAX_NODE_LABEL_CHARS) => {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength)}...`;
+};
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+const normalizedWeight = (link: GraphLink) => clamp(Number(link.weight || 1), 0.1, 3);
+
+const relationBaseDistance = (relationType: string) => {
+  if (relationType === 'same_principle_as') return 46;
+  if (relationType === 'similar_to') return 58;
+  if (relationType.startsWith('captured_')) return 92;
+  if (relationType === 'contains_guidance') return 170;
+  return 120;
+};
+
+const relationDistance = (link: GraphLink) =>
+  clamp(relationBaseDistance(link.relationType) / Math.sqrt(normalizedWeight(link)), 38, 220);
+
+const relationStrength = (link: GraphLink) => {
+  const base =
+    link.relationType === 'same_principle_as'
+      ? 0.95
+      : link.relationType === 'similar_to'
+        ? 0.78
+        : link.relationType.startsWith('captured_')
+          ? 0.42
+          : link.relationType === 'contains_guidance'
+            ? 0.12
+            : 0.28;
+  return clamp(base * Math.sqrt(normalizedWeight(link)), 0.05, 1);
+};
+
+const relationColor = (relationType: string) => {
+  if (relationType === 'same_principle_as') return '#22c55e';
+  if (relationType === 'similar_to') return '#38bdf8';
+  if (relationType.startsWith('captured_')) return '#a78bfa';
+  if (relationType === 'contains_guidance') return '#475569';
+  return '#94a3b8';
+};
+
+const relationOpacity = (relationType: string) => {
+  if (relationType === 'contains_guidance') return 0.22;
+  if (relationType === 'similar_to' || relationType === 'same_principle_as') return 0.72;
+  return 0.42;
+};
+
 const toEditForm = (entity: Entity) => ({
   name: entity.name,
   type: entity.type,
@@ -51,6 +104,22 @@ const toEditForm = (entity: Entity) => ({
   confidence: entity.confidence ?? 0.5,
   scope: entity.scope || 'on_demand',
 });
+
+const closeNodeModal = () => {
+  if (formLoading) return;
+  selectedNodeId = null;
+  formError = null;
+};
+
+const onBackdropKeydown = (event: KeyboardEvent, callback: () => void) => {
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    callback();
+  }
+  if (event.key === 'Escape') {
+    callback();
+  }
+};
 
 const loadGraph = async () => {
   loading = true;
@@ -71,26 +140,36 @@ const loadGraph = async () => {
 
 const handleSave = async () => {
   if (!selectedNodeId) return;
+  const id = selectedNodeId;
+  formLoading = true;
+  formError = null;
   try {
     await invoke('monitor_update_entity', {
-      id: selectedNodeId,
+      id,
       payload: JSON.stringify(editForm),
     });
+    selectedNodeId = null;
     await loadGraph();
-    alert('Entity updated successfully');
   } catch (err) {
-    alert(`Update failed: ${err}`);
+    formError = `Update failed: ${err instanceof Error ? err.message : String(err)}`;
+  } finally {
+    formLoading = false;
   }
 };
 
 const handleDelete = async () => {
   if (!selectedNodeId || !confirm('Are you sure you want to delete this entity?')) return;
+  const id = selectedNodeId;
+  formLoading = true;
+  formError = null;
   try {
-    await invoke('monitor_delete_entity', { id: selectedNodeId });
+    await invoke('monitor_delete_entity', { id });
     selectedNodeId = null;
     await loadGraph();
   } catch (err) {
-    alert(`Delete failed: ${err}`);
+    formError = `Delete failed: ${err instanceof Error ? err.message : String(err)}`;
+  } finally {
+    formLoading = false;
   }
 };
 
@@ -130,9 +209,10 @@ const renderGraph = (data: GraphSnapshot) => {
       d3
         .forceLink<GraphNode, GraphLink>(links)
         .id((d) => d.id)
-        .distance(100),
+        .distance((d) => relationDistance(d))
+        .strength((d) => relationStrength(d)),
     )
-    .force('charge', d3.forceManyBody<GraphNode>().strength(-400))
+    .force('charge', d3.forceManyBody<GraphNode>().strength(-360))
     .force('center', d3.forceCenter<GraphNode>(width / 2, height / 2))
     .force('collision', d3.forceCollide<GraphNode>().radius(40));
 
@@ -142,8 +222,8 @@ const renderGraph = (data: GraphSnapshot) => {
     .data(links)
     .enter()
     .append('line')
-    .attr('stroke', '#475569')
-    .attr('stroke-opacity', 0.4)
+    .attr('stroke', (d) => relationColor(d.relationType))
+    .attr('stroke-opacity', (d) => relationOpacity(d.relationType))
     .attr('stroke-width', (d) => Math.sqrt(d.weight) + 1);
 
   const node = mainContainer
@@ -164,6 +244,7 @@ const renderGraph = (data: GraphSnapshot) => {
     .style('cursor', 'pointer')
     .on('click', (event, d) => {
       selectedNodeId = d.id;
+      formError = null;
       editForm = toEditForm(d);
       node
         .attr('stroke', (n) => (n.id === d.id ? '#fff' : 'rgba(255,255,255,0.2)'))
@@ -194,14 +275,16 @@ const renderGraph = (data: GraphSnapshot) => {
     .data(nodes)
     .enter()
     .append('text')
-    .text((d) => d.name)
-    .attr('font-size', 11)
-    .attr('dx', 14)
-    .attr('dy', 4)
+    .text((d) => truncateNodeLabel(d.name))
+    .attr('font-size', 9)
+    .attr('dx', 12)
+    .attr('dy', 3)
     .attr('fill', '#e2e8f0')
     .style('pointer-events', 'none')
     .style('font-weight', '500')
     .style('text-shadow', '0 1px 2px rgba(0,0,0,0.5)');
+
+  label.append('title').text((d) => d.name);
 
   simulation.on('tick', () => {
     link
@@ -250,61 +333,80 @@ onMount(() => {
     </div>
   </div>
 
-  <aside class="side-panel" class:open={selectedNodeId}>
-    {#if selectedNode}
-      <div class="panel-header">
-        <h3>Edit Knowledge</h3>
-        <button class="close-icon" onclick={() => selectedNodeId = null}>&times;</button>
-      </div>
-      
-      <div class="form">
-        <div class="field">
-          <label for="node-name">Display Name</label>
+</div>
+
+{#if selectedNode}
+  <div
+    class="modal-backdrop"
+    role="button"
+    tabindex="0"
+    onclick={closeNodeModal}
+    onkeydown={(event) => onBackdropKeydown(event, closeNodeModal)}
+  >
+    <div
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      tabindex="-1"
+      onclick={(event) => event.stopPropagation()}
+      onkeydown={(event) => event.stopPropagation()}
+    >
+      <h2>Knowledge 編集</h2>
+      <form
+        onsubmit={(event) => {
+          event.preventDefault();
+          void handleSave();
+        }}
+      >
+        <label for="node-name">
+          Display Name
           <input id="node-name" type="text" bind:value={editForm.name} disabled />
-          <p class="field-note">ID整合性のため、名称変更は再作成で扱います。</p>
-        </div>
-        <div class="field">
-          <label for="node-type">Knowledge Type</label>
+          <span class="field-note">ID整合性のため、名称変更は再作成で扱います。</span>
+        </label>
+        <label for="node-type">
+          Knowledge Type
           <select id="node-type" bind:value={editForm.type} disabled>
-            <option value="goal">Goal (Objective)</option>
-            <option value="task">Task (Action)</option>
-            <option value="constraint">Constraint</option>
-            <option value="concept">Concept</option>
+            <option value="goal">goal</option>
+            <option value="task">task</option>
+            <option value="constraint">constraint</option>
+            <option value="concept">concept</option>
+            <option value="rule">rule</option>
+            <option value="procedure">procedure</option>
+            <option value="lesson">lesson</option>
+            <option value="decision">decision</option>
+            <option value="project_doc">project_doc</option>
           </select>
-          <p class="field-note">タイプ変更も既存IDと衝突するため無効化しています。</p>
-        </div>
-        <div class="field">
-          <label for="node-scope">Execution Scope</label>
+          <span class="field-note">タイプ変更も既存IDと衝突するため無効化しています。</span>
+        </label>
+        <label for="node-scope">
+          Execution Scope
           <select id="node-scope" bind:value={editForm.scope}>
-            <option value="on_demand">On Demand</option>
-            <option value="always">Always Active</option>
+            <option value="on_demand">on_demand</option>
+            <option value="always">always</option>
           </select>
-        </div>
-        <div class="field">
-          <label for="node-conf">System Confidence ({(editForm.confidence * 100).toFixed(0)}%)</label>
+        </label>
+        <label for="node-conf">
+          System Confidence ({(editForm.confidence * 100).toFixed(0)}%)
           <input id="node-conf" type="range" min="0" max="1" step="0.01" bind:value={editForm.confidence} />
-        </div>
-        <div class="field">
-          <label for="node-desc">Full Description</label>
-          <textarea id="node-desc" bind:value={editForm.description} rows="6" placeholder="Describe this piece of knowledge..."></textarea>
-        </div>
-        
-        <div class="panel-actions">
-          <button type="button" class="btn save" onclick={handleSave}>Sync to Graph</button>
-          <div class="row">
-            <button type="button" class="btn delete" onclick={handleDelete}>Delete Node</button>
-            <button type="button" class="btn cancel" onclick={() => selectedNodeId = null}>Close</button>
+        </label>
+        <label for="node-desc">
+          Full Description
+          <textarea id="node-desc" bind:value={editForm.description} rows="8" placeholder="Describe this piece of knowledge..."></textarea>
+        </label>
+        {#if formError}<p class="error-text">{formError}</p>{/if}
+        <div class="form-actions split">
+          <button type="button" class="danger" onclick={handleDelete} disabled={formLoading}>
+            {formLoading ? '処理中...' : '削除'}
+          </button>
+          <div class="right-actions">
+            <button type="button" onclick={closeNodeModal} disabled={formLoading}>キャンセル</button>
+            <button type="submit" disabled={formLoading}>{formLoading ? '保存中...' : '保存'}</button>
           </div>
         </div>
-      </div>
-    {:else}
-      <div class="empty-state">
-        <div class="icon">🔍</div>
-        <p>Select a node to inspect and modify its properties.</p>
-      </div>
-    {/if}
-  </aside>
-</div>
+      </form>
+    </div>
+  </div>
+{/if}
 
 <style>
   .container {
@@ -362,50 +464,68 @@ onMount(() => {
   .divider { width: 1px; height: 12px; background: rgba(255, 255, 255, 0.2); }
   .stats-overlay b { color: #f1f5f9; }
 
-  .side-panel {
-    width: 0;
-    background: rgba(15, 23, 42, 0.6);
-    border-left: 1px solid rgba(255, 255, 255, 0.05);
-    transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    backdrop-filter: blur(20px);
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(2, 6, 23, 0.72);
+    display: grid;
+    place-items: center;
+    z-index: 1000;
   }
 
-  .side-panel.open { width: 400px; padding: 32px; }
-
-  .panel-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 24px;
+  .modal {
+    width: min(760px, calc(100vw - 2rem));
+    max-height: calc(100vh - 2rem);
+    overflow: auto;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    padding: 1rem;
+    display: grid;
+    gap: 0.75rem;
+    color: #e5e7eb;
   }
-  .panel-header h3 { font-size: 1.25rem; font-weight: 700; color: #f8fafc; }
-  .close-icon { background: none; border: none; color: #64748b; font-size: 1.5rem; cursor: pointer; }
 
-  .form { display: flex; flex-direction: column; gap: 20px; }
-  .field { display: flex; flex-direction: column; gap: 8px; }
-  .field label { font-size: 0.75rem; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
-  .field-note { margin: 0; font-size: 0.75rem; color: #94a3b8; line-height: 1.4; }
+  .modal h2 {
+    margin: 0;
+    font-size: 1.2rem;
+    color: #f8fafc;
+  }
+
+  form {
+    display: grid;
+    gap: 0.75rem;
+  }
+
+  label {
+    display: grid;
+    gap: 0.35rem;
+    font-size: 0.92rem;
+    color: #cbd5e1;
+  }
+
+  .field-note {
+    margin: 0;
+    font-size: 0.75rem;
+    color: #94a3b8;
+    line-height: 1.4;
+  }
 
   input, select, textarea {
-    background: rgba(15, 23, 42, 0.6);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: white;
-    padding: 12px;
-    border-radius: 10px;
-    font-size: 0.9rem;
+    padding: 0.5rem;
+    border: 1px solid #475467;
+    border-radius: 6px;
+    font: inherit;
+    background: #020617;
+    color: #e5e7eb;
     outline: none;
   }
+
   input:focus, select:focus, textarea:focus { border-color: #3b82f6; }
   input:disabled, select:disabled {
     opacity: 0.6;
     cursor: not-allowed;
   }
-
-  .panel-actions { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
-  .panel-actions .row { display: flex; gap: 12px; }
 
   .btn-reload {
     padding: 10px 20px;
@@ -420,23 +540,42 @@ onMount(() => {
   .btn-reload:hover { background: rgba(255, 255, 255, 0.1); }
   .spin { display: inline-block; animation: spin 1s linear infinite; }
 
-  .btn { padding: 12px; border-radius: 10px; font-weight: 700; cursor: pointer; border: none; flex: 1; transition: all 0.2s; }
-  .btn.save { background: #3b82f6; color: white; }
-  .btn.delete { background: rgba(239, 68, 68, 0.1); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.2); }
-  .btn.cancel { background: rgba(255, 255, 255, 0.05); color: #94a3b8; }
-  .btn:hover { filter: brightness(1.1); transform: translateY(-1px); }
-
-  .empty-state {
-    height: 100%;
+  .form-actions {
     display: flex;
-    flex-direction: column;
+    justify-content: flex-end;
     align-items: center;
-    justify-content: center;
-    color: #64748b;
-    text-align: center;
-    gap: 16px;
+    gap: 0.5rem;
   }
-  .empty-state .icon { font-size: 3rem; }
+
+  .form-actions.split {
+    justify-content: space-between;
+  }
+
+  .right-actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  button {
+    background: #1f2937;
+    color: #f9fafb;
+    border: 1px solid #4b5563;
+    border-radius: 8px;
+    padding: 0.45rem 0.75rem;
+    cursor: pointer;
+  }
+
+  button:hover { background: #374151; }
+  button:disabled { opacity: 0.55; cursor: not-allowed; }
+  button.danger {
+    color: #fda4af;
+    border-color: #7f1d1d;
+    background: #2b1114;
+  }
+
+  button.danger:hover { background: #3b141a; }
+
+  .error-text { color: #fca5a5; margin: 0; }
 
   .error-box { background: rgba(239, 68, 68, 0.1); color: #ef4444; padding: 12px 20px; border-radius: 10px; border: 1px solid rgba(239, 68, 68, 0.2); margin-bottom: 20px; }
 

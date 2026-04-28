@@ -17,6 +17,8 @@ interface Lesson {
   content: string;
   metadata: Record<string, unknown>;
   createdAt: string;
+  source?: 'experience' | 'entity';
+  readOnly?: boolean;
 }
 
 interface GuidanceItem {
@@ -29,6 +31,9 @@ interface GuidanceItem {
   tags: string[];
   archiveKey: string | null;
   createdAt: string;
+  source?: 'guidance' | 'entity';
+  readOnly?: boolean;
+  entityType?: string;
 }
 
 interface Toast {
@@ -257,6 +262,13 @@ function formatDate(value: string) {
 function truncate(text: string, max = 72) {
   if (text.length <= max) return text;
   return `${text.slice(0, max)}...`;
+}
+
+function sourceLabel(source: string | undefined) {
+  if (source === 'entity') return 'Graph';
+  if (source === 'guidance') return 'Guidance';
+  if (source === 'experience') return 'Experience';
+  return 'Legacy';
 }
 
 function openCreateAction() {
@@ -517,18 +529,21 @@ onMount(() => {
       {#if activeTab === 'lessons'}
         <table>
           <thead>
-            <tr><th>日時</th><th>Session</th><th>Scenario</th><th>Type</th><th>内容</th><th></th></tr>
+            <tr><th>日時</th><th>Source</th><th>Session</th><th>Scenario</th><th>Type</th><th>内容</th><th></th></tr>
           </thead>
           <tbody>
             {#each paginatedLessons as lesson (lesson.id)}
               <tr>
                 <td>{formatDate(lesson.createdAt)}</td>
+                <td><span class="source-badge">{sourceLabel(lesson.source)}</span></td>
                 <td>{lesson.sessionId}</td>
                 <td>{lesson.scenarioId}</td>
                 <td>{lesson.type}</td>
                 <td>{truncate(lesson.content)}</td>
                 <td>
-                  <button onclick={() => openEditLesson(lesson)}>編集</button>
+                  <button
+                    onclick={() => openEditLesson(lesson)}
+                  >編集</button>
                   <button
                     class="danger"
                     disabled={deletingId === lesson.id}
@@ -542,18 +557,21 @@ onMount(() => {
       {:else if activeTab === 'rules' || activeTab === 'skills'}
         <table>
           <thead>
-            <tr><th>日時</th><th>Title</th><th>Scope</th><th>Priority</th><th>Tags</th><th></th></tr>
+            <tr><th>日時</th><th>Source</th><th>Title</th><th>Scope</th><th>Priority</th><th>Tags</th><th></th></tr>
           </thead>
           <tbody>
             {#each (activeTab === 'rules' ? paginatedRules : paginatedSkills) as item (item.id)}
               <tr>
                 <td>{formatDate(item.createdAt)}</td>
+                <td><span class="source-badge">{sourceLabel(item.source)}</span></td>
                 <td>{item.title}</td>
                 <td>{item.scope}</td>
                 <td>{item.priority}</td>
                 <td>{item.tags.join(', ')}</td>
                 <td>
-                  <button onclick={() => openEditGuidance(item)}>編集</button>
+                  <button
+                    onclick={() => openEditGuidance(item)}
+                  >編集</button>
                   <button
                     class="danger"
                     disabled={deletingId === item.id}
@@ -740,6 +758,19 @@ onMount(() => {
   th, td { padding: 0.5rem; border-bottom: 1px solid #1f2937; text-align: left; vertical-align: top; }
   th { background: #111827; color: #cbd5e1; font-weight: 700; letter-spacing: 0.04em; }
   tbody tr:nth-child(even) { background: #0f172a; }
+  .source-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.45rem;
+    padding: 0 0.45rem;
+    border: 1px solid #334155;
+    border-radius: 999px;
+    background: #111827;
+    color: #cbd5e1;
+    font-size: 0.78rem;
+    font-weight: 700;
+    white-space: nowrap;
+  }
   .loading, .empty { padding: 1rem; color: #9ca3af; }
   .pagination { display: flex; justify-content: center; gap: 0.5rem; padding: 0.75rem; }
   button { background: #1f2937; color: #f9fafb; border: 1px solid #4b5563; border-radius: 8px; padding: 0.35rem 0.65rem; }

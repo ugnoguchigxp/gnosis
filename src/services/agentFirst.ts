@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { desc, sql } from 'drizzle-orm';
+import { desc, inArray, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { entities, relations } from '../db/schema.js';
 import { getLoadedHookRuleCount } from '../hooks/service.js';
@@ -69,6 +69,47 @@ const KNOWLEDGE_CATEGORY_SET = new Set<KnowledgeCategory>([
   'performance',
   'reference',
 ]);
+
+function relationTypeForKnowledgeKind(kind: KnowledgeKind): string {
+  if (kind === 'lesson') return 'captured_lesson';
+  if (kind === 'rule') return 'captured_rule';
+  if (kind === 'procedure' || kind === 'skill' || kind === 'command_recipe') {
+    return 'captured_procedure';
+  }
+  if (kind === 'decision') return 'captured_decision';
+  if (kind === 'risk') return 'captured_risk';
+  return 'captured_knowledge';
+}
+
+async function linkTaskTraceToKnowledge(input: {
+  taskId?: string;
+  entityId: string;
+  kind: KnowledgeKind;
+}) {
+  if (!input.taskId || input.taskId === input.entityId) return false;
+
+  const linkedEntities = await db
+    .select({ id: entities.id })
+    .from(entities)
+    .where(inArray(entities.id, [input.taskId, input.entityId]));
+  const ids = new Set(linkedEntities.map((row) => row.id));
+  if (!ids.has(input.taskId) || !ids.has(input.entityId)) return false;
+
+  await db
+    .insert(relations)
+    .values({
+      sourceId: input.taskId,
+      targetId: input.entityId,
+      relationType: relationTypeForKnowledgeKind(input.kind),
+      weight: 1,
+      confidence: 0.8,
+      sourceTask: input.taskId,
+      provenance: 'task',
+    })
+    .onConflictDoNothing();
+
+  return true;
+}
 export const REQUIRED_PRIMARY_TOOLS = [
   'initial_instructions',
   'activate_project',
@@ -966,6 +1007,12 @@ export async function recordTaskNote(input: RecordTaskNoteInput) {
       },
     });
 
+  const relationLinked = await linkTaskTraceToKnowledge({
+    taskId: input.taskId,
+    entityId,
+    kind,
+  });
+
   return {
     saved: true,
     entityId,
@@ -973,6 +1020,7 @@ export async function recordTaskNote(input: RecordTaskNoteInput) {
     kind,
     category,
     enrichmentState: 'pending',
+    relationLinked,
   };
 }
 
