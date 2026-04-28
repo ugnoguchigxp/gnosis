@@ -23,6 +23,7 @@ Gnosis は環境変数を中心に構成されています。一部の機能（K
 | `DATABASE_URL` | `postgres://postgres:postgres@localhost:7888/gnosis` | PostgreSQL 接続文字列 |
 | `GNOSIS_BUN_COMMAND` | `bun` | 実行に使用する Bun バイナリのパス |
 | `GNOSIS_LLM_TIMEOUT_MS` | `90000` | LLM 処理の標準タイムアウト |
+| `GNOSIS_DOCTOR_REQUIRE_LOCAL_LLM` | `false` | `bun run doctor` で local-llm API 未起動を失敗扱いにするか |
 
 ### MCP クライアント互換
 

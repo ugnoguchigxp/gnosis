@@ -7,6 +7,8 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import ts from 'typescript';
+import { RuntimeLifecycle } from '../runtime/lifecycle.js';
+import { registerProcess } from '../runtime/processRegistry.js';
 
 export type JsonObject = Record<string, unknown>;
 
@@ -578,6 +580,7 @@ export function runSemanticTool(
 }
 
 async function main(): Promise<void> {
+  process.title = 'semantic-code-tools';
   const context: SemanticContext = {
     rootDir: process.env.GNOSIS_ROOT_DIR || process.cwd(),
   };
@@ -616,11 +619,18 @@ async function main(): Promise<void> {
     }
   });
 
-  process.stdin.on('close', () => {
-    process.exit(0);
-  });
+  const registration = registerProcess({ role: 'semantic-mcp', title: process.title });
+  const lifecycle = new RuntimeLifecycle({ name: 'SemanticMcpServer', registration });
+  lifecycle.addCleanupStep(() => registration.unregister());
+  lifecycle.bindProcessEvents();
+  lifecycle.startParentWatch();
 
   const transport = new StdioServerTransport();
+  lifecycle.markRunning();
+  lifecycle.startHeartbeat();
+  (transport as unknown as { onclose?: () => void }).onclose = () => {
+    void lifecycle.requestShutdown('transport_close');
+  };
   await server.connect(transport);
 }
 

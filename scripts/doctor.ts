@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import pkg from 'pg';
+import { scanWatchdog } from '../src/runtime/processWatchdog.js';
 import { COLORS, loadLocalEnv } from './lib/quality.ts';
 
 const { Pool } = pkg;
@@ -104,12 +105,17 @@ function resolveEmbedPath(): string {
 
 async function checkLocalLlmHealth(): Promise<CheckResult> {
   const base = process.env.LOCAL_LLM_API_BASE_URL?.trim();
+  const requireLocalLlm = process.env.GNOSIS_DOCTOR_REQUIRE_LOCAL_LLM === 'true';
   if (!base) {
     return {
       name: 'local-llm health',
-      status: 'WARN',
-      message: 'LOCAL_LLM_API_BASE_URL is not set.',
-      fix: 'Set LOCAL_LLM_API_BASE_URL or run without local-llm features.',
+      status: requireLocalLlm ? 'FAIL' : 'OK',
+      message: requireLocalLlm
+        ? 'LOCAL_LLM_API_BASE_URL is not set.'
+        : 'skipped (LOCAL_LLM_API_BASE_URL is not set)',
+      fix: requireLocalLlm
+        ? 'Set LOCAL_LLM_API_BASE_URL or unset GNOSIS_DOCTOR_REQUIRE_LOCAL_LLM.'
+        : undefined,
     };
   }
 
@@ -128,16 +134,24 @@ async function checkLocalLlmHealth(): Promise<CheckResult> {
     }
     return {
       name: 'local-llm health',
-      status: 'WARN',
-      message: `${healthUrl} responded ${response.status}.`,
-      fix: 'Run services/local-llm/scripts/run_openai_api.sh and retry.',
+      status: requireLocalLlm ? 'FAIL' : 'OK',
+      message: requireLocalLlm
+        ? `${healthUrl} responded ${response.status}.`
+        : `skipped optional local-llm (${healthUrl} responded ${response.status})`,
+      fix: requireLocalLlm
+        ? 'Run services/local-llm/scripts/run_openai_api.sh and retry.'
+        : undefined,
     };
   } catch {
     return {
       name: 'local-llm health',
-      status: 'WARN',
-      message: `Could not reach ${healthUrl}.`,
-      fix: 'Run services/local-llm/scripts/run_openai_api.sh and retry.',
+      status: requireLocalLlm ? 'FAIL' : 'OK',
+      message: requireLocalLlm
+        ? `Could not reach ${healthUrl}.`
+        : `skipped optional local-llm (${healthUrl} is not reachable)`,
+      fix: requireLocalLlm
+        ? 'Run services/local-llm/scripts/run_openai_api.sh and retry.'
+        : undefined,
     };
   } finally {
     clearTimeout(timeout);
@@ -149,6 +163,26 @@ function checkMcpToolExposure(): CheckResult {
     name: 'MCP tool exposure',
     status: 'OK',
     message: 'Agent-First fixed surface',
+  };
+}
+
+function checkRuntimeProcesses(): CheckResult {
+  const findings = scanWatchdog({ apply: false, requireConsecutive: false });
+  const actionable = findings.filter((finding) => finding.reason !== 'healthy');
+  if (actionable.length === 0) {
+    return {
+      name: 'runtime processes',
+      status: 'OK',
+      message: 'no stale Gnosis process registry entries',
+    };
+  }
+  return {
+    name: 'runtime processes',
+    status: 'WARN',
+    message: actionable
+      .map((finding) => `${finding.reason}:pid=${finding.entry?.pid ?? '?'}`)
+      .join(', '),
+    fix: 'Run: bun run process:diagnose',
   };
 }
 
@@ -303,6 +337,7 @@ async function main(): Promise<void> {
   }
 
   results.push(checkMcpToolExposure());
+  results.push(checkRuntimeProcesses());
   results.push(await checkLocalLlmHealth());
 
   process.stdout.write('\n');

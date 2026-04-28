@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { closeDbPool } from './db/index.js';
 import { server } from './mcp/server.js';
+import { RuntimeLifecycle } from './runtime/lifecycle.js';
+import { registerProcess } from './runtime/processRegistry.js';
 import { startBackgroundWorkers, stopBackgroundWorkers } from './services/background/manager.js';
 
 // Set process title for easier identification
@@ -33,8 +35,10 @@ const acquireLock = () => {
       if (!Number.isNaN(pid)) {
         // プロセスが実際に存在するかチェック (kill 0 はシグナルを送らず存在確認のみ行う)
         process.kill(pid, 0);
-        console.error(`[Main] Error: Another instance (PID: ${pid}) is already running.`);
-        process.exit(1);
+        console.error(
+          `[Main] Info: Another instance (PID: ${pid}) is already running. Multiple instances allowed.`,
+        );
+        // 複数IDE等での同時利用を許容するため、終了せず続行する
       }
     } catch (e) {
       // kill 0 が失敗した場合はプロセスが存在しないため、古いPIDファイルを無視して続行
@@ -47,35 +51,14 @@ const acquireLock = () => {
 const releaseLock = () => {
   try {
     if (existsSync(PID_FILE)) {
-      unlinkSync(PID_FILE);
+      const pidInFile = Number.parseInt(readFileSync(PID_FILE, 'utf8'), 10);
+      if (pidInFile === process.pid) {
+        unlinkSync(PID_FILE);
+      }
     }
   } catch (e) {
     // 終了処理中のエラーはstderrに流すのみ
   }
-};
-
-// --- クリーンアップ集約関数 ---
-let isShuttingDown = false;
-const cleanup = async (reason: string) => {
-  if (isShuttingDown) return;
-  isShuttingDown = true;
-
-  console.error(`[Main] Shutdown initiated (Reason: ${reason}, PID: ${process.pid})...`);
-
-  // Watchdog: Force exit if cleanup takes too long (10s)
-  setTimeout(() => {
-    console.error(`[Main] Shutdown timed out! Forcing exit. (PID: ${process.pid})`);
-    process.exit(1);
-  }, 10000).unref();
-
-  stopBackgroundWorkers();
-  await closeDbPool().catch((e) => console.error(`[Main] Error closing DB pool: ${e}`));
-  releaseLock();
-  console.error(`[Main] Shutdown complete (PID: ${process.pid}).`);
-  const exitCode = ['Fatal', 'Error', 'unhandledRejection', 'uncaughtException'].includes(reason)
-    ? 1
-    : 0;
-  process.exit(exitCode);
 };
 
 // --- メイン処理 ---
@@ -88,20 +71,23 @@ async function main() {
 
   acquireLock();
 
-  // シグナル・例外ハンドリングの登録
-  process.on('SIGINT', () => cleanup('SIGINT'));
-  process.on('SIGTERM', () => cleanup('SIGTERM'));
-  process.stdin.on('close', () => cleanup('stdin_closed'));
-
-  process.on('uncaughtException', (err) => {
-    console.error('[Main] Uncaught Exception:', err);
-    cleanup('uncaughtException');
+  const registration = registerProcess({ role: 'mcp-server', title: process.title });
+  const lifecycle = new RuntimeLifecycle({
+    name: 'Main',
+    registration,
   });
-
-  process.on('unhandledRejection', (reason) => {
-    console.error('[Main] Unhandled Rejection:', reason);
-    cleanup('unhandledRejection');
+  lifecycle.addCleanupStep(() => {
+    stopBackgroundWorkers();
   });
+  lifecycle.addCleanupStep(async () => {
+    await closeDbPool().catch((e) => console.error(`[Main] Error closing DB pool: ${e}`));
+  });
+  lifecycle.addCleanupStep(() => {
+    registration.unregister();
+    releaseLock();
+  });
+  lifecycle.bindProcessEvents();
+  lifecycle.startParentWatch();
 
   const transport = new StdioServerTransport();
 
@@ -116,15 +102,20 @@ async function main() {
   }
 
   try {
+    lifecycle.markRunning();
+    lifecycle.startHeartbeat();
+    (transport as unknown as { onclose?: () => void }).onclose = () => {
+      void lifecycle.requestShutdown('transport_close');
+    };
     await server.connect(transport);
-    // await cleanup('Connection closed');
   } catch (error) {
     console.error('[Main] Server connection error:', error);
-    await cleanup('Error');
+    await lifecycle.requestShutdown('server_connect_error');
   }
 }
 
 main().catch(async (error) => {
   console.error('[Main] Fatal start error:', error);
-  await cleanup('Fatal');
+  const lifecycle = new RuntimeLifecycle({ name: 'MainFatal' });
+  await lifecycle.requestShutdown('fatal_start_error');
 });

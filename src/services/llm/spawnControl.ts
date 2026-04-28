@@ -1,5 +1,10 @@
 import { type SpawnSyncOptionsWithStringEncoding, spawn, spawnSync } from 'node:child_process';
 import { config } from '../../config.js';
+import {
+  signalProcessTree,
+  trackChildProcess,
+  untrackChildProcess,
+} from '../../runtime/childProcesses.js';
 import { withGlobalSemaphore } from '../../utils/lock.js';
 
 export type LlmSpawnResult = {
@@ -9,19 +14,6 @@ export type LlmSpawnResult = {
   error?: Error;
   pid?: number;
 };
-
-// 実行中の子プロセスを追跡して、親プロセス終了時に確実に道連れにする
-const activeProcesses = new Set<number>();
-
-process.on('exit', () => {
-  for (const pid of activeProcesses) {
-    try {
-      process.kill(pid, 'SIGTERM');
-    } catch {
-      // ignore
-    }
-  }
-});
 
 /**
  * 集中管理されたLLMプロセス実行エンジン。
@@ -49,13 +41,13 @@ export async function runLlmProcess(
 
       const child = spawn(command, args, {
         env: { ...process.env, ...options.env },
-        timeout: options.timeout,
         cwd: options.cwd,
+        detached: process.platform !== 'win32',
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
       if (child.pid) {
-        activeProcesses.add(child.pid);
+        trackChildProcess(child, command);
         options.onStart?.(child.pid);
       }
 
@@ -77,13 +69,13 @@ export async function runLlmProcess(
 
       const timeoutMs = options.timeout ?? config.llm.defaultTimeoutMs;
       const timeoutTrigger = setTimeout(() => {
-        child.kill('SIGKILL');
         error = new Error(`LLM Process timed out after ${timeoutMs}ms (PID: ${child.pid})`);
+        if (child.pid) signalProcessTree(child.pid, 'SIGKILL');
       }, timeoutMs);
 
       child.on('close', (code) => {
         clearTimeout(timeoutTrigger);
-        if (child.pid) activeProcesses.delete(child.pid);
+        untrackChildProcess(child.pid);
 
         console.error(`[LlmSpawn] Process finished (PID: ${child.pid}, Status: ${code})`);
         resolve({

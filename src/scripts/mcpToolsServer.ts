@@ -6,6 +6,8 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { RuntimeLifecycle } from '../runtime/lifecycle.js';
+import { registerProcess } from '../runtime/processRegistry.js';
 import { WEB_TOOL_DEFINITIONS } from './llmConversation.js';
 import { fetchContent, searchWeb } from './webTools.js';
 
@@ -74,13 +76,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 // Only start the stdio server when run directly (not when imported)
 if (import.meta.main) {
+  process.title = 'gnosis-tools';
+  const registration = registerProcess({ role: 'mcp-tools', title: process.title });
+  const lifecycle = new RuntimeLifecycle({ name: 'McpToolsServer', registration });
+  lifecycle.addCleanupStep(() => registration.unregister());
+  lifecycle.bindProcessEvents();
+  lifecycle.startParentWatch();
+
   const transport = new StdioServerTransport();
 
-  // Close server when stdin is closed (prevents zombie processes)
-  process.stdin.on('close', () => {
-    console.error('MCP Server: Stdin closed, exiting...');
-    process.exit(0);
-  });
-
+  lifecycle.markRunning();
+  lifecycle.startHeartbeat();
+  (transport as unknown as { onclose?: () => void }).onclose = () => {
+    void lifecycle.requestShutdown('transport_close');
+  };
   await server.connect(transport);
 }
