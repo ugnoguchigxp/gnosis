@@ -231,7 +231,7 @@ async function main(): Promise<void> {
 
     const ps = await runCapture({
       command: dockerCompose.command,
-      args: [...dockerCompose.args, 'ps', '-q', 'db'],
+      args: [...dockerCompose.args, 'ps', '-q', 'gnosis'],
     }).catch(() => null);
 
     const containerId = ps?.stdout?.trim() ?? '';
@@ -240,7 +240,7 @@ async function main(): Promise<void> {
         name: 'postgres container',
         status: 'FAIL',
         message: 'db container is not running.',
-        fix: 'Run: docker compose up -d db',
+        fix: 'Run: docker compose up -d gnosis',
       });
     } else {
       const inspect = await runCapture({
@@ -258,7 +258,7 @@ async function main(): Promise<void> {
           name: 'postgres container',
           status: 'FAIL',
           message: 'db container is not in running state.',
-          fix: 'Run: docker compose up -d db',
+          fix: 'Run: docker compose up -d gnosis',
         });
       }
     }

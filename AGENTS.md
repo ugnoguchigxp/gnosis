@@ -1,23 +1,13 @@
 # Agent Operating Rules (Canonical)
 
-This file is the single source of truth for agent startup and review flow rules in this repository.
+このファイルは、本リポジトリにおけるエージェントの起動およびレビューフローの「正本ルール」です。詳細はツールの応答に従ってください。
 
 ## Mandatory Startup
 
-- At the beginning of a new session, call `initial_instructions` first.
-- Before starting any review flow, call `initial_instructions` again and use the review scenario guide.
-
-## Mandatory Review Order
-
-For code review tasks, use this order unless explicitly blocked:
-
-1. `initial_instructions`
-2. `activate_project` with `mode=review`
-3. `search_knowledge` with `preset=review_context`
-4. `review_task`
-5. `record_task_note` for reusable findings (when applicable)
+- **新規セッション開始時**: すべての作業の前に、必ず `initial_instructions` を呼び出してください。
+- **レビュー開始時**: レビューフローを開始する前に、必ず `initial_instructions` を再度呼び出し、シナリオガイドを確認してください。
 
 ## Guardrail
 
-- Do not run `review_task` before `initial_instructions`.
-- If the flow is out of sync, run `doctor` and resume from the recommended next call.
+- `initial_instructions` を呼び出す前に `review_task` を実行しないでください。
+- フローが不明瞭な場合は、`doctor` を実行して状態を確認してください。

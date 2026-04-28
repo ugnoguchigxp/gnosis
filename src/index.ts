@@ -72,7 +72,10 @@ const cleanup = async (reason: string) => {
   await closeDbPool().catch((e) => console.error(`[Main] Error closing DB pool: ${e}`));
   releaseLock();
   console.error(`[Main] Shutdown complete (PID: ${process.pid}).`);
-  process.exit(0);
+  const exitCode = ['Fatal', 'Error', 'unhandledRejection', 'uncaughtException'].includes(reason)
+    ? 1
+    : 0;
+  process.exit(exitCode);
 };
 
 // --- メイン処理 ---
@@ -114,7 +117,7 @@ async function main() {
 
   try {
     await server.connect(transport);
-    await cleanup('Connection closed');
+    // await cleanup('Connection closed');
   } catch (error) {
     console.error('[Main] Server connection error:', error);
     await cleanup('Error');
