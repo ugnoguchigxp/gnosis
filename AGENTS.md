@@ -1,6 +1,3 @@
-# Agent Operating Rules (Canonical)
-
-このファイルは、本リポジトリにおけるエージェントの起動およびレビューフローの「正本ルール」です。詳細はツールの応答に従ってください。
 
 ## Mandatory Startup
 
