@@ -53,7 +53,7 @@ describe('mcp tools snapshot', () => {
     );
 
     expect(hashes).toEqual({
-      search_knowledge: '6ba8897aacfded228dc54ea125b308646895259c2d6ec4b8c9040b4165127318',
+      search_knowledge: 'e65ab099e3ed7f1e5b8bf6a4e966c5865ee99354952755baa33e6981f7a059e6',
       activate_project: 'ae3f5f02ed68d564e2aac89f8a542de81ecab9a42d765149a4fd5b07291e4033',
       start_task: '9b919c81d0d7b099ee0db5d4c4be2dbcb74a0ca800507dd0663c68382e4ac1cd',
       record_task_note: 'e5a78739ce1f82ed63dbc1db90adc0febc856d4c7184bfe4bd501a68db4b4b76',

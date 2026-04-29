@@ -4,6 +4,10 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { closeDbPool } from './db/index.js';
 import { server } from './mcp/server.js';
 import { RuntimeLifecycle } from './runtime/lifecycle.js';
+import {
+  renderProcessDedupeFindings,
+  suppressDuplicateProcesses,
+} from './runtime/processDedupe.js';
 import { registerProcess } from './runtime/processRegistry.js';
 import { startBackgroundWorkers, stopBackgroundWorkers } from './services/background/manager.js';
 import { notifyTaskEnd, notifyTaskStart } from './supervisor/client.js';
@@ -62,6 +66,21 @@ const releaseLock = () => {
   }
 };
 
+const suppressExistingInstances = () => {
+  const findings = suppressDuplicateProcesses({
+    apply: true,
+    role: 'mcp-server',
+    cwd: process.cwd(),
+    keep: 'newest',
+    currentPid: process.pid,
+  });
+  const actionable = findings.filter((finding) => finding.action !== 'keep');
+  if (actionable.length > 0) {
+    console.error('[Main] Suppressed duplicate/stale MCP process entries:');
+    console.error(renderProcessDedupeFindings(actionable));
+  }
+};
+
 // --- メイン処理 ---
 async function main() {
   // 標準出力を標準エラーにリダイレクト
@@ -71,6 +90,7 @@ async function main() {
   };
 
   acquireLock();
+  suppressExistingInstances();
 
   const registration = registerProcess({ role: 'mcp-server', title: process.title });
   const lifecycle = new RuntimeLifecycle({

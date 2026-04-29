@@ -35,6 +35,20 @@ export type KnowledgeCategory =
   | 'performance'
   | 'reference';
 
+export type TaskChangeType =
+  | 'frontend'
+  | 'backend'
+  | 'api'
+  | 'auth'
+  | 'db'
+  | 'docs'
+  | 'test'
+  | 'mcp'
+  | 'refactor'
+  | 'config'
+  | 'build'
+  | 'review';
+
 type InferredProjectLanguage = 'TypeScript' | 'JavaScript' | 'Python' | 'Rust' | 'Go' | 'Unknown';
 
 type EntityRow = typeof entities.$inferSelect;
@@ -68,6 +82,20 @@ const KNOWLEDGE_CATEGORY_SET = new Set<KnowledgeCategory>([
   'security',
   'performance',
   'reference',
+]);
+const TASK_CHANGE_TYPE_SET = new Set<TaskChangeType>([
+  'frontend',
+  'backend',
+  'api',
+  'auth',
+  'db',
+  'docs',
+  'test',
+  'mcp',
+  'refactor',
+  'config',
+  'build',
+  'review',
 ]);
 
 function relationTypeForKnowledgeKind(kind: KnowledgeKind): string {
@@ -144,9 +172,12 @@ export type DoctorRuntimeHealth = {
 
 export type SearchKnowledgeV2Input = {
   query?: string;
+  taskGoal?: string;
   preset?: 'task_context' | 'project_characteristics' | 'review_context' | 'procedures' | 'risks';
   kinds?: KnowledgeKind[];
   categories?: KnowledgeCategory[];
+  changeTypes?: TaskChangeType[];
+  technologies?: string[];
   filterMode?: 'and' | 'or';
   filters?: {
     kinds?: { mode?: 'and' | 'or'; values: KnowledgeKind[] };
@@ -166,6 +197,24 @@ export type SearchKnowledgeV2Input = {
     maxDepth?: number;
     relationTypes?: string[];
   };
+};
+
+type AppliesWhen = {
+  intents: Array<NonNullable<SearchKnowledgeV2Input['intent']>>;
+  changeTypes: TaskChangeType[];
+  fileGlobs: string[];
+  technologies: string[];
+  keywords: string[];
+  severity?: 'blocking' | 'required' | 'advisory';
+};
+
+type TaskContext = {
+  query: string;
+  intent?: NonNullable<SearchKnowledgeV2Input['intent']>;
+  files: string[];
+  changeTypes: TaskChangeType[];
+  technologies: string[];
+  taskText: string;
 };
 
 type ToolSnapshot = {
@@ -208,6 +257,12 @@ function asRecord(value: unknown): Record<string, unknown> {
 function asStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+}
+
+function asTaskChangeTypeArray(value: unknown): TaskChangeType[] {
+  return asStringArray(value).filter((item): item is TaskChangeType =>
+    TASK_CHANGE_TYPE_SET.has(item as TaskChangeType),
+  );
 }
 
 function toSlug(input: string): string {
@@ -257,6 +312,8 @@ function fallbackCategoryByKind(kind: KnowledgeKind): KnowledgeCategory {
 }
 
 function normalizeKind(rawType: string | null | undefined): KnowledgeKind {
+  if (rawType === 'constraint') return 'rule';
+  if (rawType === 'task') return 'skill';
   if (rawType && KNOWLEDGE_KIND_SET.has(rawType as KnowledgeKind)) {
     return rawType as KnowledgeKind;
   }
@@ -271,6 +328,31 @@ function normalizeCategory(rawCategory: unknown, kind: KnowledgeKind): Knowledge
     return rawCategory as KnowledgeCategory;
   }
   return fallbackCategoryByKind(kind);
+}
+
+function normalizeAppliesWhen(raw: unknown): AppliesWhen {
+  const value = asRecord(raw);
+  const legacyApplicability = asRecord(value.applicability);
+  return {
+    intents: asStringArray(value.intents).filter(
+      (intent): intent is NonNullable<SearchKnowledgeV2Input['intent']> =>
+        ['plan', 'edit', 'debug', 'review', 'finish'].includes(intent),
+    ),
+    changeTypes: asTaskChangeTypeArray(value.changeTypes),
+    fileGlobs: [...asStringArray(value.fileGlobs), ...asStringArray(legacyApplicability.paths)],
+    technologies: [
+      ...asStringArray(value.technologies),
+      ...asStringArray(legacyApplicability.languages),
+      ...asStringArray(legacyApplicability.frameworks),
+    ].map((item) => item.toLowerCase()),
+    keywords: asStringArray(value.keywords).map((item) => item.toLowerCase()),
+    severity:
+      value.severity === 'blocking' ||
+      value.severity === 'required' ||
+      value.severity === 'advisory'
+        ? value.severity
+        : undefined,
+  };
 }
 
 function inferLanguage(root: string): InferredProjectLanguage[] {
@@ -302,6 +384,10 @@ function normalizeEntity(entity: EntityRow) {
       : `Use this ${kind} when handling ${category} concerns.`;
   const tags = asStringArray(metadata.tags);
   const files = asStringArray(metadata.files);
+  const appliesWhen = normalizeAppliesWhen({
+    ...asRecord(metadata.appliesWhen),
+    applicability: metadata.applicability,
+  });
   const slugRaw = metadata.slug;
   const slug =
     typeof slugRaw === 'string' && slugRaw.length > 0 ? slugRaw : toSlug(title || entity.id);
@@ -316,8 +402,10 @@ function normalizeEntity(entity: EntityRow) {
     purpose,
     tags,
     files,
+    appliesWhen,
     slug,
     confidence,
+    scope: entity.scope === 'always' ? 'always' : 'on_demand',
     status: typeof metadata.status === 'string' ? metadata.status : 'active',
   };
 }
@@ -330,15 +418,114 @@ function splitTerms(value: string): string[] {
     .filter((v) => v.length > 1);
 }
 
+function inferChangeTypesFromText(text: string): TaskChangeType[] {
+  const normalized = text.toLowerCase();
+  const inferred: TaskChangeType[] = [];
+  const add = (type: TaskChangeType, patterns: string[]) => {
+    if (patterns.some((pattern) => normalized.includes(pattern))) {
+      inferred.push(type);
+    }
+  };
+  add('frontend', ['frontend', 'react', 'svelte', 'ui', 'component', 'page']);
+  add('backend', ['backend', 'server', 'service', 'repository', 'controller']);
+  add('api', ['api', 'endpoint', 'route', 'openapi']);
+  add('auth', ['auth', 'msal', 'login', 'token', 'permission']);
+  add('db', ['db', 'database', 'drizzle', 'migration', 'schema', 'sql']);
+  add('docs', ['docs', 'document', 'readme', '.md']);
+  add('test', ['test', 'spec', 'vitest', 'coverage']);
+  add('mcp', ['mcp', 'tool', 'initial_instructions', 'search_knowledge']);
+  add('refactor', ['refactor', 'リファクタ']);
+  add('config', ['config', 'setting', 'tsconfig', 'biome', 'package.json']);
+  add('build', ['build', 'lint', 'typecheck', 'compile']);
+  add('review', ['review', 'レビュー']);
+  return [...new Set(inferred)];
+}
+
+function inferChangeTypesFromFiles(files: string[]): TaskChangeType[] {
+  const inferred: TaskChangeType[] = [];
+  for (const file of files.map((item) => item.toLowerCase())) {
+    if (file.startsWith('apps/') || file.includes('/routes/') || file.endsWith('.svelte')) {
+      inferred.push('frontend');
+    }
+    if (file.startsWith('src/services/') || file.startsWith('src/domain/')) {
+      inferred.push('backend');
+    }
+    if (file.includes('/mcp/') || file.includes('mcp')) inferred.push('mcp');
+    if (file.includes('/review/')) inferred.push('review');
+    if (file.includes('/db/') || file.startsWith('drizzle/') || file.endsWith('.sql')) {
+      inferred.push('db');
+    }
+    if (file.endsWith('.md') || file.startsWith('docs/')) inferred.push('docs');
+    if (file.includes('test/') || file.endsWith('.test.ts') || file.endsWith('.spec.ts')) {
+      inferred.push('test');
+    }
+    if (file.includes('auth')) inferred.push('auth');
+    if (file.includes('api') || file.includes('route')) inferred.push('api');
+    if (file.endsWith('package.json') || file.endsWith('tsconfig.json') || file.includes('biome')) {
+      inferred.push('config');
+    }
+  }
+  return [...new Set(inferred)];
+}
+
+function inferTechnologies(input: SearchKnowledgeV2Input, taskText: string): string[] {
+  const technologies = new Set((input.technologies ?? []).map((item) => item.toLowerCase()));
+  const text = taskText.toLowerCase();
+  const files = input.files ?? [];
+  if (
+    files.some((file) => file.endsWith('.ts') || file.endsWith('.tsx')) ||
+    text.includes('typescript')
+  ) {
+    technologies.add('typescript');
+  }
+  if (files.some((file) => file.endsWith('.svelte')) || text.includes('svelte')) {
+    technologies.add('svelte');
+  }
+  if (text.includes('react')) technologies.add('react');
+  if (text.includes('drizzle')) technologies.add('drizzle');
+  if (text.includes('mcp')) technologies.add('mcp');
+  if (text.includes('bun')) technologies.add('bun');
+  return [...technologies];
+}
+
 function buildQueryByPreset(input: SearchKnowledgeV2Input): string {
   if (input.query && input.query.trim().length > 0) return input.query.trim();
   if (input.preset === 'procedures') return 'procedure skill command';
   if (input.preset === 'risks') return 'risk lesson rule';
   if (input.preset === 'review_context') return 'review correctness architecture security';
   if (input.preset === 'task_context')
-    return `${input.intent ?? 'task'} ${(input.files ?? []).join(' ')}`.trim();
+    return `${input.intent ?? 'task'} ${input.taskGoal ?? ''} ${(input.changeTypes ?? []).join(
+      ' ',
+    )} ${(input.technologies ?? []).join(' ')} ${(input.files ?? []).join(' ')}`.trim();
   if (input.preset === 'project_characteristics') return 'project architecture workflow';
   return '';
+}
+
+function buildTaskContext(input: SearchKnowledgeV2Input, query: string): TaskContext {
+  const baseText = [
+    query,
+    input.taskGoal,
+    input.intent,
+    ...(input.files ?? []),
+    ...(input.changeTypes ?? []),
+    ...(input.technologies ?? []),
+  ]
+    .filter((value): value is string => typeof value === 'string' && value.length > 0)
+    .join(' ');
+  const files = input.files ?? [];
+  const inferredChangeTypes = [
+    ...(input.changeTypes ?? []),
+    ...inferChangeTypesFromText(baseText),
+    ...inferChangeTypesFromFiles(files),
+  ];
+  return {
+    query,
+    intent: input.intent,
+    files,
+    changeTypes: [...new Set(inferredChangeTypes)],
+    technologies: inferTechnologies(input, baseText),
+    taskText: baseText.toLowerCase(),
+  };
 }
 
 function includesByMode(pool: string[], candidate: string[], mode: 'and' | 'or'): boolean {
@@ -376,10 +563,100 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return dot / (Math.sqrt(aNorm) * Math.sqrt(bNorm));
 }
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function matchesGlob(file: string, pattern: string): boolean {
+  const normalizedFile = file.replace(/\\/g, '/').toLowerCase();
+  const normalizedPattern = pattern.replace(/\\/g, '/').toLowerCase();
+  if (normalizedPattern.length === 0) return false;
+  if (!normalizedPattern.includes('*')) return normalizedFile.includes(normalizedPattern);
+  const regexSource = normalizedPattern.split('*').map(escapeRegex).join('.*');
+  const regex = new RegExp(`^${regexSource}$`);
+  return regex.test(normalizedFile);
+}
+
+function scoreApplicability(
+  normalized: ReturnType<typeof normalizeEntity>,
+  context: TaskContext,
+): {
+  applicabilityScore: number;
+  applicabilityReasons: string[];
+  severity?: AppliesWhen['severity'];
+} {
+  const reasons: string[] = [];
+  let score = normalized.scope === 'always' ? 0.25 : 0;
+  if (normalized.scope === 'always') reasons.push('always-on guidance');
+
+  const appliesWhen = normalized.appliesWhen;
+  if (context.intent && appliesWhen.intents.includes(context.intent)) {
+    score += 0.2;
+    reasons.push(`intent:${context.intent}`);
+  }
+
+  const changeTypeHits = appliesWhen.changeTypes.filter((type) =>
+    context.changeTypes.includes(type),
+  );
+  if (changeTypeHits.length > 0) {
+    score += Math.min(0.35, 0.18 + changeTypeHits.length * 0.06);
+    reasons.push(`changeType:${changeTypeHits.join(',')}`);
+  }
+
+  const technologyHits = appliesWhen.technologies.filter((technology) =>
+    context.technologies.includes(technology),
+  );
+  if (technologyHits.length > 0) {
+    score += Math.min(0.25, 0.14 + technologyHits.length * 0.04);
+    reasons.push(`technology:${technologyHits.join(',')}`);
+  }
+
+  const filePatterns = [...normalized.files, ...appliesWhen.fileGlobs];
+  const fileHits = context.files.filter((file) =>
+    filePatterns.some((pattern) => matchesGlob(file, pattern)),
+  );
+  if (fileHits.length > 0) {
+    score += Math.min(0.3, 0.18 + fileHits.length * 0.04);
+    reasons.push(`file:${fileHits.slice(0, 3).join(',')}`);
+  }
+
+  const keywordHits = appliesWhen.keywords.filter((keyword) => context.taskText.includes(keyword));
+  if (keywordHits.length > 0) {
+    score += Math.min(0.2, 0.1 + keywordHits.length * 0.03);
+    reasons.push(`keyword:${keywordHits.join(',')}`);
+  }
+
+  if (context.changeTypes.includes('mcp') && normalized.category === 'mcp') {
+    score += 0.18;
+    reasons.push('category:mcp');
+  }
+  if (context.changeTypes.includes('test') && normalized.category === 'testing') {
+    score += 0.14;
+    reasons.push('category:testing');
+  }
+  if (
+    (context.changeTypes.includes('auth') || context.changeTypes.includes('db')) &&
+    normalized.category === 'security'
+  ) {
+    score += 0.14;
+    reasons.push('category:security');
+  }
+  if (context.changeTypes.includes('refactor') && normalized.category === 'architecture') {
+    score += 0.1;
+    reasons.push('category:architecture');
+  }
+
+  return {
+    applicabilityScore: Math.min(1, score),
+    applicabilityReasons: reasons,
+    severity: appliesWhen.severity,
+  };
+}
+
 function scoreEntity(
   normalized: ReturnType<typeof normalizeEntity>,
   queryTerms: string[],
-  files: string[],
+  context: TaskContext,
   queryEmbedding: number[] | null,
 ) {
   const text = `${normalized.title} ${normalized.description} ${normalized.purpose}`.toLowerCase();
@@ -391,28 +668,42 @@ function scoreEntity(
       ? Math.max(0, cosineSimilarity(queryEmbedding, entityEmbedding))
       : 0;
   const vectorScore = vectorSimilarity > 0.35 ? vectorSimilarity : 0;
-  const fileMatch = files.length > 0 && includesByMode(normalized.files, files, 'or');
+  const applicability = scoreApplicability(normalized, context);
   const confidenceScore = Math.max(0, Math.min(1, normalized.confidence));
   const recencyDate = normalized.entity.lastReferencedAt ?? normalized.entity.createdAt;
   const recencyScore = recencyDate
     ? Math.max(0, 1 - (Date.now() - recencyDate.getTime()) / (14 * 86_400_000))
     : 0;
   const score =
-    lexicalScore * 0.45 +
-    vectorScore * 0.25 +
-    confidenceScore * 0.2 +
+    applicability.applicabilityScore * 0.4 +
+    lexicalScore * 0.25 +
+    vectorScore * 0.15 +
+    confidenceScore * 0.15 +
     recencyScore * 0.05 +
-    (fileMatch ? 0.05 : 0);
+    (applicability.severity === 'blocking'
+      ? 0.08
+      : applicability.severity === 'required'
+        ? 0.05
+        : 0);
   const matchSources: Array<
     'vector' | 'lexical' | 'graph' | 'applicability' | 'recency' | 'confidence'
   > = [];
   if (lexicalHits.length > 0) matchSources.push('lexical');
   if (vectorScore > 0) matchSources.push('vector');
-  if (fileMatch) matchSources.push('applicability');
+  if (applicability.applicabilityScore > 0) matchSources.push('applicability');
   if (recencyScore > 0) matchSources.push('recency');
   matchSources.push('confidence');
   if (matchSources.length === 0) matchSources.push('lexical');
-  return { score, lexicalHits, matchSources, recencyDate, vectorScore };
+  return {
+    score,
+    lexicalHits,
+    matchSources,
+    recencyDate,
+    vectorScore,
+    applicabilityScore: applicability.applicabilityScore,
+    applicabilityReasons: applicability.applicabilityReasons,
+    applicabilitySeverity: applicability.severity,
+  };
 }
 
 export async function resolveStaleMetadataSignal(
@@ -707,6 +998,7 @@ export async function buildActivateProjectResult(projectRoot: string, mode?: str
 
 export async function searchKnowledgeV2(input: SearchKnowledgeV2Input) {
   const query = buildQueryByPreset(input);
+  const taskContext = buildTaskContext(input, query);
   const queryTerms = splitTerms(query);
   let queryEmbedding: number[] | null = null;
   if (query.length > 0) {
@@ -784,7 +1076,7 @@ export async function searchKnowledgeV2(input: SearchKnowledgeV2Input) {
         );
       }
       const passFilters = matchWithMode(filterChecks, topLevelMode);
-      const scoring = scoreEntity(item, queryTerms, input.files ?? [], queryEmbedding);
+      const scoring = scoreEntity(item, queryTerms, taskContext, queryEmbedding);
       return { item, passFilters, ...scoring };
     })
     .filter((row) => row.passFilters)
@@ -862,7 +1154,10 @@ export async function searchKnowledgeV2(input: SearchKnowledgeV2Input) {
             ? `Matched terms: ${hit.lexicalHits.join(', ')}`
             : 'Ranked by confidence and recency.',
         snippet,
-        applicabilityMatch: hit.item.files.length > 0 ? hit.item.files.join(', ') : undefined,
+        applicabilityMatch:
+          hit.applicabilityReasons.length > 0 ? hit.applicabilityReasons.join('; ') : undefined,
+        applicabilityScore: Number(hit.applicabilityScore.toFixed(4)),
+        applicabilitySeverity: hit.applicabilitySeverity,
         evidenceSummary:
           typeof hit.item.metadata.evidenceSummary === 'string'
             ? hit.item.metadata.evidenceSummary
@@ -882,7 +1177,14 @@ export async function searchKnowledgeV2(input: SearchKnowledgeV2Input) {
       kind: row.item.kind,
       category: row.item.category,
       score: Number(row.score.toFixed(4)),
+      applicabilityScore: Number(row.applicabilityScore.toFixed(4)),
     })),
+    taskContext: {
+      intent: taskContext.intent,
+      changeTypes: taskContext.changeTypes,
+      technologies: taskContext.technologies,
+      files: taskContext.files,
+    },
     suggestedNextAction: scored.length === 0 ? 'refine_query' : 'read_hit',
   };
 }

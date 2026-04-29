@@ -47,6 +47,20 @@ type GraphSnapshotPayload = {
 const MAX_ENTITIES = Number(process.env.GRAPH_SNAPSHOT_MAX_ENTITIES) || 1000;
 const MAX_RELATIONS = Number(process.env.GRAPH_SNAPSHOT_MAX_RELATIONS) || 2000;
 const MAX_COMMUNITIES = Number(process.env.GRAPH_SNAPSHOT_MAX_COMMUNITIES) || 100;
+const HIDDEN_RELATION_TYPES = new Set(['contains_guidance']);
+
+const metadataRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+
+const isArchiveEntity = (entity: { id: string; type: string; metadata: unknown }): boolean => {
+  const metadata = metadataRecord(entity.metadata);
+  return (
+    entity.type === 'project_doc' &&
+    (entity.id.startsWith('project_doc/archive:') || typeof metadata.archiveKey === 'string')
+  );
+};
 
 async function fetchGraphSnapshot(): Promise<GraphSnapshotPayload> {
   // 総数を取得
@@ -78,13 +92,22 @@ async function fetchGraphSnapshot(): Promise<GraphSnapshotPayload> {
     communityMemberCounts.map((row) => [row.communityId, row.count]),
   );
 
+  const visibleEntities = allEntities.filter((entity) => !isArchiveEntity(entity));
+  const visibleEntityIds = new Set(visibleEntities.map((entity) => entity.id));
+  const visibleRelations = allRelations.filter(
+    (relation) =>
+      !HIDDEN_RELATION_TYPES.has(relation.relationType) &&
+      visibleEntityIds.has(relation.sourceId) &&
+      visibleEntityIds.has(relation.targetId),
+  );
+
   const limitApplied =
     totalEntitiesInDb > MAX_ENTITIES ||
     totalRelationsInDb > MAX_RELATIONS ||
     totalCommunitiesInDb > MAX_COMMUNITIES;
 
   return {
-    entities: allEntities.map((e) => ({
+    entities: visibleEntities.map((e) => ({
       id: e.id,
       name: e.name,
       type: e.type,
@@ -99,7 +122,7 @@ async function fetchGraphSnapshot(): Promise<GraphSnapshotPayload> {
       communityId: e.communityId,
       referenceCount: e.referenceCount,
     })),
-    relations: allRelations.map((r) => ({
+    relations: visibleRelations.map((r) => ({
       id: r.id,
       sourceId: r.sourceId,
       targetId: r.targetId,
@@ -112,8 +135,8 @@ async function fetchGraphSnapshot(): Promise<GraphSnapshotPayload> {
       memberCount: memberCountByCommunityId.get(c.id) ?? 0,
     })),
     stats: {
-      totalEntities: allEntities.length,
-      totalRelations: allRelations.length,
+      totalEntities: visibleEntities.length,
+      totalRelations: visibleRelations.length,
       totalCommunities: allCommunities.length,
       totalEntitiesInDb,
       totalRelationsInDb,

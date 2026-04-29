@@ -57,8 +57,17 @@ describe('agent-first MCP tools', () => {
     const handler = getHandler('initial_instructions');
     const result = await handler({});
     const text = result.content[0]?.text ?? '';
-    const payload = JSON.parse(text) as { firstCall?: string };
+    const payload = JSON.parse(text) as {
+      firstCall?: string;
+      alwaysRules?: string[];
+      preImplementationRuleLookup?: { required?: boolean; tool?: string };
+    };
     expect(payload.firstCall).toBe('activate_project');
+    expect(payload.alwaysRules).toContain(
+      'Before code edits, search task-specific rules with search_knowledge using concrete task context.',
+    );
+    expect(payload.preImplementationRuleLookup?.required).toBe(true);
+    expect(payload.preImplementationRuleLookup?.tool).toBe('search_knowledge');
   });
 
   it('activate_project delegates to buildActivateProjectResult', async () => {
@@ -73,8 +82,20 @@ describe('agent-first MCP tools', () => {
   it('search_knowledge delegates to service with validated args', async () => {
     mockSearchKnowledgeV2.mockResolvedValue({ groups: [], flatTopHits: [] });
     const handler = getHandler('search_knowledge');
-    const result = await handler({ query: 'risk', grouping: 'flat' });
-    expect(mockSearchKnowledgeV2).toHaveBeenCalled();
+    const result = await handler({
+      query: 'risk',
+      taskGoal: 'Refactor MCP rule lookup',
+      changeTypes: ['mcp', 'refactor'],
+      technologies: ['typescript', 'mcp'],
+      grouping: 'flat',
+    });
+    expect(mockSearchKnowledgeV2).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskGoal: 'Refactor MCP rule lookup',
+        changeTypes: ['mcp', 'refactor'],
+        technologies: ['typescript', 'mcp'],
+      }),
+    );
     const payload = JSON.parse(result.content[0]?.text ?? '{}') as { flatTopHits?: unknown[] };
     expect(Array.isArray(payload.flatTopHits)).toBe(true);
   });

@@ -61,6 +61,21 @@ const KNOWLEDGE_CATEGORIES = [
   'reference',
 ] as const;
 
+const TASK_CHANGE_TYPES = [
+  'frontend',
+  'backend',
+  'api',
+  'auth',
+  'db',
+  'docs',
+  'test',
+  'mcp',
+  'refactor',
+  'config',
+  'build',
+  'review',
+] as const;
+
 const initialInstructionsSchema = z.object({});
 
 const activateProjectSchema = z.object({
@@ -76,11 +91,17 @@ const activateProjectSchema = z.object({
 
 const searchKnowledgeV2Schema = z.object({
   query: z.string().optional(),
+  taskGoal: z
+    .string()
+    .optional()
+    .describe('これから実施する具体的なタスク目的。task_context検索時に推奨。'),
   preset: z
     .enum(['task_context', 'project_characteristics', 'review_context', 'procedures', 'risks'])
     .optional(),
   kinds: z.array(z.enum(KNOWLEDGE_KINDS)).optional(),
   categories: z.array(z.enum(KNOWLEDGE_CATEGORIES)).optional(),
+  changeTypes: z.array(z.enum(TASK_CHANGE_TYPES)).optional(),
+  technologies: z.array(z.string()).optional(),
   filterMode: z.enum(['and', 'or']).optional(),
   filters: z
     .object({
@@ -267,12 +288,52 @@ TYPICAL NEXT TOOL:
     handler: async () => {
       const payload = {
         firstCall: 'activate_project',
-        why: 'Project health, knowledge index summary, and recommended next calls are required before editing.',
+        why: 'Project health, always-on rules, and task-specific rule lookup guidance are required before editing.',
+        alwaysRules: [
+          'Run initial_instructions at session start.',
+          'Run initial_instructions again before review flow.',
+          'Do not call review_task before initial_instructions.',
+          'Do not perform git add, commit, push, or PR creation unless the user explicitly asks.',
+          'Do not implement authentication bypasses.',
+          'Do not perform large rollback or destructive database operations without user confirmation.',
+          'Before code edits, search task-specific rules with search_knowledge using concrete task context.',
+        ],
         globalRules: [
           'Run initial_instructions at session start.',
           'Run initial_instructions again before review flow.',
           'Do not call review_task before initial_instructions.',
         ],
+        preImplementationRuleLookup: {
+          required: true,
+          tool: 'search_knowledge',
+          when: [
+            'before code edits',
+            'before architecture or API changes',
+            'before review_task',
+            'when the task scope or target files change',
+          ],
+          how: {
+            preset: 'task_context',
+            intent: 'plan | edit | debug | review | finish',
+            taskGoal: 'Describe the concrete implementation goal in one sentence.',
+            query: 'Include affected area, risk, and implementation intent.',
+            files: 'Known target files or directories.',
+            changeTypes:
+              'frontend | backend | api | auth | db | docs | test | mcp | refactor | config | build | review',
+            kinds: ['rule', 'procedure', 'risk', 'lesson'],
+          },
+          example: {
+            preset: 'task_context',
+            intent: 'edit',
+            taskGoal: 'Refactor MCP initial instructions and task-specific rule retrieval.',
+            query: 'MCP Agent-First rule lookup before implementation',
+            files: ['src/mcp/tools/agentFirst.ts', 'src/services/agentFirst.ts'],
+            changeTypes: ['mcp', 'refactor'],
+            technologies: ['typescript', 'mcp'],
+            kinds: ['rule', 'procedure', 'risk', 'lesson'],
+            categories: ['mcp', 'architecture', 'workflow', 'coding_convention'],
+          },
+        },
         scenarioGuides: {
           review: {
             requiredOrder: [
@@ -301,7 +362,7 @@ TYPICAL NEXT TOOL:
         },
         recommendedWorkflow: [
           'activate_project',
-          'search_knowledge',
+          'search_knowledge(preset=task_context with taskGoal/files/changeTypes)',
           'start_task',
           'record_task_note / finish_task',
         ],

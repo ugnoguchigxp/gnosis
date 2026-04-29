@@ -757,7 +757,7 @@ async function deleteEntity(id: string) {
 // --- Relations CRUD ---
 
 async function listRelations() {
-  return await db.select().from(relations).limit(200);
+  return await db.select().from(relations).limit(5000);
 }
 
 async function createRelation(raw: RelationPayload) {

@@ -3,6 +3,14 @@
 import { and, inArray, sql } from 'drizzle-orm';
 import { closeDbPool, db } from '../db/index.js';
 import { communities, entities, relations } from '../db/schema.js';
+import {
+  TECHNOLOGY_CONCEPTS,
+  TECHNOLOGY_CONCEPT_RELATIONS,
+  type TechnologyApplicability,
+  type TechnologyConcept,
+  type TechnologyConceptRelation,
+  inferTechnologyApplicability,
+} from '../knowledge/technologyConcepts.js';
 import { buildCommunities } from '../services/community.js';
 import { generateEmbedding } from '../services/memory.js';
 import { contentFingerprint } from '../utils/contentFingerprint.js';
@@ -14,6 +22,7 @@ type CliArgs = {
     | 'backfill-task-relations'
     | 'dedupe-guidance'
     | 'normalize-guidance'
+    | 'seed-technology-concepts'
     | 'link-similar-guidance'
     | 'rebuild-communities'
     | 'help';
@@ -26,6 +35,10 @@ type CliArgs = {
   includeSameProject: boolean;
   skipSimilarLinking: boolean;
 };
+
+const DEFAULT_SIMILAR_THRESHOLD = 0.86;
+const DEFAULT_SAME_PRINCIPLE_THRESHOLD = 0.94;
+const SINGLE_ANCHOR_SIMILAR_THRESHOLD = 0.92;
 
 type BackfillCandidate = {
   sourceId: string;
@@ -108,6 +121,7 @@ const parseArgs = (argv: string[]): CliArgs => {
       command === 'backfill-task-relations' ||
       command === 'dedupe-guidance' ||
       command === 'normalize-guidance' ||
+      command === 'seed-technology-concepts' ||
       command === 'link-similar-guidance' ||
       command === 'rebuild-communities'
         ? command
@@ -115,8 +129,11 @@ const parseArgs = (argv: string[]): CliArgs => {
     apply: argv.includes('--apply'),
     json: argv.includes('--json'),
     deterministicSummary: argv.includes('--deterministic-summary'),
-    threshold: getNumberArg('--threshold', 0.9),
-    samePrincipleThreshold: getNumberArg('--same-principle-threshold', 0.925),
+    threshold: getNumberArg('--threshold', DEFAULT_SIMILAR_THRESHOLD),
+    samePrincipleThreshold: getNumberArg(
+      '--same-principle-threshold',
+      DEFAULT_SAME_PRINCIPLE_THRESHOLD,
+    ),
     limit: Math.max(1, Math.trunc(getNumberArg('--limit', 500))),
     includeSameProject: argv.includes('--include-same-project'),
     skipSimilarLinking: argv.includes('--skip-similar-linking'),
@@ -236,6 +253,69 @@ const guidanceProjects = (items: GuidanceEntity[], sources: Record<string, unkno
       .filter((project) => project.length > 0),
   ]);
 
+const metadataObject = (
+  metadata: Record<string, unknown>,
+  key: string,
+): Record<string, unknown> => {
+  const value = metadata[key];
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+};
+
+const mergeTechnologyApplicability = (
+  metadata: Record<string, unknown>,
+  inferred: TechnologyApplicability,
+): Record<string, unknown> => {
+  const existingApplicability = metadataObject(metadata, 'applicability');
+  const technologies = uniqueStrings([
+    ...metadataStringArray(existingApplicability, 'technologies'),
+    ...inferred.technologies,
+  ]);
+  const languages = uniqueStrings([
+    ...metadataStringArray(existingApplicability, 'languages'),
+    ...inferred.languages,
+  ]);
+  const tags = uniqueStrings([...metadataStringArray(metadata, 'tags'), ...inferred.tags]);
+
+  return {
+    ...metadata,
+    tags,
+    applicability: {
+      ...existingApplicability,
+      technologies,
+      languages,
+    },
+    applicabilitySource:
+      technologies.length > 0 ? 'technology-concept-seed' : metadata.applicabilitySource,
+  };
+};
+
+const inferGuidanceTechnologyApplicability = (
+  name: string,
+  description: string | null,
+): TechnologyApplicability => inferTechnologyApplicability(`${name}\n${description ?? ''}`);
+
+const technologyConceptByName = new Map(
+  TECHNOLOGY_CONCEPTS.map((concept) => [concept.name, concept] as const),
+);
+const ensuredTechnologyConceptIds = new Set<string>();
+
+const technologyApplicabilityFromMetadata = (
+  metadata: Record<string, unknown>,
+): TechnologyApplicability => {
+  const applicability = metadataObject(metadata, 'applicability');
+  const technologies = metadataStringArray(applicability, 'technologies');
+  const concepts = technologies
+    .map((name) => technologyConceptByName.get(name))
+    .filter((concept): concept is TechnologyConcept => concept !== undefined);
+  return {
+    technologies,
+    languages: metadataStringArray(applicability, 'languages'),
+    tags: uniqueStrings(concepts.flatMap((concept) => concept.tags)),
+  };
+};
+
 const splitRuleLine = (line: string): { title: string; body: string } | null => {
   const trimmed = line.trim();
   const numbered = trimmed.match(/^\d+\.\s+\*\*(.+?)\*\*[:：]\s*(.+)$/);
@@ -256,6 +336,7 @@ const splitRuleLine = (line: string): { title: string; body: string } | null => 
   const plainBullet = trimmed.match(/^[-*+]\s+(.+)$/);
   if (plainBullet?.[1]) {
     const body = stripMarkdown(plainBullet[1]);
+    if (/[:：]$/.test(body)) return null;
     return { title: body, body };
   }
 
@@ -282,22 +363,40 @@ const extractCompoundRuleItems = (entity: GuidanceEntity, sourceArchiveIds: stri
 
 const LOGGING_TITLE_PATTERN =
   /console\.log|@logger|\blogger\b|logger使用|log\.(?:debug|info|warn|error)|ログ出力|ロガー/i;
-const ANY_TITLE_PATTERN = /\bany\b|unknown|typescript strict/i;
+const ANY_TITLE_PATTERN = /any禁止|unknown|typescript strict/i;
 const TARGET_COMPOUND_PATTERN =
-  /console\.log禁止.*any禁止|any禁止.*console\.log禁止|必須コーディング規約.*any禁止/i;
+  /console\.log禁止.*any禁止|any禁止.*console\.log禁止|必須コーディング規約.*any禁止|言語:\s*typescript.*コメント:/i;
 
 const isLoggingGuidance = (name: string): boolean => LOGGING_TITLE_PATTERN.test(name);
 const isAnyGuidance = (text: string): boolean => ANY_TITLE_PATTERN.test(text);
 
-const isCompoundEntity = (entity: GuidanceEntity, extractedItems: CompoundRuleItem[]): boolean =>
-  extractedItems.length >= 3 || entity.name.includes(' / ');
-
 const isTargetCompoundGuidance = (entity: GuidanceEntity): boolean =>
   TARGET_COMPOUND_PATTERN.test(entity.name);
+
+const isCanonicalNormalizedEntity = (entity: GuidanceEntity): boolean => {
+  const normalizedFrom = metadataString(entity.metadata, 'normalizedFrom');
+  return (
+    entity.name === canonicalLoggingTitle ||
+    entity.name === canonicalAnyTitle ||
+    normalizedFrom === 'logging-cluster' ||
+    normalizedFrom === 'any-unknown-cluster'
+  );
+};
+
+const isNormalizableCompoundGuidance = (
+  entity: GuidanceEntity,
+  extractedItems: CompoundRuleItem[],
+): boolean => {
+  if (entity.type !== 'rule') return false;
+  if (isCanonicalNormalizedEntity(entity)) return false;
+  if (isTargetCompoundGuidance(entity)) return extractedItems.length > 0;
+  return false;
+};
 
 const isAtomicLoggingEntity = (entity: GuidanceEntity): boolean => {
   if (!isLoggingGuidance(entity.name)) return false;
   if (isTargetCompoundGuidance(entity)) return false;
+  if (/パスエイリアス|path alias|@src|@components|@lib/i.test(entity.name)) return false;
   if (
     /try-catch|error boundary|監査証跡|ログイン|privacy|安全設計|ロールバック/i.test(entity.name)
   ) {
@@ -782,6 +881,171 @@ async function attachArchiveRelations(
   }
 }
 
+async function upsertTechnologyConcept(concept: TechnologyConcept): Promise<string> {
+  const embedding = await generateEmbedding(`${concept.name}\n${concept.description}`);
+  const rows = await db
+    .select({ metadata: entities.metadata, referenceCount: entities.referenceCount })
+    .from(entities)
+    .where(sql`${entities.id} = ${concept.id}`)
+    .limit(1);
+  const existingMetadata = metadataRecord(rows[0]?.metadata);
+  const tags = uniqueStrings([...metadataStringArray(existingMetadata, 'tags'), ...concept.tags]);
+  const existingApplicability = metadataObject(existingMetadata, 'applicability');
+
+  await db
+    .insert(entities)
+    .values({
+      id: concept.id,
+      type: 'concept',
+      name: concept.name,
+      description: concept.description,
+      embedding,
+      metadata: {
+        ...existingMetadata,
+        category: existingMetadata.category ?? 'reference',
+        tags,
+        source: existingMetadata.source ?? 'technology_seed',
+        conceptKind: 'technology',
+        seed: true,
+        applicability: {
+          ...existingApplicability,
+          languages: uniqueStrings([
+            ...metadataStringArray(existingApplicability, 'languages'),
+            ...(concept.languages ?? []),
+          ]),
+        },
+        seededAt: new Date().toISOString(),
+      },
+      confidence: 0.75,
+      provenance: 'technology_seed',
+      scope: 'global',
+      freshness: new Date(),
+      referenceCount: rows[0]?.referenceCount ?? 0,
+    })
+    .onConflictDoUpdate({
+      target: entities.id,
+      set: {
+        name: sql`excluded.name`,
+        description: sql`excluded.description`,
+        embedding: sql`excluded.embedding`,
+        metadata: sql`excluded.metadata`,
+        confidence: sql`GREATEST(COALESCE(${entities.confidence}, 0), excluded.confidence)`,
+        provenance: sql`excluded.provenance`,
+        scope: sql`excluded.scope`,
+        freshness: sql`excluded.freshness`,
+      },
+    });
+
+  return concept.id;
+}
+
+async function ensureTechnologyConcept(concept: TechnologyConcept): Promise<boolean> {
+  if (ensuredTechnologyConceptIds.has(concept.id)) return false;
+  const existing = await db
+    .select({ id: entities.id })
+    .from(entities)
+    .where(sql`${entities.id} = ${concept.id}`)
+    .limit(1);
+  if (existing.length === 0) {
+    await upsertTechnologyConcept(concept);
+    ensuredTechnologyConceptIds.add(concept.id);
+    return true;
+  }
+  ensuredTechnologyConceptIds.add(concept.id);
+  return false;
+}
+
+async function attachTechnologyRelations(
+  entityId: string,
+  applicability: TechnologyApplicability,
+): Promise<number> {
+  let insertedOrUpdated = 0;
+  for (const technology of applicability.technologies) {
+    const concept = technologyConceptByName.get(technology);
+    if (!concept) continue;
+    await ensureTechnologyConcept(concept);
+    const rows = await db
+      .insert(relations)
+      .values({
+        sourceId: entityId,
+        targetId: concept.id,
+        relationType: 'applies_to_technology',
+        weight: 1,
+        confidence: 0.75,
+        provenance: 'technology_seed',
+      })
+      .onConflictDoUpdate({
+        target: [relations.sourceId, relations.targetId, relations.relationType],
+        set: {
+          weight: sql`excluded.weight`,
+          confidence: sql`GREATEST(COALESCE(${relations.confidence}, 0), excluded.confidence)`,
+          provenance: sql`excluded.provenance`,
+          recordedAt: sql`now()`,
+        },
+      })
+      .returning({ id: relations.id });
+    if (rows.length > 0) insertedOrUpdated += 1;
+  }
+  return insertedOrUpdated;
+}
+
+async function seedTechnologyConceptRelation(relation: TechnologyConceptRelation): Promise<number> {
+  const source = technologyConceptByName.get(relation.sourceName);
+  const target = technologyConceptByName.get(relation.targetName);
+  if (!source || !target) return 0;
+
+  const rows = await db
+    .insert(relations)
+    .values({
+      sourceId: source.id,
+      targetId: target.id,
+      relationType: relation.relationType,
+      weight: relation.weight,
+      confidence: relation.confidence,
+      provenance: 'technology_seed_relation',
+    })
+    .onConflictDoUpdate({
+      target: [relations.sourceId, relations.targetId, relations.relationType],
+      set: {
+        weight: sql`excluded.weight`,
+        confidence: sql`excluded.confidence`,
+        provenance: sql`excluded.provenance`,
+        recordedAt: sql`now()`,
+      },
+    })
+    .returning({ id: relations.id });
+  return rows.length > 0 ? 1 : 0;
+}
+
+async function seedTechnologyConcepts(apply: boolean) {
+  let seeded = 0;
+  let seededRelations = 0;
+  if (apply) {
+    for (const concept of TECHNOLOGY_CONCEPTS) {
+      if (await ensureTechnologyConcept(concept)) seeded += 1;
+    }
+
+    for (const relation of TECHNOLOGY_CONCEPT_RELATIONS) {
+      seededRelations += await seedTechnologyConceptRelation(relation);
+    }
+  }
+
+  return {
+    dryRun: !apply,
+    total: TECHNOLOGY_CONCEPTS.length,
+    seeded,
+    relationTotal: TECHNOLOGY_CONCEPT_RELATIONS.length,
+    seededRelations,
+    concepts: TECHNOLOGY_CONCEPTS.map((concept) => ({
+      id: concept.id,
+      name: concept.name,
+      tags: concept.tags,
+      languages: concept.languages ?? [],
+    })),
+    relations: TECHNOLOGY_CONCEPT_RELATIONS,
+  };
+}
+
 async function upsertGuidanceEntity(input: GuidanceEntityUpsertInput): Promise<string> {
   const fingerprint = contentFingerprint(input.description);
   const existingRows = await db
@@ -889,6 +1153,21 @@ async function deleteGuidanceEntities(entityIds: string[]) {
   }
 }
 
+async function updateGuidanceTechnologyMetadata(entity: GuidanceEntity): Promise<{
+  updated: boolean;
+  relations: number;
+  applicability: TechnologyApplicability;
+}> {
+  const inferred = inferGuidanceTechnologyApplicability(entity.name, entity.description);
+  if (inferred.technologies.length === 0) {
+    return { updated: false, relations: 0, applicability: inferred };
+  }
+  const metadata = mergeTechnologyApplicability(entity.metadata, inferred);
+  await db.update(entities).set({ metadata }).where(sql`${entities.id} = ${entity.id}`);
+  const relationCount = await attachTechnologyRelations(entity.id, inferred);
+  return { updated: true, relations: relationCount, applicability: inferred };
+}
+
 async function normalizeGuidance(apply: boolean) {
   const guidanceEntities = await collectGuidanceEntities();
   const archiveIdsByEntity = new Map<string, string[]>();
@@ -896,15 +1175,17 @@ async function normalizeGuidance(apply: boolean) {
     archiveIdsByEntity.set(entity.id, await sourceArchiveIdsForEntity(entity.id));
   }
 
-  const targetCompoundEntities = guidanceEntities.filter(isTargetCompoundGuidance);
-  const compoundItems = targetCompoundEntities.flatMap((entity) =>
-    extractCompoundRuleItems(entity, archiveIdsByEntity.get(entity.id) ?? []),
+  const compoundItemsByEntity = new Map(
+    guidanceEntities.map((entity) => [
+      entity.id,
+      extractCompoundRuleItems(entity, archiveIdsByEntity.get(entity.id) ?? []),
+    ]),
   );
-  const compoundEntities = targetCompoundEntities.filter((entity) =>
-    isCompoundEntity(
-      entity,
-      compoundItems.filter((item) => item.sourceEntity.id === entity.id),
-    ),
+  const compoundEntities = guidanceEntities.filter((entity) =>
+    isNormalizableCompoundGuidance(entity, compoundItemsByEntity.get(entity.id) ?? []),
+  );
+  const compoundItems = compoundEntities.flatMap(
+    (entity) => compoundItemsByEntity.get(entity.id) ?? [],
   );
   const loggingExistingEntities = guidanceEntities.filter(isAtomicLoggingEntity);
   const loggingSplitItems = compoundItems.filter((item) => isLoggingGuidance(item.title));
@@ -931,26 +1212,30 @@ async function normalizeGuidance(apply: boolean) {
       .map((entity) => entity.id)
       .filter((id) => id !== generateEntityId('rule', canonicalLoggingTitle)),
   );
+  const loggingDescriptionText = loggingDescription([
+    ...loggingSplitItems.map((item) => ({ title: item.title, body: item.body })),
+    ...loggingExistingEntities.map((entity) => ({
+      title: entity.name,
+      body: entity.description ?? entity.name,
+    })),
+  ]);
   const loggingInput: GuidanceEntityUpsertInput | null =
     loggingSplitItems.length > 0 || loggingExistingEntities.length > 1
       ? {
           id: generateEntityId('rule', canonicalLoggingTitle),
           type: 'rule',
           name: canonicalLoggingTitle,
-          description: loggingDescription([
-            ...loggingSplitItems.map((item) => ({ title: item.title, body: item.body })),
-            ...loggingExistingEntities.map((entity) => ({
-              title: entity.name,
-              body: entity.description ?? entity.name,
-            })),
-          ]),
-          metadata: {
-            tags: ['logging', 'coding-rule'],
-            sources: loggingSources,
-            projects: guidanceProjects(loggingSourceEntities, loggingSources),
-            mergedEntityIds: loggingMergedEntityIds,
-            normalizedFrom: 'logging-cluster',
-          },
+          description: loggingDescriptionText,
+          metadata: mergeTechnologyApplicability(
+            {
+              tags: ['logging', 'coding-rule'],
+              sources: loggingSources,
+              projects: guidanceProjects(loggingSourceEntities, loggingSources),
+              mergedEntityIds: loggingMergedEntityIds,
+              normalizedFrom: 'logging-cluster',
+            },
+            inferGuidanceTechnologyApplicability(canonicalLoggingTitle, loggingDescriptionText),
+          ),
           confidence: Math.max(
             0.8,
             ...loggingSourceEntities.map((entity) => entity.confidence ?? 0.5),
@@ -977,6 +1262,13 @@ async function normalizeGuidance(apply: boolean) {
       .map((entity) => entity.id)
       .filter((id) => id !== generateEntityId('rule', canonicalAnyTitle)),
   );
+  const anyDescriptionText = anyDescription([
+    ...anySplitItems.map((item) => ({ title: item.title, body: item.body })),
+    ...anyExistingEntities.map((entity) => ({
+      title: entity.name,
+      body: entity.description ?? entity.name,
+    })),
+  ]);
   const anyInput: GuidanceEntityUpsertInput | null =
     anySplitItems.length > 0 ||
     anyExistingEntities.some((entity) => entity.id !== generateEntityId('rule', canonicalAnyTitle))
@@ -984,20 +1276,17 @@ async function normalizeGuidance(apply: boolean) {
           id: generateEntityId('rule', canonicalAnyTitle),
           type: 'rule',
           name: canonicalAnyTitle,
-          description: anyDescription([
-            ...anySplitItems.map((item) => ({ title: item.title, body: item.body })),
-            ...anyExistingEntities.map((entity) => ({
-              title: entity.name,
-              body: entity.description ?? entity.name,
-            })),
-          ]),
-          metadata: {
-            tags: ['typescript', 'typing', 'coding-rule'],
-            sources: anySources,
-            projects: guidanceProjects(anySourceEntities, anySources),
-            mergedEntityIds: anyMergedEntityIds,
-            normalizedFrom: 'any-unknown-cluster',
-          },
+          description: anyDescriptionText,
+          metadata: mergeTechnologyApplicability(
+            {
+              tags: ['typescript', 'typing', 'coding-rule'],
+              sources: anySources,
+              projects: guidanceProjects(anySourceEntities, anySources),
+              mergedEntityIds: anyMergedEntityIds,
+              normalizedFrom: 'any-unknown-cluster',
+            },
+            inferGuidanceTechnologyApplicability(canonicalAnyTitle, anyDescriptionText),
+          ),
           confidence: Math.max(0.8, ...anySourceEntities.map((entity) => entity.confidence ?? 0.5)),
           sourceArchiveIds: anyArchiveIds,
         }
@@ -1018,14 +1307,17 @@ async function normalizeGuidance(apply: boolean) {
       type: item.sourceEntity.type,
       name,
       description: item.content,
-      metadata: {
-        ...sourceMetadata,
-        tags: uniqueStrings([...metadataStringArray(sourceMetadata, 'tags'), 'coding-rule']),
-        sources,
-        projects: guidanceProjects([item.sourceEntity], sources),
-        splitFromEntityIds: [item.sourceEntity.id],
-        normalizedFrom: 'compound-guidance',
-      },
+      metadata: mergeTechnologyApplicability(
+        {
+          ...sourceMetadata,
+          tags: uniqueStrings([...metadataStringArray(sourceMetadata, 'tags'), 'coding-rule']),
+          sources,
+          projects: guidanceProjects([item.sourceEntity], sources),
+          splitFromEntityIds: [item.sourceEntity.id],
+          normalizedFrom: 'compound-guidance',
+        },
+        inferGuidanceTechnologyApplicability(name, item.content),
+      ),
       confidence: item.sourceEntity.confidence ?? 0.75,
       sourceArchiveIds: item.sourceArchiveIds,
     };
@@ -1034,23 +1326,39 @@ async function normalizeGuidance(apply: boolean) {
   let loggingCanonicalId: string | null = null;
   let anyCanonicalId: string | null = null;
   const createdOrUpdatedIds: string[] = [];
+  let technologyMetadataUpdated = 0;
+  let technologyRelations = 0;
+  let deleteIds: string[] = [];
 
   if (apply) {
     if (loggingInput) {
       loggingCanonicalId = await upsertGuidanceEntity(loggingInput);
       createdOrUpdatedIds.push(loggingCanonicalId);
+      technologyRelations += await attachTechnologyRelations(
+        loggingCanonicalId,
+        technologyApplicabilityFromMetadata(loggingInput.metadata),
+      );
     }
 
     if (anyInput) {
       anyCanonicalId = await upsertGuidanceEntity(anyInput);
       createdOrUpdatedIds.push(anyCanonicalId);
+      technologyRelations += await attachTechnologyRelations(
+        anyCanonicalId,
+        technologyApplicabilityFromMetadata(anyInput.metadata),
+      );
     }
 
     for (const input of splitInputs) {
-      createdOrUpdatedIds.push(await upsertGuidanceEntity(input));
+      const entityId = await upsertGuidanceEntity(input);
+      createdOrUpdatedIds.push(entityId);
+      technologyRelations += await attachTechnologyRelations(
+        entityId,
+        technologyApplicabilityFromMetadata(input.metadata),
+      );
     }
 
-    const deleteIds = uniqueStrings([
+    deleteIds = uniqueStrings([
       ...compoundEntities.map((entity) => entity.id),
       ...(loggingInput
         ? loggingExistingEntities
@@ -1062,12 +1370,34 @@ async function normalizeGuidance(apply: boolean) {
             .map((entity) => entity.id)
             .filter((id) => id !== anyCanonicalId && !createdOrUpdatedIds.includes(id))
         : []),
-    ]);
+    ]).filter((id) => !createdOrUpdatedIds.includes(id));
     await deleteGuidanceEntities(deleteIds);
+
+    for (const entity of guidanceEntities) {
+      if (deleteIds.includes(entity.id) || createdOrUpdatedIds.includes(entity.id)) continue;
+      const result = await updateGuidanceTechnologyMetadata(entity);
+      if (result.updated) technologyMetadataUpdated += 1;
+      technologyRelations += result.relations;
+    }
 
     await db.delete(relations).where(sql`${relations.provenance} = 'embedding_similarity'
         AND ${relations.relationType} IN ('same_principle_as', 'similar_to')`);
   }
+
+  const existingTechnologyMappings = guidanceEntities
+    .map((entity) => ({
+      id: entity.id,
+      name: entity.name,
+      applicability: inferGuidanceTechnologyApplicability(entity.name, entity.description),
+    }))
+    .filter((item) => item.applicability.technologies.length > 0);
+  const splitTechnologyMappings = splitInputs
+    .map((input) => ({
+      id: input.id,
+      name: input.name,
+      applicability: technologyApplicabilityFromMetadata(input.metadata),
+    }))
+    .filter((item) => item.applicability.technologies.length > 0);
 
   return {
     dryRun: !apply,
@@ -1096,8 +1426,20 @@ async function normalizeGuidance(apply: boolean) {
       id: input.id,
       name: input.name,
       splitFromEntityIds: input.metadata.splitFromEntityIds,
+      applicability: technologyApplicabilityFromMetadata(input.metadata),
     })),
     createdOrUpdated: createdOrUpdatedIds.length,
+    deleted: deleteIds.length,
+    technology: {
+      seedConcepts: TECHNOLOGY_CONCEPTS.length,
+      metadataUpdated: technologyMetadataUpdated,
+      relations: technologyRelations,
+      mappings: {
+        existing: existingTechnologyMappings.length,
+        split: splitTechnologyMappings.length,
+        preview: [...existingTechnologyMappings, ...splitTechnologyMappings].slice(0, 40),
+      },
+    },
   };
 }
 
@@ -1150,7 +1492,10 @@ async function collectSimilarGuidanceCandidates(input: {
     )
     .map((row) => {
       const similarity = Number(row.similarity);
-      const anchors = commonSimilarityAnchors(row.source_name, row.target_name);
+      const anchors = commonSimilarityAnchors(
+        `${row.source_name}\n${row.source_description ?? ''}`,
+        `${row.target_name}\n${row.target_description ?? ''}`,
+      );
       const relationType: SimilarGuidanceCandidate['relationType'] =
         similarity >= input.samePrincipleThreshold && anchors.length >= 2
           ? 'same_principle_as'
@@ -1168,7 +1513,11 @@ async function collectSimilarGuidanceCandidates(input: {
         weight: relationType === 'same_principle_as' ? similarity * 2 : similarity * 1.4,
       };
     })
-    .filter((candidate) => candidate.anchors.length > 0)
+    .filter(
+      (candidate) =>
+        candidate.anchors.length >= 2 ||
+        (candidate.anchors.length === 1 && candidate.similarity >= SINGLE_ANCHOR_SIMILAR_THRESHOLD),
+    )
     .slice(0, input.limit);
 }
 
@@ -1279,8 +1628,9 @@ function printHelp() {
   bun run src/scripts/graph-maintenance.ts backfill-task-relations [--apply] [--json]
   bun run src/scripts/graph-maintenance.ts dedupe-guidance [--apply] [--json]
   bun run src/scripts/graph-maintenance.ts normalize-guidance [--apply] [--json]
-  bun run src/scripts/graph-maintenance.ts link-similar-guidance [--apply] [--threshold 0.9] [--same-principle-threshold 0.925] [--limit 500] [--include-same-project] [--json]
-  bun run src/scripts/graph-maintenance.ts rebuild-communities [--deterministic-summary] [--skip-similar-linking] [--threshold 0.9] [--same-principle-threshold 0.925] [--limit 500] [--include-same-project] [--json]
+  bun run src/scripts/graph-maintenance.ts seed-technology-concepts [--apply] [--json]
+  bun run src/scripts/graph-maintenance.ts link-similar-guidance [--apply] [--threshold 0.86] [--same-principle-threshold 0.94] [--limit 500] [--include-same-project] [--json]
+  bun run src/scripts/graph-maintenance.ts rebuild-communities [--deterministic-summary] [--skip-similar-linking] [--threshold 0.86] [--same-principle-threshold 0.94] [--limit 500] [--include-same-project] [--json]
 `);
 }
 
@@ -1310,6 +1660,11 @@ async function main() {
 
     if (args.command === 'normalize-guidance') {
       printPayload(await normalizeGuidance(args.apply), args.json);
+      return;
+    }
+
+    if (args.command === 'seed-technology-concepts') {
+      printPayload(await seedTechnologyConcepts(args.apply), args.json);
       return;
     }
 

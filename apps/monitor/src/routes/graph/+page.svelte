@@ -14,6 +14,26 @@ type GraphLink = d3.SimulationLinkDatum<GraphNode> &
     id: string;
   };
 
+type ClassificationRelationType = 'applies_to_technology' | 'belongs_to_concept' | 'related_to';
+
+type ClassificationPreviewStatus = 'create' | 'skip-existing' | 'skip-self' | 'skip-missing';
+
+type ClassificationPreviewItem = {
+  sourceId: string;
+  sourceName: string;
+  targetId: string;
+  targetName: string;
+  relationType: ClassificationRelationType;
+  status: ClassificationPreviewStatus;
+  reason: string;
+};
+
+type ClassificationResult = {
+  created: number;
+  skipped: number;
+  failed: Array<{ item: ClassificationPreviewItem; error: string }>;
+};
+
 type GraphSnapshot = {
   entities: Array<Entity & { referenceCount: number }>;
   relations: Array<Relation & { id: string }>;
@@ -46,6 +66,17 @@ let editForm = $state({
   scope: 'on_demand',
 });
 
+let classificationMode = $state(false);
+let selectedClassificationIds = $state<string[]>([]);
+let classificationTargetId = $state('');
+let classificationRelationType = $state<ClassificationRelationType>('applies_to_technology');
+let classificationWeight = $state(1);
+let classificationLoading = $state(false);
+let classificationError = $state<string | null>(null);
+let classificationRelationKeys = $state<string[]>([]);
+let classificationRelationsChecked = $state(false);
+let classificationResult = $state<ClassificationResult | null>(null);
+
 const MAX_NODE_LABEL_CHARS = 20;
 
 const truncateNodeLabel = (value: string, maxLength = MAX_NODE_LABEL_CHARS) => {
@@ -58,9 +89,96 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 
 const normalizedWeight = (link: GraphLink) => clamp(Number(link.weight || 1), 0.1, 3);
 
+const relationKey = (sourceId: string, targetId: string, relationType: string) =>
+  `${sourceId}\u0000${targetId}\u0000${relationType}`;
+
+const metadataStringArray = (metadata: Record<string, unknown>, key: string) => {
+  const value = metadata[key];
+  return Array.isArray(value)
+    ? value.map((item) => String(item).trim()).filter((item) => item.length > 0)
+    : [];
+};
+
+const isTechnologyConcept = (entity: Entity | null) => {
+  if (!entity || entity.type !== 'concept') return false;
+  const conceptKind =
+    typeof entity.metadata.conceptKind === 'string' ? entity.metadata.conceptKind : '';
+  const source = typeof entity.metadata.source === 'string' ? entity.metadata.source : '';
+  const tags = metadataStringArray(entity.metadata, 'tags');
+  return (
+    conceptKind === 'technology' || source === 'technology_seed' || tags.includes('technology')
+  );
+};
+
+const getEntityById = (id: string) =>
+  graphData?.entities.find((entity) => entity.id === id) || null;
+
+const getConceptNodes = () =>
+  [...(graphData?.entities ?? [])]
+    .filter((entity) => entity.type === 'concept')
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+const getSelectedClassificationNodes = () => {
+  const selectedIds = new Set(selectedClassificationIds);
+  return (graphData?.entities ?? [])
+    .filter((entity) => selectedIds.has(entity.id))
+    .sort((a, b) => a.name.localeCompare(b.name));
+};
+
+const existingRelationKeySet = () => {
+  const keys = new Set(classificationRelationKeys);
+  for (const relation of graphData?.relations ?? []) {
+    keys.add(relationKey(relation.sourceId, relation.targetId, relation.relationType));
+  }
+  return keys;
+};
+
+const getClassificationPreview = (): ClassificationPreviewItem[] => {
+  const target = getEntityById(classificationTargetId);
+  const selectedNodes = getSelectedClassificationNodes();
+  const existingKeys = existingRelationKeySet();
+
+  return selectedNodes.map((source) => {
+    const base = {
+      sourceId: source.id,
+      sourceName: source.name,
+      targetId: target?.id ?? '',
+      targetName: target?.name ?? '',
+      relationType: classificationRelationType,
+    };
+
+    if (!target) {
+      return { ...base, status: 'skip-missing', reason: '分類先conceptが未選択です。' };
+    }
+    if (source.id === target.id) {
+      return { ...base, status: 'skip-self', reason: '同じノード同士のrelationは作成しません。' };
+    }
+    if (existingKeys.has(relationKey(source.id, target.id, classificationRelationType))) {
+      return { ...base, status: 'skip-existing', reason: '同じrelationが既に存在します。' };
+    }
+    return { ...base, status: 'create', reason: 'relationを追加します。' };
+  });
+};
+
+const getClassificationPreviewCounts = () =>
+  getClassificationPreview().reduce(
+    (counts, item) => {
+      counts[item.status] += 1;
+      return counts;
+    },
+    {
+      create: 0,
+      'skip-existing': 0,
+      'skip-self': 0,
+      'skip-missing': 0,
+    } satisfies Record<ClassificationPreviewStatus, number>,
+  );
+
 const relationBaseDistance = (relationType: string) => {
   if (relationType === 'same_principle_as') return 46;
   if (relationType === 'similar_to') return 58;
+  if (relationType === 'applies_to_technology') return 76;
+  if (relationType.includes('_technology')) return 82;
   if (relationType.startsWith('captured_')) return 92;
   if (relationType === 'contains_guidance') return 170;
   return 120;
@@ -75,17 +193,23 @@ const relationStrength = (link: GraphLink) => {
       ? 0.95
       : link.relationType === 'similar_to'
         ? 0.78
-        : link.relationType.startsWith('captured_')
-          ? 0.42
-          : link.relationType === 'contains_guidance'
-            ? 0.12
-            : 0.28;
+        : link.relationType === 'applies_to_technology'
+          ? 0.58
+          : link.relationType.includes('_technology')
+            ? 0.5
+            : link.relationType.startsWith('captured_')
+              ? 0.42
+              : link.relationType === 'contains_guidance'
+                ? 0.12
+                : 0.28;
   return clamp(base * Math.sqrt(normalizedWeight(link)), 0.05, 1);
 };
 
 const relationColor = (relationType: string) => {
   if (relationType === 'same_principle_as') return '#22c55e';
   if (relationType === 'similar_to') return '#38bdf8';
+  if (relationType === 'applies_to_technology') return '#f59e0b';
+  if (relationType.includes('_technology')) return '#fbbf24';
   if (relationType.startsWith('captured_')) return '#a78bfa';
   if (relationType === 'contains_guidance') return '#475569';
   return '#94a3b8';
@@ -93,6 +217,8 @@ const relationColor = (relationType: string) => {
 
 const relationOpacity = (relationType: string) => {
   if (relationType === 'contains_guidance') return 0.22;
+  if (relationType === 'applies_to_technology') return 0.64;
+  if (relationType.includes('_technology')) return 0.58;
   if (relationType === 'similar_to' || relationType === 'same_principle_as') return 0.72;
   return 0.42;
 };
@@ -109,6 +235,147 @@ const closeNodeModal = () => {
   if (formLoading) return;
   selectedNodeId = null;
   formError = null;
+};
+
+const graphNodeStroke = (node: Pick<Entity, 'id'>) => {
+  if (classificationMode && selectedClassificationIds.includes(node.id)) return '#facc15';
+  if (!classificationMode && node.id === selectedNodeId) return '#fff';
+  return 'rgba(255,255,255,0.2)';
+};
+
+const graphNodeStrokeWidth = (node: Pick<Entity, 'id'>) => {
+  if (classificationMode && selectedClassificationIds.includes(node.id)) return 4;
+  if (!classificationMode && node.id === selectedNodeId) return 3;
+  return 1;
+};
+
+const updateGraphNodeStyles = () => {
+  if (!svgContainer) return;
+  d3.select(svgContainer)
+    .selectAll<SVGCircleElement, GraphNode>('circle.graph-node')
+    .attr('stroke', (node) => graphNodeStroke(node))
+    .attr('stroke-width', (node) => graphNodeStrokeWidth(node));
+};
+
+const resetClassificationFeedback = () => {
+  classificationError = null;
+  classificationResult = null;
+  classificationRelationsChecked = false;
+  classificationRelationKeys = [];
+};
+
+const setClassificationMode = (enabled: boolean) => {
+  classificationMode = enabled;
+  selectedNodeId = null;
+  formError = null;
+  resetClassificationFeedback();
+  if (!enabled) {
+    selectedClassificationIds = [];
+    classificationTargetId = '';
+  }
+  updateGraphNodeStyles();
+};
+
+const selectClassificationTarget = (targetId: string) => {
+  classificationTargetId = targetId;
+  const target = getEntityById(targetId);
+  classificationRelationType = isTechnologyConcept(target)
+    ? 'applies_to_technology'
+    : 'belongs_to_concept';
+  resetClassificationFeedback();
+};
+
+const setClassificationWeight = (value: string) => {
+  classificationWeight = clamp(Number(value) || 1, 0.1, 3);
+  resetClassificationFeedback();
+};
+
+const toggleClassificationNode = (id: string) => {
+  resetClassificationFeedback();
+  selectedClassificationIds = selectedClassificationIds.includes(id)
+    ? selectedClassificationIds.filter((selectedId) => selectedId !== id)
+    : [...selectedClassificationIds, id];
+};
+
+const removeClassificationNode = (id: string) => {
+  resetClassificationFeedback();
+  selectedClassificationIds = selectedClassificationIds.filter((selectedId) => selectedId !== id);
+  updateGraphNodeStyles();
+};
+
+const clearClassificationSelection = () => {
+  resetClassificationFeedback();
+  selectedClassificationIds = [];
+  updateGraphNodeStyles();
+};
+
+const refreshRelationIndex = async () => {
+  const relations = await invoke<Relation[]>('monitor_list_relations');
+  classificationRelationKeys = relations.map((relation) =>
+    relationKey(relation.sourceId, relation.targetId, relation.relationType),
+  );
+  classificationRelationsChecked = true;
+};
+
+const handlePrepareClassification = async () => {
+  classificationLoading = true;
+  classificationError = null;
+  classificationResult = null;
+  try {
+    await refreshRelationIndex();
+  } catch (err) {
+    classificationError = `Relation確認に失敗しました: ${
+      err instanceof Error ? err.message : String(err)
+    }`;
+  } finally {
+    classificationLoading = false;
+  }
+};
+
+const handleApplyClassification = async () => {
+  classificationLoading = true;
+  classificationError = null;
+  classificationResult = null;
+  try {
+    await refreshRelationIndex();
+    const preview = getClassificationPreview();
+    const candidates = preview.filter((item) => item.status === 'create');
+    const failed: ClassificationResult['failed'] = [];
+    let created = 0;
+
+    for (const item of candidates) {
+      try {
+        await invoke('monitor_create_relation', {
+          payload: JSON.stringify({
+            sourceId: item.sourceId,
+            targetId: item.targetId,
+            relationType: item.relationType,
+            weight: clamp(Number(classificationWeight) || 1, 0.1, 3),
+          }),
+        });
+        created += 1;
+      } catch (err) {
+        failed.push({
+          item,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    classificationResult = {
+      created,
+      skipped: preview.length - candidates.length,
+      failed,
+    };
+    await loadGraph();
+    await refreshRelationIndex();
+  } catch (err) {
+    classificationError = `分類の適用に失敗しました: ${
+      err instanceof Error ? err.message : String(err)
+    }`;
+  } finally {
+    classificationLoading = false;
+  }
 };
 
 const onBackdropKeydown = (event: KeyboardEvent, callback: () => void) => {
@@ -129,6 +396,15 @@ const loadGraph = async () => {
     graphData = data;
     if (selectedNodeId && !data.entities.some((entity) => entity.id === selectedNodeId)) {
       selectedNodeId = null;
+    }
+    selectedClassificationIds = selectedClassificationIds.filter((selectedId) =>
+      data.entities.some((entity) => entity.id === selectedId),
+    );
+    if (
+      classificationTargetId &&
+      !data.entities.some((entity) => entity.id === classificationTargetId)
+    ) {
+      classificationTargetId = '';
     }
     renderGraph(data);
   } catch (err) {
@@ -232,23 +508,29 @@ const renderGraph = (data: GraphSnapshot) => {
     .data(nodes)
     .enter()
     .append('circle')
+    .attr('class', 'graph-node')
     .attr('r', (d) => 6 + Math.log(d.referenceCount + 1) * 3)
     .attr('fill', (d) => {
+      if (d.type === 'concept') return '#f59e0b';
       if (d.type === 'goal') return '#ef4444';
       if (d.type === 'task') return '#3b82f6';
       if (d.type === 'constraint') return '#10b981';
       return '#64748b';
     })
-    .attr('stroke', (d) => (d.id === selectedNodeId ? '#fff' : 'rgba(255,255,255,0.2)'))
-    .attr('stroke-width', (d) => (d.id === selectedNodeId ? 3 : 1))
+    .attr('stroke', (d) => graphNodeStroke(d))
+    .attr('stroke-width', (d) => graphNodeStrokeWidth(d))
     .style('cursor', 'pointer')
     .on('click', (event, d) => {
+      event.stopPropagation();
+      if (classificationMode) {
+        toggleClassificationNode(d.id);
+        updateGraphNodeStyles();
+        return;
+      }
       selectedNodeId = d.id;
       formError = null;
       editForm = toEditForm(d);
-      node
-        .attr('stroke', (n) => (n.id === d.id ? '#fff' : 'rgba(255,255,255,0.2)'))
-        .attr('stroke-width', (n) => (n.id === d.id ? 3 : 1));
+      updateGraphNodeStyles();
     })
     .call(
       d3
@@ -311,6 +593,15 @@ onMount(() => {
         <p>Interactive visualization of gnosis memories and relationships.</p>
       </div>
       <div class="actions">
+        <button
+          type="button"
+          class:active={classificationMode}
+          class="btn-mode"
+          aria-pressed={classificationMode}
+          onclick={() => setClassificationMode(!classificationMode)}
+        >
+          {classificationMode ? '分類モード中' : '分類モード'}
+        </button>
         <button type="button" class="btn-reload" onclick={() => void loadGraph()} disabled={loading}>
           {#if loading}<span class="spin">↻</span>{:else}Reload Graph{/if}
         </button>
@@ -329,6 +620,124 @@ onMount(() => {
           <span class="divider"></span>
           <span class="stat"><b>{graphData.stats.totalRelationsInDb}</b> Relations</span>
         </div>
+      {/if}
+      {#if classificationMode}
+        <aside class="classification-panel" aria-label="Graph classification panel">
+          <div class="panel-heading">
+            <div>
+              <h3>Concept分類</h3>
+              <p>{selectedClassificationIds.length} nodes selected</p>
+            </div>
+            <button type="button" class="ghost" onclick={clearClassificationSelection} disabled={classificationLoading}>
+              Clear
+            </button>
+          </div>
+
+          <label for="classification-target">
+            分類先concept
+            <select
+              id="classification-target"
+              value={classificationTargetId}
+              onchange={(event) => selectClassificationTarget((event.currentTarget as HTMLSelectElement).value)}
+            >
+              <option value="">Select concept</option>
+              {#each getConceptNodes() as concept (concept.id)}
+                <option value={concept.id}>{concept.name}</option>
+              {/each}
+            </select>
+          </label>
+
+          <div class="control-row">
+            <label for="classification-relation">
+              Relation
+              <select
+                id="classification-relation"
+                bind:value={classificationRelationType}
+                onchange={resetClassificationFeedback}
+              >
+                <option value="applies_to_technology">applies_to_technology</option>
+                <option value="belongs_to_concept">belongs_to_concept</option>
+                <option value="related_to">related_to</option>
+              </select>
+            </label>
+            <label for="classification-weight">
+              Weight
+              <input
+                id="classification-weight"
+                type="number"
+                min="0.1"
+                max="3"
+                step="0.1"
+                value={classificationWeight}
+                oninput={(event) => setClassificationWeight((event.currentTarget as HTMLInputElement).value)}
+              />
+            </label>
+          </div>
+
+          {#if selectedClassificationIds.length > 0}
+            <div class="selected-list">
+              {#each getSelectedClassificationNodes() as entity (entity.id)}
+                <button
+                  type="button"
+                  class="selected-item"
+                  title={entity.name}
+                  onclick={() => removeClassificationNode(entity.id)}
+                  disabled={classificationLoading}
+                >
+                  <span>{truncateNodeLabel(entity.name, 26)}</span>
+                  <span class="remove-mark">×</span>
+                </button>
+              {/each}
+            </div>
+          {:else}
+            <p class="empty-note">Graph上のノードをクリックして分類対象を選択します。</p>
+          {/if}
+
+          <div class="preview-summary">
+            <span class="create">Add {getClassificationPreviewCounts().create}</span>
+            <span>Existing {getClassificationPreviewCounts()['skip-existing']}</span>
+            <span>
+              Skipped {getClassificationPreviewCounts()['skip-self'] +
+                getClassificationPreviewCounts()['skip-missing']}
+            </span>
+          </div>
+
+          <div class="preview-list">
+            {#each getClassificationPreview() as item (`${item.sourceId}-${item.targetId}-${item.relationType}`)}
+              <div class:will-create={item.status === 'create'} class="preview-item">
+                <span>{truncateNodeLabel(item.sourceName, 28)}</span>
+                <small>{item.reason}</small>
+              </div>
+            {/each}
+          </div>
+
+          {#if classificationRelationsChecked}
+            <p class="check-note">既存relation確認済みです。</p>
+          {:else}
+            <p class="check-note warning">適用前に既存relationを確認してください。</p>
+          {/if}
+
+          {#if classificationError}<p class="error-text">{classificationError}</p>{/if}
+          {#if classificationResult}
+            <p class="result-text">
+              Created {classificationResult.created}, skipped {classificationResult.skipped}, failed {classificationResult.failed.length}
+            </p>
+          {/if}
+
+          <div class="panel-actions">
+            <button type="button" onclick={handlePrepareClassification} disabled={classificationLoading}>
+              {classificationLoading ? 'Checking...' : '重複確認'}
+            </button>
+            <button
+              type="button"
+              class="primary"
+              onclick={handleApplyClassification}
+              disabled={classificationLoading || !classificationRelationsChecked || getClassificationPreviewCounts().create === 0}
+            >
+              {classificationLoading ? 'Applying...' : '分類を適用'}
+            </button>
+          </div>
+        </aside>
       {/if}
     </div>
   </div>
@@ -431,6 +840,12 @@ onMount(() => {
     align-items: flex-start;
     margin-bottom: 24px;
   }
+
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
   
   .title-group h2 { font-size: 1.5rem; font-weight: 800; color: #f8fafc; }
   .title-group p { font-size: 0.875rem; color: #64748b; margin-top: 4px; }
@@ -463,6 +878,145 @@ onMount(() => {
   }
   .divider { width: 1px; height: 12px; background: rgba(255, 255, 255, 0.2); }
   .stats-overlay b { color: #f1f5f9; }
+
+  .classification-panel {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    width: min(360px, calc(100% - 32px));
+    max-height: calc(100% - 32px);
+    overflow: auto;
+    display: grid;
+    gap: 0.8rem;
+    padding: 1rem;
+    background: rgba(2, 6, 23, 0.92);
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    border-radius: 8px;
+    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
+  }
+
+  .panel-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .panel-heading h3 {
+    margin: 0;
+    font-size: 1rem;
+    color: #f8fafc;
+  }
+
+  .panel-heading p,
+  .empty-note,
+  .check-note {
+    margin: 0.2rem 0 0;
+    color: #94a3b8;
+    font-size: 0.78rem;
+    line-height: 1.45;
+  }
+
+  .check-note.warning {
+    color: #fbbf24;
+  }
+
+  .control-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 96px;
+    gap: 0.65rem;
+  }
+
+  .selected-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    max-height: 120px;
+    overflow: auto;
+  }
+
+  .selected-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-width: 0;
+    max-width: 100%;
+    padding: 0.3rem 0.45rem;
+    border-color: rgba(250, 204, 21, 0.42);
+    background: rgba(250, 204, 21, 0.1);
+    color: #f8fafc;
+  }
+
+  .selected-item span:first-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .remove-mark {
+    color: #facc15;
+    font-weight: 700;
+  }
+
+  .preview-summary {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.4rem;
+  }
+
+  .preview-summary span {
+    padding: 0.4rem;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 6px;
+    text-align: center;
+    color: #cbd5e1;
+    font-size: 0.76rem;
+    background: rgba(15, 23, 42, 0.72);
+  }
+
+  .preview-summary .create {
+    color: #bbf7d0;
+    border-color: rgba(34, 197, 94, 0.26);
+  }
+
+  .preview-list {
+    display: grid;
+    gap: 0.35rem;
+    max-height: 160px;
+    overflow: auto;
+  }
+
+  .preview-item {
+    display: grid;
+    gap: 0.15rem;
+    padding: 0.45rem;
+    border-radius: 6px;
+    background: rgba(15, 23, 42, 0.74);
+    border: 1px solid rgba(148, 163, 184, 0.14);
+  }
+
+  .preview-item.will-create {
+    border-color: rgba(34, 197, 94, 0.28);
+  }
+
+  .preview-item span {
+    color: #e2e8f0;
+    font-size: 0.8rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .preview-item small {
+    color: #94a3b8;
+    font-size: 0.72rem;
+  }
+
+  .panel-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+  }
 
   .modal-backdrop {
     position: fixed;
@@ -538,6 +1092,22 @@ onMount(() => {
     transition: all 0.2s;
   }
   .btn-reload:hover { background: rgba(255, 255, 255, 0.1); }
+
+  .btn-mode {
+    padding: 10px 16px;
+    background: rgba(250, 204, 21, 0.1);
+    border: 1px solid rgba(250, 204, 21, 0.25);
+    color: #fde68a;
+    border-radius: 10px;
+    font-weight: 600;
+  }
+
+  .btn-mode.active {
+    background: rgba(250, 204, 21, 0.22);
+    border-color: rgba(250, 204, 21, 0.58);
+    color: #fef3c7;
+  }
+
   .spin { display: inline-block; animation: spin 1s linear infinite; }
 
   .form-actions {
@@ -567,6 +1137,20 @@ onMount(() => {
 
   button:hover { background: #374151; }
   button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+  button.primary {
+    background: #2563eb;
+    border-color: #3b82f6;
+  }
+
+  button.primary:hover { background: #1d4ed8; }
+
+  button.ghost {
+    background: rgba(15, 23, 42, 0.2);
+    border-color: rgba(148, 163, 184, 0.3);
+    color: #cbd5e1;
+  }
+
   button.danger {
     color: #fda4af;
     border-color: #7f1d1d;
@@ -576,6 +1160,12 @@ onMount(() => {
   button.danger:hover { background: #3b141a; }
 
   .error-text { color: #fca5a5; margin: 0; }
+
+  .result-text {
+    color: #bbf7d0;
+    margin: 0;
+    font-size: 0.8rem;
+  }
 
   .error-box { background: rgba(239, 68, 68, 0.1); color: #ef4444; padding: 12px 20px; border-radius: 10px; border: 1px solid rgba(239, 68, 68, 0.2); margin-bottom: 20px; }
 

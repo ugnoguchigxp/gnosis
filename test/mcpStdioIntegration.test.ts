@@ -1,0 +1,43 @@
+import { afterEach, describe, expect, it } from 'bun:test';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+
+describe('MCP stdio integration', () => {
+  let transport: StdioClientTransport | null = null;
+
+  afterEach(async () => {
+    if (transport) {
+      await transport.close().catch(() => {});
+      transport = null;
+    }
+  });
+
+  it('starts the stdio server and calls initial_instructions', async () => {
+    transport = new StdioClientTransport({
+      command: process.argv[0] ?? 'bun',
+      args: ['run', 'src/index.ts'],
+      env: {
+        ...process.env,
+        GNOSIS_NO_WORKERS: 'true',
+      },
+    });
+    const client = new Client(
+      { name: 'gnosis-stdio-integration-test', version: '0.0.0' },
+      { capabilities: {} },
+    );
+
+    await client.connect(transport);
+    const tools = await client.listTools();
+    const result = (await client.callTool({ name: 'initial_instructions', arguments: {} })) as {
+      content: Array<{ type: string; text?: string }>;
+    };
+
+    expect(tools.tools.map((tool) => tool.name)).toContain('initial_instructions');
+    expect(result.content.length).toBeGreaterThanOrEqual(1);
+    expect(
+      result.content.some(
+        (item) => item.type === 'text' && String(item.text).includes('activate_project'),
+      ),
+    ).toBe(true);
+  });
+});
