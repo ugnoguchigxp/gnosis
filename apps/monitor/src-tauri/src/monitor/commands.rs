@@ -13,7 +13,6 @@ pub struct MonitorConfigResponse {
     pub protocol_version: u32,
     pub project_root: String,
     pub project_name: String,
-
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -55,7 +54,6 @@ pub fn monitor_config(state: State<'_, MonitorRuntime>) -> MonitorConfigResponse
         protocol_version: state.protocol_version,
         project_root: state.project_root.to_string_lossy().to_string(),
         project_name: project_name(&state.project_root),
-
     }
 }
 
@@ -73,8 +71,6 @@ pub async fn monitor_browse_project() -> Result<Option<SelectedProjectResponse>,
         })
         .transpose()
 }
-
-
 
 #[tauri::command]
 pub async fn monitor_task_detail(
@@ -263,81 +259,6 @@ pub async fn monitor_delete_relation(
     relation_type: String,
 ) -> Result<serde_json::Value, String> {
     cli::delete_relation(&state.project_root, &source_id, &target_id, &relation_type)
-        .await
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-pub async fn monitor_list_goals(
-    state: State<'_, MonitorRuntime>,
-) -> Result<serde_json::Value, String> {
-    cli::list_goals(&state.project_root)
-        .await
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-pub async fn monitor_get_procedure(
-    state: State<'_, MonitorRuntime>,
-    goal_id: String,
-) -> Result<serde_json::Value, String> {
-    cli::get_procedure(&state.project_root, &goal_id)
-        .await
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-pub async fn monitor_set_task_confidence(
-    state: State<'_, MonitorRuntime>,
-    task_id: String,
-    confidence: f64,
-) -> Result<serde_json::Value, String> {
-    cli::set_task_confidence(&state.project_root, &task_id, confidence)
-        .await
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-pub async fn monitor_add_step(
-    state: State<'_, MonitorRuntime>,
-    goal_id: String,
-    task_id: String,
-) -> Result<serde_json::Value, String> {
-    cli::add_step(&state.project_root, &goal_id, &task_id)
-        .await
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-pub async fn monitor_remove_step(
-    state: State<'_, MonitorRuntime>,
-    goal_id: String,
-    task_id: String,
-) -> Result<serde_json::Value, String> {
-    cli::remove_step(&state.project_root, &goal_id, &task_id)
-        .await
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-pub async fn monitor_reorder_steps(
-    state: State<'_, MonitorRuntime>,
-    goal_id: String,
-    steps_order: Vec<String>,
-) -> Result<serde_json::Value, String> {
-    cli::reorder_steps(&state.project_root, &goal_id, steps_order)
-        .await
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-pub async fn monitor_create_custom_step(
-    state: State<'_, MonitorRuntime>,
-    goal_id: String,
-    name: String,
-    description: String,
-) -> Result<serde_json::Value, String> {
-    cli::create_custom_step(&state.project_root, &goal_id, &name, &description)
         .await
         .map_err(|error| error.to_string())
 }

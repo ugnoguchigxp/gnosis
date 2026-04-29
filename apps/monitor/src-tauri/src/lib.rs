@@ -21,7 +21,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             monitor::commands::monitor_config,
             monitor::commands::monitor_browse_project,
-
             monitor::commands::monitor_list_tasks,
             monitor::commands::monitor_task_detail,
             monitor::commands::monitor_graph_snapshot,
@@ -40,14 +39,7 @@ pub fn run() {
             monitor::commands::monitor_delete_entity,
             monitor::commands::monitor_list_relations,
             monitor::commands::monitor_create_relation,
-            monitor::commands::monitor_delete_relation,
-            monitor::commands::monitor_list_goals,
-            monitor::commands::monitor_get_procedure,
-            monitor::commands::monitor_set_task_confidence,
-            monitor::commands::monitor_add_step,
-            monitor::commands::monitor_remove_step,
-            monitor::commands::monitor_reorder_steps,
-            monitor::commands::monitor_create_custom_step
+            monitor::commands::monitor_delete_relation
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
