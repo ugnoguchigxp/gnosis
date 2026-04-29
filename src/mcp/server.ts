@@ -9,7 +9,7 @@ import { db } from '../db/index.js';
 import { entities } from '../db/schema.js';
 import { isGnosisError } from '../domain/errors.js';
 import { buildToolSnapshotForDoctor } from '../services/agentFirst.js';
-import type { McpHostTool } from './hostProtocol.js';
+import type { McpHostService, McpHostTool } from './hostProtocol.js';
 import type { ToolResult } from './registry.js';
 import { getExposedToolEntries } from './tools/index.js';
 
@@ -47,13 +47,6 @@ async function getAlwaysContext(): Promise<string> {
     return '';
   }
 }
-
-export type GnosisMcpService = {
-  name: string;
-  version: string;
-  listTools: () => McpHostTool[];
-  callTool: (name: string, args: unknown) => Promise<ToolResult>;
-};
 
 (globalThis as Record<string, unknown>).__GNOSIS_TOOL_SNAPSHOT = buildToolSnapshotForDoctor(
   getExposedToolEntries().map((tool) => ({
@@ -103,7 +96,7 @@ export async function callGnosisTool(name: string, args: unknown): Promise<ToolR
   }
 }
 
-export function createGnosisMcpService(): GnosisMcpService {
+export function createGnosisMcpService(): McpHostService {
   return {
     name: 'gnosis-memory-kg',
     version: '0.1.0',

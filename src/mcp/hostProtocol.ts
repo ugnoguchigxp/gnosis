@@ -1,18 +1,28 @@
 import { mkdirSync } from 'node:fs';
-import { connect } from 'node:net';
+import { Socket } from 'node:net';
 import { join, resolve } from 'node:path';
 
 export const MCP_HOST_MESSAGE_DELIMITER = '\n';
 
 export type McpHostTool = {
   name: string;
+  title?: string;
   description?: string;
   inputSchema: Record<string, unknown>;
 };
 
 export type McpHostToolResult = {
+  [key: string]: unknown;
   content: Array<{ type: string; text: string }>;
+  structuredContent?: Record<string, unknown>;
   isError?: boolean;
+};
+
+export type McpHostService = {
+  name: string;
+  version: string;
+  listTools: () => McpHostTool[];
+  callTool: (name: string, args: unknown) => Promise<McpHostToolResult>;
 };
 
 export type McpHostRequest =
@@ -72,7 +82,7 @@ export function sendMcpHostRequest<T>(
   const payload = { ...request, id } as McpHostRequest;
 
   return new Promise((resolvePromise, rejectPromise) => {
-    const socket = connect(socketPath);
+    const socket = new Socket();
     let buffer = '';
     let settled = false;
 
@@ -118,5 +128,7 @@ export function sendMcpHostRequest<T>(
     socket.setTimeout(timeoutMs, () => {
       settle(() => rejectPromise(new Error(`MCP host request timed out after ${timeoutMs}ms`)));
     });
+
+    socket.connect(socketPath);
   });
 }

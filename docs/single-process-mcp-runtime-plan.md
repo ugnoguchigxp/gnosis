@@ -179,6 +179,7 @@ Files:
 - `src/mcp/host.ts`
 - `src/mcp/services/astmend.ts`
 - `src/mcp/services/diffguard.ts`
+- `src/mcp/services/index.ts`
 - Adjacent repo package exports as described in their plans.
 
 Tasks:
@@ -194,6 +195,13 @@ Acceptance:
 - Host `listTools` includes Gnosis, Astmend, and diffGuard tools.
 - Astmend and diffGuard tool calls work through the single host process.
 - Failing one service call returns a tool error without killing the host.
+
+Status:
+
+- Done in Gnosis host. Astmend and diffGuard are loaded from local service
+  factories, with `ASTMEND_REPO_PATH` and `DIFFGUARD_REPO_PATH` as overrides.
+  Codex should remove direct Astmend/diffGuard MCP server entries after this
+  phase so no long-lived per-repo Bun stdio processes are spawned.
 
 ## Watchdog Position
 

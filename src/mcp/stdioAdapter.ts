@@ -158,7 +158,7 @@ export async function runStdioAdapter(rootDir = process.cwd()): Promise<void> {
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
-  const idleMs = envNumber(process.env.GNOSIS_MCP_ADAPTER_IDLE_MS, 300_000);
+  const idleMs = envNumber(process.env.GNOSIS_MCP_ADAPTER_IDLE_MS, 0);
   if (idleMs > 0) {
     const idleTimer = setInterval(
       () => {

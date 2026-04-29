@@ -28,12 +28,15 @@ Gnosis は環境変数を中心に構成されています。一部の機能（K
 | `GNOSIS_BACKGROUND_WORKER_ENABLED` | `true` | background worker daemon の常駐処理を実行するか。停止したい場合だけ `false` を指定 |
 | `GNOSIS_NO_WORKERS` | `false` | MCP host 内で background workers を起動しない。`scripts/setup-automation.sh` の `com.gnosis.mcp-host` は worker LaunchAgent との二重起動を避けるため `true` を指定 |
 | `GNOSIS_MCP_HOST_REPLACE_EXISTING` | `false` | 起動時に既存 MCP host が健康な場合、それを shutdown して自プロセスが host を引き継ぐ。LaunchAgent の `KeepAlive` ループ防止用 |
+| `ASTMEND_REPO_PATH` | `../Astmend` | MCP host が Astmend service factory を読み込むローカル repo path |
+| `DIFFGUARD_REPO_PATH` | `../diffGuard` | MCP host が diffGuard service factory を読み込むローカル repo path |
 
 ### MCP クライアント互換
 
 - MCP `tools/list` は Agent-First 公開面に固定されています。
 - クライアント側のツールキャッシュ不整合が疑われる場合は、MCP サーバーとクライアントを再起動してください。
 - macOS ログイン時から MCP host を常駐させる場合は `scripts/setup-automation.sh install` と `scripts/setup-automation.sh load` を実行します。`com.gnosis.mcp-host` は `RunAtLoad` / `KeepAlive` で起動し、stdio adapter はこの host へ接続します。既存の手動 host が残っている場合は LaunchAgent 側が shutdown して引き継ぎます。
+- Gnosis MCP host は Gnosis / Astmend / diffGuard の service factory を同一 process に読み込みます。Codex 側では Astmend / diffGuard を個別 MCP server として起動せず、Gnosis adapter だけを登録します。
 
 ### 埋め込み (Embedding)
 

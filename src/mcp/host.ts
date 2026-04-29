@@ -15,7 +15,7 @@ import {
   getMcpHostSocketPath,
   sendMcpHostRequest,
 } from './hostProtocol.js';
-import { createGnosisMcpService } from './server.js';
+import { createMcpHostRouter, createMcpHostServices } from './services/index.js';
 
 type HostOptions = {
   rootDir?: string;
@@ -117,7 +117,8 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
     GNOSIS_CONSTANTS.AUTOMATION_ENABLED_DEFAULT,
   );
   const workersEnabled = automationEnabled && process.env.GNOSIS_NO_WORKERS !== 'true';
-  const service = createGnosisMcpService();
+  const services = await createMcpHostServices(rootDir);
+  const router = createMcpHostRouter(services);
   const registration = registerProcess({
     role: 'mcp-host',
     title: process.title,
@@ -191,11 +192,11 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
     lastActivityAt = Date.now();
     try {
       if (request.type === 'listTools') {
-        writeResponse(socket, { id: request.id, ok: true, result: { tools: service.listTools() } });
+        writeResponse(socket, { id: request.id, ok: true, result: { tools: router.listTools() } });
         return;
       }
       if (request.type === 'callTool') {
-        const result = await service.callTool(request.name, request.arguments);
+        const result = await router.callTool(request.name, request.arguments);
         writeResponse(socket, { id: request.id, ok: true, result });
         return;
       }
@@ -207,7 +208,7 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
             pid: process.pid,
             uptimeMs: Date.now() - startedAt,
             socketPath,
-            services: [service.name],
+            services: router.serviceNames(),
             backgroundWorkers: workersEnabled ? 'enabled' : 'disabled',
           },
         });
