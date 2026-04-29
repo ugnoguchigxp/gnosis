@@ -444,6 +444,90 @@ export const reviewOutcomes = pgTable(
   }),
 );
 
+export const failureFirewallGoldenPaths = pgTable(
+  'failure_firewall_golden_paths',
+  {
+    id: text('id').primaryKey(),
+    title: text('title').notNull(),
+    pathType: text('path_type').notNull(),
+    appliesWhen: jsonb('applies_when').default([]).notNull(),
+    requiredSteps: jsonb('required_steps').default([]).notNull(),
+    allowedAlternatives: jsonb('allowed_alternatives').default([]).notNull(),
+    blockWhenMissing: jsonb('block_when_missing').default([]).notNull(),
+    severityWhenMissing: text('severity_when_missing').notNull().default('warning'),
+    riskSignals: jsonb('risk_signals').default([]).notNull(),
+    languages: jsonb('languages').default([]).notNull(),
+    frameworks: jsonb('frameworks').default([]).notNull(),
+    tags: jsonb('tags').default([]).notNull(),
+    status: text('status').notNull().default('active'),
+    sourceEntityId: text('source_entity_id'),
+    sourceExperienceId: uuid('source_experience_id'),
+    metadata: jsonb('metadata').default({}).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    statusIdx: index('failure_firewall_golden_paths_status_idx').on(table.status),
+    pathTypeIdx: index('failure_firewall_golden_paths_path_type_idx').on(table.pathType),
+    riskSignalsGinIdx: index('failure_firewall_golden_paths_risk_signals_gin_idx').using(
+      'gin',
+      table.riskSignals,
+    ),
+    statusCheck: check(
+      'failure_firewall_golden_paths_status_check',
+      sql`${table.status} IN ('active', 'needs_review', 'deprecated')`,
+    ),
+    severityCheck: check(
+      'failure_firewall_golden_paths_severity_check',
+      sql`${table.severityWhenMissing} IN ('error', 'warning', 'info')`,
+    ),
+  }),
+);
+
+export const failureFirewallPatterns = pgTable(
+  'failure_firewall_patterns',
+  {
+    id: text('id').primaryKey(),
+    title: text('title').notNull(),
+    patternType: text('pattern_type').notNull(),
+    severity: text('severity').notNull().default('warning'),
+    riskSignals: jsonb('risk_signals').default([]).notNull(),
+    languages: jsonb('languages').default([]).notNull(),
+    frameworks: jsonb('frameworks').default([]).notNull(),
+    matchHints: jsonb('match_hints').default([]).notNull(),
+    requiredEvidence: jsonb('required_evidence').default([]).notNull(),
+    goldenPathId: text('golden_path_id'),
+    status: text('status').notNull().default('active'),
+    falsePositiveCount: integer('false_positive_count').default(0).notNull(),
+    sourceEntityId: text('source_entity_id'),
+    sourceExperienceId: uuid('source_experience_id'),
+    metadata: jsonb('metadata').default({}).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    statusIdx: index('failure_firewall_patterns_status_idx').on(table.status),
+    patternTypeIdx: index('failure_firewall_patterns_pattern_type_idx').on(table.patternType),
+    goldenPathIdx: index('failure_firewall_patterns_golden_path_idx').on(table.goldenPathId),
+    riskSignalsGinIdx: index('failure_firewall_patterns_risk_signals_gin_idx').using(
+      'gin',
+      table.riskSignals,
+    ),
+    statusCheck: check(
+      'failure_firewall_patterns_status_check',
+      sql`${table.status} IN ('active', 'needs_review', 'deprecated')`,
+    ),
+    severityCheck: check(
+      'failure_firewall_patterns_severity_check',
+      sql`${table.severity} IN ('error', 'warning', 'info')`,
+    ),
+    falsePositiveCountCheck: check(
+      'failure_firewall_patterns_false_positive_count_check',
+      sql`${table.falsePositiveCount} >= 0`,
+    ),
+  }),
+);
+
 export const hookExecutions = pgTable(
   'hook_executions',
   {

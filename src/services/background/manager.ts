@@ -38,6 +38,11 @@ export function startBackgroundWorkers(): void {
         { id: 'periodic-knowflow-keyword-seed', priority: 15 },
       );
       await scheduler.enqueue(
+        'knowflow_frontier_seed',
+        {},
+        { id: 'periodic-knowflow-frontier-seed', priority: 14 },
+      );
+      await scheduler.enqueue(
         'hook_candidate_promotion',
         {},
         { id: 'periodic-hook-candidate-promotion', priority: 12 },

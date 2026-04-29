@@ -1,4 +1,5 @@
 import { config } from '../config.js';
+import { GNOSIS_CONSTANTS } from '../constants.js';
 import { listMemoriesByMetadata, saveMemory, searchMemory } from '../services/memory.js';
 
 type OpenAICompatibleResponse = {

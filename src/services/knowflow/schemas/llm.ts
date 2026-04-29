@@ -8,6 +8,7 @@ export const LlmTaskNameSchema = z.enum([
   'emergent_topic_extraction',
   'gap_detection',
   'gap_planner',
+  'frontier_selection',
   'summarize',
   'extract_evidence',
 ]);
@@ -129,6 +130,22 @@ export const GapPlannerOutputSchema = z
   })
   .passthrough();
 
+export const FrontierSelectionOutputSchema = z
+  .object({
+    selected: z
+      .array(
+        z
+          .object({
+            entityId: z.string().min(1),
+            score: z.number().min(0).max(1),
+            reason: z.string().min(1),
+          })
+          .passthrough(),
+      )
+      .default([]),
+  })
+  .passthrough();
+
 export const SummarizeOutputSchema = z
   .object({
     summary: z.string(),
@@ -165,6 +182,7 @@ export type PageUsefulnessEvaluationOutput = z.infer<typeof PageUsefulnessEvalua
 export type EmergentTopicExtractionOutput = z.infer<typeof EmergentTopicExtractionOutputSchema>;
 export type GapDetectionOutput = z.infer<typeof GapDetectionOutputSchema>;
 export type GapPlannerOutput = z.infer<typeof GapPlannerOutputSchema>;
+export type FrontierSelectionOutput = z.infer<typeof FrontierSelectionOutputSchema>;
 export type SummarizeOutput = z.infer<typeof SummarizeOutputSchema>;
 
 export type LlmTaskOutputMap = {
@@ -175,6 +193,7 @@ export type LlmTaskOutputMap = {
   emergent_topic_extraction: EmergentTopicExtractionOutput;
   gap_detection: GapDetectionOutput;
   gap_planner: GapPlannerOutput;
+  frontier_selection: FrontierSelectionOutput;
   summarize: SummarizeOutput;
   extract_evidence: z.infer<typeof ExtractEvidenceOutputSchema>;
 };
@@ -187,6 +206,7 @@ const schemaMap: Record<LlmTaskName, z.ZodTypeAny> = {
   emergent_topic_extraction: EmergentTopicExtractionOutputSchema,
   gap_detection: GapDetectionOutputSchema,
   gap_planner: GapPlannerOutputSchema,
+  frontier_selection: FrontierSelectionOutputSchema,
   summarize: SummarizeOutputSchema,
   extract_evidence: ExtractEvidenceOutputSchema,
 };
@@ -214,6 +234,8 @@ export const getTaskOutputHint = (task: LlmTaskName): string => {
       return '{"gaps":[{"type":"missing_example","description":"...","priority":0.7}]}';
     case 'gap_planner':
       return '{"steps":[{"title":"...","reason":"...","queries":["..."]}]}';
+    case 'frontier_selection':
+      return '{"selected":[{"entityId":"rule/example","score":0.9,"reason":"important rule with sparse graph context"}]}';
     case 'summarize':
       return '{"summary":"...","findings":["..."]}';
     case 'extract_evidence':

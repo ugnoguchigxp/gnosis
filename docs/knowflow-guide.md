@@ -177,9 +177,19 @@ bun src/services/knowflow/cli.ts seed-frontier --limit 10 --max-per-community 2
 - `src/services/knowflow/domain/task.ts`: KnowFlow task payload と expansion metadata
 - `src/scripts/webTools.ts`: Brave Search / fallback search / fetch
 
-## 現在の制約
+## 自動探索
 
-frontier seeder は、現時点では明示的な CLI 実行で動かします。将来的には常駐 worker の起動時や定期ジョブから、少量ずつ自動投入する形にできます。
+frontier seeder は、常駐 background worker が有効な環境では定期タスクとして動きます。既存の `entities` から候補を作り、参照回数、グラフの薄さ、confidence、recency に加えて、`rule`、`procedure`、`risk`、`decision`、`lesson`、`constraint` などの再利用価値を重要度として扱います。
+
+候補の shortlist は LLM に渡され、どれを深掘りすべきかを再順位付けします。LLM が失敗または degraded になった場合でも、deterministic な重要度順位にフォールバックして自動投入は止めません。
+
+制御用の主な環境変数は次の通りです。
+
+- `KNOWFLOW_FRONTIER_ENABLED`: frontier 自動投入の有効/無効
+- `KNOWFLOW_FRONTIER_LLM_ENABLED`: LLM 再順位付けの有効/無効
+- `KNOWFLOW_FRONTIER_MAX_TOPICS`: 1 tick で queue に投入する最大件数
+- `KNOWFLOW_FRONTIER_SCAN_LIMIT`: 候補生成時に見る entity 件数
+- `KNOWFLOW_FRONTIER_MAX_PER_COMMUNITY`: 同一 community からの最大選定数
 
 また、重要度の高い topic は単一ページだけで終わらせません。通常 topic は有用なページが1件見つかれば止めますが、高 priority topic は別ドメインの有用ページを追加で探します。best practice やルール化に必要な最低限の裏取りを増やすためです。必要件数に届かなかった場合は、部分的に有用な証拠があっても `explored` ではなく `exhausted` として扱い、`retryAfter` 後の再探索に回します。
 

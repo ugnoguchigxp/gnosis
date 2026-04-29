@@ -60,6 +60,28 @@ describe('review foundation', () => {
     expect(() => enforceHardLimit(tooManyFiles)).toThrow(ReviewError);
   });
 
+  test('allows review diffs up to the configured total line limit', () => {
+    const diffHeader = [
+      'diff --git a/file.ts b/file.ts',
+      'index 0000000..1111111 100644',
+      '--- a/file.ts',
+      '+++ b/file.ts',
+      '@@ -1,1 +1,1 @@',
+      '-old line',
+      '+new line',
+    ];
+    const paddingLines = Array.from(
+      { length: REVIEW_LIMITS.MAX_DIFF_LINES - diffHeader.length },
+      () => ' context line',
+    );
+    const maxAllowedDiff = [...diffHeader, ...paddingLines].join('\n');
+    const tooLargeDiff = `${maxAllowedDiff}\n context line`;
+
+    expect(maxAllowedDiff.split(/\r?\n/)).toHaveLength(REVIEW_LIMITS.MAX_DIFF_LINES);
+    expect(() => enforceHardLimit(maxAllowedDiff)).not.toThrow();
+    expect(() => enforceHardLimit(tooLargeDiff)).toThrow(ReviewError);
+  });
+
   test('masks common secret patterns', () => {
     const input = 'apiKey="supersecret123456"\nBearer abcdefghijklmnopqrstuv';
     const result = maskSecrets(input);

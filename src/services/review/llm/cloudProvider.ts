@@ -1,3 +1,4 @@
+import { GNOSIS_CONSTANTS } from '../../../constants.js';
 import { REVIEW_LIMITS, ReviewError } from '../errors.js';
 import type {
   ChatMessage,
@@ -391,13 +392,19 @@ async function runBedrockRequest(params: {
 }
 
 export function createCloudReviewLLMService(options: CloudProviderOptions = {}): ReviewLLMService {
-  const provider = options.provider ?? normalizeProvider(process.env.GNOSIS_REVIEW_LLM_PROVIDER);
+  const provider =
+    options.provider ??
+    normalizeProvider(
+      process.env.GNOSIS_REVIEW_LLM_PROVIDER || GNOSIS_CONSTANTS.REVIEW_LLM_PROVIDER_DEFAULT,
+    );
   const defaults = DEFAULTS[provider];
   const apiBaseUrl =
     options.apiBaseUrl ??
     (provider === 'bedrock'
       ? defaults.baseUrl
-      : process.env.GNOSIS_REVIEW_LLM_API_BASE_URL ?? defaults.baseUrl);
+      : process.env.GNOSIS_REVIEW_LLM_API_BASE_URL ??
+        GNOSIS_CONSTANTS.REVIEW_LLM_API_BASE_URL_DEFAULT ??
+        defaults.baseUrl);
   const apiPath =
     options.apiPath ??
     (provider === 'bedrock'
@@ -423,14 +430,24 @@ export function createCloudReviewLLMService(options: CloudProviderOptions = {}):
           ? process.env.GOOGLE_MODEL
           : process.env.OPENAI_MODEL;
   const apiKey = options.apiKey ?? providerApiKeyEnv ?? process.env.GNOSIS_REVIEW_LLM_API_KEY;
-  const model = options.model ?? providerModelEnv ?? process.env.GNOSIS_REVIEW_LLM_MODEL;
-  const awsRegion = options.awsRegion ?? process.env.AWS_REGION;
+  const model =
+    options.model ??
+    providerModelEnv ??
+    process.env.GNOSIS_REVIEW_LLM_MODEL ??
+    (provider === 'azure-openai' ? GNOSIS_CONSTANTS.AZURE_OPENAI_MODEL_DEFAULT : undefined);
+  const awsRegion =
+    options.awsRegion ?? process.env.AWS_REGION ?? GNOSIS_CONSTANTS.AWS_REGION_DEFAULT;
   const awsAccessKeyId = options.awsAccessKeyId ?? process.env.AWS_ACCESS_KEY_ID;
   const awsSecretAccessKey = options.awsSecretAccessKey ?? process.env.AWS_SECRET_ACCESS_KEY;
   const awsSessionToken = options.awsSessionToken ?? process.env.AWS_SESSION_TOKEN;
   const bedrockInferenceProfileId =
-    options.bedrockInferenceProfileId ?? process.env.GNOSIS_REVIEW_LLM_BEDROCK_INFERENCE_PROFILE_ID;
-  const bedrockModelId = options.bedrockModelId ?? process.env.GNOSIS_REVIEW_LLM_BEDROCK_MODEL_ID;
+    options.bedrockInferenceProfileId ??
+    process.env.GNOSIS_REVIEW_LLM_BEDROCK_INFERENCE_PROFILE_ID ??
+    (options.bedrockModelId ? undefined : GNOSIS_CONSTANTS.BEDROCK_INFERENCE_PROFILE_ID_DEFAULT);
+  const bedrockModelId =
+    options.bedrockModelId ??
+    process.env.GNOSIS_REVIEW_LLM_BEDROCK_MODEL_ID ??
+    GNOSIS_CONSTANTS.BEDROCK_MODEL_ID_DEFAULT;
 
   if (provider === 'bedrock') {
     if (!awsRegion) {

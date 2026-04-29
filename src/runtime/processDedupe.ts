@@ -5,7 +5,7 @@ import {
   readRegistryEntries,
   removeRegistryFile,
 } from './processRegistry.js';
-import { getProcessSnapshot } from './processWatchdog.js';
+import { type ProcessSnapshot, getProcessSnapshot } from './processWatchdog.js';
 
 export type ProcessDedupeAction = 'keep' | 'remove_registry' | 'sigterm' | 'sigkill' | 'warn';
 
@@ -25,6 +25,9 @@ export type ProcessDedupeOptions = {
   signal?: 'SIGTERM' | 'SIGKILL';
   keep?: 'newest' | 'oldest';
   currentPid?: number;
+  terminateDuplicates?: boolean;
+  getSnapshot?: (pid: number) => ProcessSnapshot | null;
+  signalPid?: (pid: number, signal: NodeJS.Signals) => boolean;
 };
 
 const isSameRuntime = (entry: ProcessRegistryEntry, role: string, cwd: string): boolean =>
@@ -46,9 +49,12 @@ export function suppressDuplicateProcesses(
   const cwd = resolve(options.cwd ?? process.cwd());
   const registryDir = options.registryDir ?? getProcessRegistryDir(cwd);
   const apply = options.apply === true;
-  const signal = options.signal ?? 'SIGTERM';
+  const selectedSignal = options.signal ?? 'SIGTERM';
   const keep = options.keep ?? 'newest';
   const currentPid = options.currentPid ?? process.pid;
+  const terminateDuplicates = options.terminateDuplicates ?? true;
+  const getSnapshot = options.getSnapshot ?? getProcessSnapshot;
+  const sendSignal = options.signalPid ?? signalPid;
   const findings: ProcessDedupeFinding[] = [];
   const healthy: Array<{ path: string; entry: ProcessRegistryEntry }> = [];
 
@@ -67,13 +73,25 @@ export function suppressDuplicateProcesses(
     const { entry } = result;
     if (!isSameRuntime(entry, role, cwd)) continue;
 
-    const snapshot = getProcessSnapshot(entry.pid);
+    const snapshot = getSnapshot(entry.pid);
     if (!snapshot) {
       findings.push({
         action: apply ? 'remove_registry' : 'warn',
         reason: 'dead_pid',
         path: result.path,
         entry,
+      });
+      if (apply) removeRegistryFile(result.path);
+      continue;
+    }
+
+    if (snapshot.cwd && resolve(snapshot.cwd) !== resolve(entry.cwd)) {
+      findings.push({
+        action: apply ? 'remove_registry' : 'warn',
+        reason: 'pid_reuse_or_cwd_mismatch',
+        path: result.path,
+        entry,
+        detail: `snapshotCwd=${snapshot.cwd}`,
       });
       if (apply) removeRegistryFile(result.path);
       continue;
@@ -100,6 +118,16 @@ export function suppressDuplicateProcesses(
   const survivor = sorted[0];
 
   for (const item of sorted) {
+    if (!terminateDuplicates) {
+      findings.push({
+        action: 'keep',
+        reason: 'live_duplicate_allowed',
+        path: item.path,
+        entry: item.entry,
+      });
+      continue;
+    }
+
     if (survivor && item.entry.pid === survivor.entry.pid) {
       findings.push({
         action: 'keep',
@@ -110,14 +138,14 @@ export function suppressDuplicateProcesses(
       continue;
     }
 
-    const action: ProcessDedupeAction = signal === 'SIGKILL' ? 'sigkill' : 'sigterm';
+    const action: ProcessDedupeAction = selectedSignal === 'SIGKILL' ? 'sigkill' : 'sigterm';
     findings.push({
       action: apply ? action : 'warn',
       reason: 'duplicate_instance',
       path: item.path,
       entry: item.entry,
     });
-    if (apply) signalPid(item.entry.pid, signal);
+    if (apply) sendSignal(item.entry.pid, selectedSignal);
   }
 
   return findings;

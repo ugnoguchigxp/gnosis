@@ -20,5 +20,12 @@
     <true/>
     <key>KeepAlive</key>
     <true/>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>GNOSIS_ENABLE_AUTOMATION</key>
+        <string>true</string>
+        <key>GNOSIS_BACKGROUND_WORKER_ENABLED</key>
+        <string>true</string>
+    </dict>
 </dict>
 </plist>

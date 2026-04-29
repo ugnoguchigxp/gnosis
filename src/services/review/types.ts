@@ -51,6 +51,9 @@ export const DegradedModeSchema = z.enum([
   'astmend_unavailable',
   'diff_size_limited',
   'llm_timeout',
+  'llm_failed',
+  'llm_unparseable',
+  'non_local_llm_skipped',
 ]);
 export type DegradedMode = z.infer<typeof DegradedModeSchema>;
 

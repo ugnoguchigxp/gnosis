@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { simpleGit } from 'simple-git';
 import { sha256 } from '../../utils/crypto.js';
+import { runFailureFirewallReview } from '../failureFirewall/index.js';
 import { deduplicateFindings, mergeFindings, validateFindingsFull } from './diff/merge.js';
 import { countAddedLines, countRemovedLines, normalizeDiff } from './diff/normalizer.js';
 import { ReviewError } from './errors.js';
@@ -569,6 +570,10 @@ function resolveKnowledgePolicy(
   return defaultPolicy;
 }
 
+function isFailureFirewallGoal(goal: string | undefined): boolean {
+  return /\bfailure[-_ ]firewall\b/i.test(goal ?? '');
+}
+
 function isEmptyKnowledgeModeFail(): boolean {
   return process.env.GNOSIS_REVIEW_EMPTY_KNOWLEDGE_MODE?.trim().toLowerCase() === 'fail';
 }
@@ -668,6 +673,10 @@ export async function runReviewStageC(
 
   validateAllowedRoot(req.repoPath);
   validateSessionId(req.sessionId);
+
+  if (isFailureFirewallGoal(req.taskGoal)) {
+    return runFailureFirewallReview(req, deps);
+  }
 
   let rawDiff: string;
   try {

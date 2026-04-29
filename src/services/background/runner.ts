@@ -10,6 +10,7 @@ import { config } from '../../config.js';
 import { promotePendingHookCandidates } from '../../hooks/service.js';
 import { runKeywordSeederOnce } from '../knowflow/cron/keywordSeeder.js';
 import type { KeywordSeederRunResult } from '../knowflow/cron/types.js';
+import { enqueueFrontierCandidates } from '../knowflow/frontier/selector.js';
 import { PgKnowledgeRepository } from '../knowflow/knowledge/repository.js';
 import { PgJsonbQueueRepository } from '../knowflow/queue/pgJsonbRepository.js';
 import {
@@ -53,6 +54,7 @@ export async function runTask(
     database: typeof defaultDb;
     runWorkerOnce?: typeof runWorkerOnce;
     runKeywordSeederOnce?: typeof runKeywordSeederOnce;
+    enqueueFrontierCandidates?: typeof enqueueFrontierCandidates;
   } = {
     database: defaultDb,
   },
@@ -107,6 +109,21 @@ export async function runTask(
           sourceFailures > 0
             ? `${sourceFailures} source(s) failed during keyword seeding`
             : undefined,
+        stats: result,
+      };
+    }
+
+    case 'knowflow_frontier_seed': {
+      const result = await runKnowFlowFrontierSeedIteration(
+        deps.database,
+        deps.enqueueFrontierCandidates,
+      );
+
+      return {
+        ok: true,
+        processed: result.enqueued > 0 || result.deduped > 0 || result.candidates.length > 0,
+        summary: `candidates=${result.candidates.length} enqueued=${result.enqueued} deduped=${result.deduped}`,
+        partialFailures: 0,
         stats: result,
       };
     }
@@ -231,6 +248,31 @@ async function runKnowFlowKeywordSeedIteration(
 ): Promise<KeywordSeederRunResult> {
   const runSeeder = customRunKeywordSeederOnce ?? runKeywordSeederOnce;
   return await runSeeder({ database });
+}
+
+async function runKnowFlowFrontierSeedIteration(
+  database: typeof defaultDb = defaultDb,
+  customEnqueueFrontierCandidates?: typeof enqueueFrontierCandidates,
+): Promise<{
+  candidates: Awaited<ReturnType<typeof enqueueFrontierCandidates>>['candidates'];
+  enqueued: number;
+  deduped: number;
+}> {
+  if (!config.knowflow.frontier.enabled) {
+    return { candidates: [], enqueued: 0, deduped: 0 };
+  }
+
+  const queueRepository = new PgJsonbQueueRepository(database);
+  const enqueueFrontier = customEnqueueFrontierCandidates ?? enqueueFrontierCandidates;
+  return await enqueueFrontier({
+    database,
+    queueRepository,
+    limit: config.knowflow.frontier.maxTopics,
+    scanLimit: config.knowflow.frontier.scanLimit,
+    maxPerCommunity: config.knowflow.frontier.maxPerCommunity,
+    useLlm: config.knowflow.frontier.llmEnabled,
+    requestedBy: 'background-frontier-seed',
+  });
 }
 
 /**

@@ -2,6 +2,7 @@ import { exec, spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { type LlmClientConfig, LlmClientConfigSchema, config } from '../config.js';
+import { GNOSIS_CONSTANTS } from '../constants.js';
 import {
   type LlmTaskName,
   LlmTaskNameSchema,
@@ -76,14 +77,15 @@ const parsePositiveEnvInt = (value: string | undefined, fallback: number): numbe
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 
-const LLM_QUEUE_NAME = process.env.KNOWFLOW_LLM_QUEUE_NAME?.trim() || 'llm-pool';
+const LLM_QUEUE_NAME =
+  process.env.KNOWFLOW_LLM_QUEUE_NAME?.trim() || GNOSIS_CONSTANTS.LLM_QUEUE_NAME_DEFAULT;
 const LLM_QUEUE_MAX_CONCURRENCY = parsePositiveEnvInt(
   process.env.KNOWFLOW_LLM_MAX_CONCURRENCY,
-  config.llm.concurrencyLimit,
+  GNOSIS_CONSTANTS.LLM_MAX_CONCURRENCY_DEFAULT,
 );
 const LLM_QUEUE_TIMEOUT_MS = parsePositiveEnvInt(
   process.env.KNOWFLOW_LLM_QUEUE_TIMEOUT_MS,
-  Math.max(15 * 60 * 1000, config.knowflow.llm.timeoutMs * 4),
+  Math.max(GNOSIS_CONSTANTS.LLM_QUEUE_TIMEOUT_MS_DEFAULT, config.knowflow.llm.timeoutMs * 4),
 );
 
 const withKnowflowLlmQueue = async <T>(fn: () => Promise<T>): Promise<T> =>
@@ -492,6 +494,32 @@ const degradedOutputBuilders: {
   emergent_topic_extraction: () => ({
     items: [],
   }),
+  frontier_selection: (context) => {
+    const candidates = Array.isArray(context.candidates) ? context.candidates : [];
+    const maxTopics =
+      typeof context.maxTopics === 'number' && Number.isFinite(context.maxTopics)
+        ? Math.max(1, Math.trunc(context.maxTopics))
+        : 5;
+    return {
+      selected: candidates
+        .map((item) => {
+          if (typeof item !== 'object' || item === null) return undefined;
+          const entityId = (item as { entityId?: unknown }).entityId;
+          const score = (item as { score?: unknown }).score;
+          return typeof entityId === 'string' && entityId.trim().length > 0
+            ? {
+                entityId: entityId.trim(),
+                score: typeof score === 'number' && Number.isFinite(score) ? score : 0.1,
+                reason: 'Fallback selected from deterministic frontier ranking.',
+              }
+            : undefined;
+        })
+        .filter((item): item is { entityId: string; score: number; reason: string } =>
+          Boolean(item),
+        )
+        .slice(0, maxTopics),
+    };
+  },
   gap_planner: (context) => {
     const topic =
       typeof context.topic === 'string' && context.topic.trim().length > 0

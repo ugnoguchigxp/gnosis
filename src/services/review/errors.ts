@@ -37,7 +37,7 @@ export const ReviewWarnings = {
 } as const;
 
 export const REVIEW_LIMITS = {
-  MAX_DIFF_LINES: 500,
+  MAX_DIFF_LINES: 3000,
   MAX_FILES: 20,
   MAX_LINES_PER_FILE: 300,
   MAX_SESSION_ID_LENGTH: 256,

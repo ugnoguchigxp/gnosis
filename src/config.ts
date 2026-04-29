@@ -1,6 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
+import { GNOSIS_CONSTANTS } from './constants';
 
 export const envBoolean = (value: string | undefined, fallback: boolean): boolean => {
   if (value === undefined || value.trim() === '') return fallback;
@@ -77,6 +78,18 @@ export const KeywordCronConfigSchema = z
 
 export type KeywordCronConfig = z.infer<typeof KeywordCronConfigSchema>;
 
+export const FrontierConfigSchema = z
+  .object({
+    enabled: z.boolean(),
+    llmEnabled: z.boolean(),
+    maxTopics: z.number().int().positive(),
+    scanLimit: z.number().int().positive(),
+    maxPerCommunity: z.number().int().positive(),
+  })
+  .strict();
+
+export type FrontierConfig = z.infer<typeof FrontierConfigSchema>;
+
 export const MemoryLoopConfigSchema = z
   .object({
     allowCloud: z.boolean(),
@@ -94,6 +107,16 @@ export const MemoryLoopConfigSchema = z
   .strict();
 
 export type MemoryLoopConfig = z.infer<typeof MemoryLoopConfigSchema>;
+
+function memoryLoopAlias(
+  value: string | undefined,
+  fallback: string,
+  defaultAlias: 'gemma4' | 'bonsai',
+): 'gemma4' | 'bonsai' {
+  const alias = value ?? fallback;
+  if (alias === 'gemma4' || alias === 'bonsai') return alias;
+  return defaultAlias;
+}
 
 export const HookConfigSchema = z
   .object({
@@ -114,7 +137,8 @@ export type HookConfig = z.infer<typeof HookConfigSchema>;
 export const config = {
   // localLlm プロジェクトのルートパス (MCP Retriever用)
   localLlmPath:
-    process.env.GNOSIS_LOCAL_LLM_PATH || path.resolve(process.cwd(), 'services/local-llm'),
+    process.env.GNOSIS_LOCAL_LLM_PATH ||
+    path.resolve(process.cwd(), GNOSIS_CONSTANTS.LOCAL_LLM_PATH_DEFAULT),
 
   // LLM スクリプトのフルパス (個別コマンド)
   gemma4Script: process.env.GNOSIS_GEMMA4_SCRIPT || path.resolve(process.cwd(), 'scripts/gemma4'),
@@ -124,7 +148,9 @@ export const config = {
     process.env.GNOSIS_BEDROCK_SCRIPT || path.resolve(process.cwd(), 'scripts/bedrock'),
 
   // 現在使用する LLM スクリプト (デフォルト: gemma4)
-  llmScript: process.env.GNOSIS_LLM_SCRIPT || path.resolve(process.cwd(), 'scripts/gemma4'),
+  llmScript:
+    process.env.GNOSIS_LLM_SCRIPT ||
+    path.resolve(process.cwd(), GNOSIS_CONSTANTS.LLM_SCRIPT_DEFAULT),
 
   // モックRetrieverを使用するかどうか
   mockRetriever: envBoolean(process.env.GNOSIS_MOCK_RETRIEVER, false),
@@ -135,17 +161,26 @@ export const config = {
   // 埋め込みベクトルの生成コマンド (フルパス)
   embedCommand:
     process.env.GNOSIS_EMBED_COMMAND ||
-    path.resolve(process.cwd(), 'services/embedding/.venv/bin/embed'),
-  embedTimeoutMs: Math.max(1, envNumber(process.env.GNOSIS_EMBED_TIMEOUT_MS, 30_000)),
+    path.resolve(process.cwd(), GNOSIS_CONSTANTS.EMBED_COMMAND_DEFAULT),
+  embedTimeoutMs: Math.max(
+    1,
+    envNumber(process.env.GNOSIS_EMBED_TIMEOUT_MS, GNOSIS_CONSTANTS.EMBED_TIMEOUT_MS_DEFAULT),
+  ),
 
   // Bun バイナリのパス
   bunCommand: process.env.GNOSIS_BUN_COMMAND || 'bun',
 
   // ベクトルの次元数
-  embeddingDimension: envNumber(process.env.GNOSIS_EMBEDDING_DIMENSION, 384),
+  embeddingDimension: envNumber(
+    process.env.GNOSIS_EMBEDDING_DIMENSION,
+    GNOSIS_CONSTANTS.EMBEDDING_DIMENSION_DEFAULT,
+  ),
 
   // 自動デデュープ（重複排除）の類似度閾値
-  dedupeThreshold: envNumber(process.env.GNOSIS_DEDUPE_THRESHOLD, 0.9),
+  dedupeThreshold: envNumber(
+    process.env.GNOSIS_DEDUPE_THRESHOLD,
+    GNOSIS_CONSTANTS.DEDUPE_THRESHOLD_DEFAULT,
+  ),
 
   // 各種ログのディレクトリパス
   claudeLogDir: process.env.GNOSIS_CLAUDE_LOG_DIR || '',
@@ -162,33 +197,75 @@ export const config = {
 
   knowflow: {
     llm: LlmClientConfigSchema.parse({
-      apiBaseUrl: process.env.LOCAL_LLM_API_BASE_URL ?? 'http://127.0.0.1:44448',
-      apiPath: process.env.LOCAL_LLM_API_PATH ?? '/v1/chat/completions',
+      apiBaseUrl:
+        process.env.LOCAL_LLM_API_BASE_URL ?? GNOSIS_CONSTANTS.LOCAL_LLM_API_BASE_URL_DEFAULT,
+      apiPath: process.env.LOCAL_LLM_API_PATH ?? GNOSIS_CONSTANTS.LOCAL_LLM_API_PATH_DEFAULT,
       apiKeyEnv: process.env.LOCAL_LLM_API_KEY_ENV ?? 'LOCAL_LLM_API_KEY',
-      model: process.env.LOCAL_LLM_MODEL ?? 'gemma-4-e4b-it',
+      model: process.env.LOCAL_LLM_MODEL ?? GNOSIS_CONSTANTS.LOCAL_LLM_MODEL_DEFAULT,
       temperature: envNumber(process.env.LOCAL_LLM_TEMPERATURE, 0),
-      timeoutMs: envNumber(process.env.LOCAL_LLM_TIMEOUT_MS, 180_000),
-      maxRetries: Math.max(1, envNumber(process.env.LOCAL_LLM_MAX_RETRIES, 2)),
-      retryDelayMs: Math.max(0, envNumber(process.env.LOCAL_LLM_RETRY_DELAY_MS, 300)),
-      enableCliFallback: envBoolean(process.env.LOCAL_LLM_ENABLE_CLI_FALLBACK, true),
+      timeoutMs: envNumber(
+        process.env.LOCAL_LLM_TIMEOUT_MS,
+        GNOSIS_CONSTANTS.LOCAL_LLM_TIMEOUT_MS_DEFAULT,
+      ),
+      maxRetries: Math.max(
+        1,
+        envNumber(
+          process.env.LOCAL_LLM_MAX_RETRIES,
+          GNOSIS_CONSTANTS.LOCAL_LLM_MAX_RETRIES_DEFAULT,
+        ),
+      ),
+      retryDelayMs: Math.max(
+        0,
+        envNumber(
+          process.env.LOCAL_LLM_RETRY_DELAY_MS,
+          GNOSIS_CONSTANTS.LOCAL_LLM_RETRY_DELAY_MS_DEFAULT,
+        ),
+      ),
+      enableCliFallback: envBoolean(
+        process.env.LOCAL_LLM_ENABLE_CLI_FALLBACK,
+        GNOSIS_CONSTANTS.LOCAL_LLM_ENABLE_CLI_FALLBACK_DEFAULT,
+      ),
       cliCommand:
         process.env.LOCAL_LLM_CLI_COMMAND ??
-        `${process.env.GNOSIS_LLM_SCRIPT || 'scripts/gemma4'} --prompt {{prompt}}`,
+        `${
+          process.env.GNOSIS_LLM_SCRIPT || GNOSIS_CONSTANTS.LLM_SCRIPT_DEFAULT
+        } --prompt {{prompt}}`,
       cliPromptMode: process.env.LOCAL_LLM_CLI_PROMPT_MODE === 'stdin' ? 'stdin' : 'arg',
       cliPromptPlaceholder: process.env.LOCAL_LLM_CLI_PROMPT_PLACEHOLDER ?? '{{prompt}}',
     }),
     budget: BudgetConfigSchema.parse({
-      userBudget: envNumber(process.env.USER_BUDGET, 12),
-      cronBudget: envNumber(process.env.CRON_BUDGET, 6),
-      cronRunBudget: envNumber(process.env.CRON_RUN_BUDGET, 30),
+      userBudget: envNumber(process.env.USER_BUDGET, GNOSIS_CONSTANTS.USER_BUDGET_DEFAULT),
+      cronBudget: envNumber(process.env.CRON_BUDGET, GNOSIS_CONSTANTS.CRON_BUDGET_DEFAULT),
+      cronRunBudget: envNumber(
+        process.env.CRON_RUN_BUDGET,
+        GNOSIS_CONSTANTS.CRON_RUN_BUDGET_DEFAULT,
+      ),
     }),
     worker: WorkerConfigSchema.parse({
-      taskTimeoutMs: envNumber(process.env.KNOWFLOW_WORKER_TASK_TIMEOUT_MS, 1_800_000),
-      pollIntervalMs: envNumber(process.env.KNOWFLOW_WORKER_POLL_INTERVAL_MS, 60_000),
-      postTaskDelayMs: envNumber(process.env.KNOWFLOW_WORKER_POST_TASK_DELAY_MS, 30_000),
-      maxConsecutiveErrors: envNumber(process.env.KNOWFLOW_WORKER_MAX_CONSECUTIVE_ERRORS, 5),
-      maxQueriesPerTask: envNumber(process.env.KNOWFLOW_WORKER_MAX_QUERIES_PER_TASK, 10),
-      cronRunWindowMs: envNumber(process.env.KNOWFLOW_WORKER_CRON_RUN_WINDOW_MS, 3_600_000),
+      taskTimeoutMs: envNumber(
+        process.env.KNOWFLOW_WORKER_TASK_TIMEOUT_MS,
+        GNOSIS_CONSTANTS.WORKER_TASK_TIMEOUT_MS_DEFAULT,
+      ),
+      pollIntervalMs: envNumber(
+        process.env.KNOWFLOW_WORKER_POLL_INTERVAL_MS,
+        GNOSIS_CONSTANTS.WORKER_POLL_INTERVAL_MS_DEFAULT,
+      ),
+      postTaskDelayMs: envNumber(
+        process.env.KNOWFLOW_WORKER_POST_TASK_DELAY_MS,
+        GNOSIS_CONSTANTS.WORKER_POST_TASK_DELAY_MS_DEFAULT,
+      ),
+      maxConsecutiveErrors: envNumber(
+        process.env.KNOWFLOW_WORKER_MAX_CONSECUTIVE_ERRORS,
+        GNOSIS_CONSTANTS.WORKER_MAX_CONSECUTIVE_ERRORS_DEFAULT,
+      ),
+      maxQueriesPerTask: envNumber(
+        process.env.KNOWFLOW_WORKER_MAX_QUERIES_PER_TASK,
+        GNOSIS_CONSTANTS.WORKER_MAX_QUERIES_PER_TASK_DEFAULT,
+      ),
+      cronRunWindowMs: envNumber(
+        process.env.KNOWFLOW_WORKER_CRON_RUN_WINDOW_MS,
+        GNOSIS_CONSTANTS.WORKER_CRON_RUN_WINDOW_MS_DEFAULT,
+      ),
     }),
     keywordCron: KeywordCronConfigSchema.parse({
       enabled: envBoolean(process.env.KNOWFLOW_KEYWORD_CRON_ENABLED, true),
@@ -207,40 +284,97 @@ export const config = {
       ),
       maxRetries: Math.max(0, envNumber(process.env.KNOWFLOW_KEYWORD_CRON_MAX_RETRIES, 2)),
     }),
+    frontier: FrontierConfigSchema.parse({
+      enabled: envBoolean(process.env.KNOWFLOW_FRONTIER_ENABLED, true),
+      llmEnabled: envBoolean(process.env.KNOWFLOW_FRONTIER_LLM_ENABLED, true),
+      maxTopics: Math.max(1, envNumber(process.env.KNOWFLOW_FRONTIER_MAX_TOPICS, 5)),
+      scanLimit: Math.max(1, envNumber(process.env.KNOWFLOW_FRONTIER_SCAN_LIMIT, 300)),
+      maxPerCommunity: Math.max(1, envNumber(process.env.KNOWFLOW_FRONTIER_MAX_PER_COMMUNITY, 2)),
+    }),
     healthCheck: {
-      timeoutMs: envNumber(process.env.KNOWFLOW_HEALTH_CHECK_TIMEOUT_MS, 5_000),
+      timeoutMs: envNumber(
+        process.env.KNOWFLOW_HEALTH_CHECK_TIMEOUT_MS,
+        GNOSIS_CONSTANTS.HEALTH_CHECK_TIMEOUT_MS_DEFAULT,
+      ),
     },
   },
 
   graph: {
-    similarityThreshold: envNumber(process.env.GNOSIS_GRAPH_SIMILARITY_THRESHOLD, 0.8),
-    maxPathHops: envNumber(process.env.GNOSIS_GRAPH_MAX_PATH_HOPS, 5),
+    similarityThreshold: envNumber(
+      process.env.GNOSIS_GRAPH_SIMILARITY_THRESHOLD,
+      GNOSIS_CONSTANTS.GRAPH_SIMILARITY_THRESHOLD_DEFAULT,
+    ),
+    maxPathHops: envNumber(
+      process.env.GNOSIS_GRAPH_MAX_PATH_HOPS,
+      GNOSIS_CONSTANTS.GRAPH_MAX_PATH_HOPS_DEFAULT,
+    ),
   },
 
   memory: {
-    retries: envNumber(process.env.GNOSIS_MEMORY_RETRIES, 3),
-    retryWaitMultiplier: envNumber(process.env.GNOSIS_MEMORY_RETRY_WAIT_MULTIPLIER, 1000),
+    retries: envNumber(process.env.GNOSIS_MEMORY_RETRIES, GNOSIS_CONSTANTS.MEMORY_RETRIES_DEFAULT),
+    retryWaitMultiplier: envNumber(
+      process.env.GNOSIS_MEMORY_RETRY_WAIT_MULTIPLIER,
+      GNOSIS_CONSTANTS.MEMORY_RETRY_WAIT_MULTIPLIER_DEFAULT,
+    ),
   },
 
   llm: {
-    maxBuffer: envNumber(process.env.GNOSIS_LLM_MAX_BUFFER_BYTES, 10 * 1024 * 1024),
-    defaultTimeoutMs: envNumber(process.env.GNOSIS_LLM_DEFAULT_TIMEOUT_MS, 45_000),
-    concurrencyLimit: envNumber(process.env.GNOSIS_LLM_CONCURRENCY_LIMIT, 3),
+    maxBuffer: envNumber(
+      process.env.GNOSIS_LLM_MAX_BUFFER_BYTES,
+      GNOSIS_CONSTANTS.LLM_MAX_BUFFER_BYTES_DEFAULT,
+    ),
+    defaultTimeoutMs: envNumber(
+      process.env.GNOSIS_LLM_DEFAULT_TIMEOUT_MS,
+      GNOSIS_CONSTANTS.LLM_DEFAULT_TIMEOUT_MS_DEFAULT,
+    ),
+    concurrencyLimit: envNumber(
+      process.env.GNOSIS_LLM_CONCURRENCY_LIMIT,
+      GNOSIS_CONSTANTS.LLM_CONCURRENCY_LIMIT_DEFAULT,
+    ),
   },
 
   memoryLoop: MemoryLoopConfigSchema.parse({
-    allowCloud: envBoolean(process.env.MEMORY_LOOP_ALLOW_CLOUD, true),
+    allowCloud: envBoolean(
+      process.env.MEMORY_LOOP_ALLOW_CLOUD,
+      GNOSIS_CONSTANTS.MEMORY_LOOP_ALLOW_CLOUD_DEFAULT,
+    ),
     cloudProvider: process.env.MEMORY_LOOP_CLOUD_PROVIDER === 'bedrock' ? 'bedrock' : 'openai',
-    defaultAlias: process.env.MEMORY_LOOP_DEFAULT_ALIAS === 'bonsai' ? 'bonsai' : 'gemma4',
-    lightAlias: process.env.MEMORY_LOOP_LIGHT_ALIAS === 'gemma4' ? 'gemma4' : 'bonsai',
-    intervalMs: envNumber(process.env.MEMORY_LOOP_INTERVAL_MS, 300_000),
-    maxLocalRetries: Math.max(1, envNumber(process.env.MEMORY_LOOP_MAX_LOCAL_RETRIES, 1)),
-    minQualityScore: envNumber(process.env.MEMORY_LOOP_MIN_QUALITY_SCORE, 0.5),
+    defaultAlias: memoryLoopAlias(
+      process.env.MEMORY_LOOP_DEFAULT_ALIAS,
+      GNOSIS_CONSTANTS.MEMORY_LOOP_DEFAULT_ALIAS_DEFAULT,
+      'gemma4',
+    ),
+    lightAlias: memoryLoopAlias(
+      process.env.MEMORY_LOOP_LIGHT_ALIAS,
+      GNOSIS_CONSTANTS.MEMORY_LOOP_LIGHT_ALIAS_DEFAULT,
+      'bonsai',
+    ),
+    intervalMs: envNumber(
+      process.env.MEMORY_LOOP_INTERVAL_MS,
+      GNOSIS_CONSTANTS.MEMORY_LOOP_INTERVAL_MS_DEFAULT,
+    ),
+    maxLocalRetries: Math.max(
+      1,
+      envNumber(
+        process.env.MEMORY_LOOP_MAX_LOCAL_RETRIES,
+        GNOSIS_CONSTANTS.MEMORY_LOOP_MAX_LOCAL_RETRIES_DEFAULT,
+      ),
+    ),
+    minQualityScore: envNumber(
+      process.env.MEMORY_LOOP_MIN_QUALITY_SCORE,
+      GNOSIS_CONSTANTS.MEMORY_LOOP_MIN_QUALITY_SCORE_DEFAULT,
+    ),
     idleBackoffMultiplier: Math.max(
       1,
-      envNumber(process.env.MEMORY_LOOP_IDLE_BACKOFF_MULTIPLIER, 2),
+      envNumber(
+        process.env.MEMORY_LOOP_IDLE_BACKOFF_MULTIPLIER,
+        GNOSIS_CONSTANTS.MEMORY_LOOP_IDLE_BACKOFF_MULTIPLIER_DEFAULT,
+      ),
     ),
-    maxIntervalMs: envNumber(process.env.MEMORY_LOOP_MAX_INTERVAL_MS, 900_000),
+    maxIntervalMs: envNumber(
+      process.env.MEMORY_LOOP_MAX_INTERVAL_MS,
+      GNOSIS_CONSTANTS.MEMORY_LOOP_MAX_INTERVAL_MS_DEFAULT,
+    ),
     enableDailyAudit: envBoolean(process.env.MEMORY_LOOP_ENABLE_DAILY_AUDIT, true),
     enableWeeklyAudit: envBoolean(process.env.MEMORY_LOOP_ENABLE_WEEKLY_AUDIT, true),
   }),
@@ -260,21 +394,36 @@ export const config = {
   },
 
   hooks: HookConfigSchema.parse({
-    enabled: envBoolean(process.env.GNOSIS_HOOKS_ENABLED, false),
+    enabled: envBoolean(process.env.GNOSIS_HOOKS_ENABLED, GNOSIS_CONSTANTS.HOOKS_ENABLED_DEFAULT),
     rulesDir: process.env.GNOSIS_HOOKS_RULES_DIR || path.resolve(process.cwd(), 'src/hooks/rules'),
     fileChangedDebounceMs: Math.max(
       1,
-      envNumber(process.env.GNOSIS_HOOK_FILE_CHANGED_DEBOUNCE_MS, 10_000),
+      envNumber(
+        process.env.GNOSIS_HOOK_FILE_CHANGED_DEBOUNCE_MS,
+        GNOSIS_CONSTANTS.HOOK_FILE_CHANGED_DEBOUNCE_MS_DEFAULT,
+      ),
     ),
     actionTimeoutSecDefault: Math.max(
       1,
-      envNumber(process.env.GNOSIS_HOOK_ACTION_TIMEOUT_SEC_DEFAULT, 120),
+      envNumber(
+        process.env.GNOSIS_HOOK_ACTION_TIMEOUT_SEC_DEFAULT,
+        GNOSIS_CONSTANTS.HOOK_ACTION_TIMEOUT_SEC_DEFAULT_DEFAULT,
+      ),
     ),
     actionTimeoutSecMax: Math.max(
       1,
-      envNumber(process.env.GNOSIS_HOOK_ACTION_TIMEOUT_SEC_MAX, 900),
+      envNumber(
+        process.env.GNOSIS_HOOK_ACTION_TIMEOUT_SEC_MAX,
+        GNOSIS_CONSTANTS.HOOK_ACTION_TIMEOUT_SEC_MAX_DEFAULT,
+      ),
     ),
-    executionCacheSize: Math.max(1, envNumber(process.env.GNOSIS_HOOK_EXECUTION_CACHE_SIZE, 2_000)),
+    executionCacheSize: Math.max(
+      1,
+      envNumber(
+        process.env.GNOSIS_HOOK_EXECUTION_CACHE_SIZE,
+        GNOSIS_CONSTANTS.HOOK_EXECUTION_CACHE_SIZE_DEFAULT,
+      ),
+    ),
   }),
 
   guidance: {
@@ -288,17 +437,32 @@ export const config = {
       process.env.GUIDANCE_FAILED_DIR || path.resolve(process.cwd(), 'imports/guidance/failed'),
     maxFilesPerZip: Math.max(1, envNumber(process.env.GUIDANCE_MAX_FILES_PER_ZIP, 500)),
     maxZipSizeBytes: Math.max(1, envNumber(process.env.GUIDANCE_MAX_ZIP_SIZE_BYTES, 50_000_000)),
-    maxChunkChars: Math.max(200, envNumber(process.env.GUIDANCE_MAX_CHUNK_CHARS, 2000)),
-    maxFileChars: Math.max(200, envNumber(process.env.GUIDANCE_MAX_FILE_CHARS, 120_000)),
+    maxChunkChars: Math.max(
+      200,
+      envNumber(
+        process.env.GUIDANCE_MAX_CHUNK_CHARS,
+        GNOSIS_CONSTANTS.GUIDANCE_MAX_CHUNK_CHARS_DEFAULT,
+      ),
+    ),
+    maxFileChars: Math.max(
+      200,
+      envNumber(
+        process.env.GUIDANCE_MAX_FILE_CHARS,
+        GNOSIS_CONSTANTS.GUIDANCE_MAX_FILE_CHARS_DEFAULT,
+      ),
+    ),
     alwaysLimit: Math.max(1, envNumber(process.env.GUIDANCE_ALWAYS_LIMIT, 4)),
     onDemandLimit: Math.max(1, envNumber(process.env.GUIDANCE_ON_DEMAND_LIMIT, 5)),
     maxPromptChars: Math.max(200, envNumber(process.env.GUIDANCE_MAX_PROMPT_CHARS, 3000)),
-    minSimilarity: envNumber(process.env.GUIDANCE_MIN_SIMILARITY, 0.72),
+    minSimilarity: envNumber(
+      process.env.GUIDANCE_MIN_SIMILARITY,
+      GNOSIS_CONSTANTS.GUIDANCE_MIN_SIMILARITY_DEFAULT,
+    ),
     enabled: envBoolean(process.env.GUIDANCE_ENABLED, true),
     project: process.env.GUIDANCE_PROJECT,
     priorityHigh: 100,
     priorityMid: 80,
     priorityLow: 50,
-    maxZips: envNumber(process.env.GUIDANCE_MAX_ZIPS, 1000),
+    maxZips: envNumber(process.env.GUIDANCE_MAX_ZIPS, GNOSIS_CONSTANTS.GUIDANCE_MAX_ZIPS_DEFAULT),
   },
 };

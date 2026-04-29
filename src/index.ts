@@ -73,10 +73,11 @@ const suppressExistingInstances = () => {
     cwd: process.cwd(),
     keep: 'newest',
     currentPid: process.pid,
+    terminateDuplicates: false,
   });
   const actionable = findings.filter((finding) => finding.action !== 'keep');
   if (actionable.length > 0) {
-    console.error('[Main] Suppressed duplicate/stale MCP process entries:');
+    console.error('[Main] Cleaned stale MCP process registry entries:');
     console.error(renderProcessDedupeFindings(actionable));
   }
 };

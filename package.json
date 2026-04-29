@@ -47,6 +47,7 @@
     "monitor:detail": "bun run src/scripts/monitor-detail.ts --json",
     "monitor:dev": "bun run --cwd apps/monitor tauri:dev",
     "review": "bun run src/scripts/review.ts",
+    "failure-firewall": "bun run src/scripts/failure-firewall.ts",
     "semantic:mcp": "bun run src/scripts/semanticCodeMcpServer.ts",
     "gemma4": "./scripts/gemma4",
     "qwen": "./scripts/qwen",
