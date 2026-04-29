@@ -24,6 +24,13 @@ if (import.meta.main) {
 // ---------------------------------------------------------------------------
 let alwaysCache: { content: string; expiresAt: number } | null = null;
 const ALWAYS_CACHE_TTL_MS = 5 * 60 * 1000;
+const FULL_ALWAYS_CONTEXT_TOOLS = new Set(['initial_instructions']);
+const SKIP_ALWAYS_CONTEXT_TOOLS = new Set(['search_knowledge', 'review_task']);
+
+export function shouldInjectAlwaysContext(toolName: string): boolean {
+  if (FULL_ALWAYS_CONTEXT_TOOLS.has(toolName)) return true;
+  return !SKIP_ALWAYS_CONTEXT_TOOLS.has(toolName);
+}
 
 async function getAlwaysContext(): Promise<string> {
   const now = Date.now();
@@ -91,8 +98,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
   try {
     const result = await entry.handler(args);
-    // scope:'always' エンティティを各ツール応答の先頭に注入
-    const alwaysCtx = await getAlwaysContext();
+    // scope:'always' is session-level context. Do not reattach it to task-specific retrieval output.
+    const alwaysCtx = shouldInjectAlwaysContext(name) ? await getAlwaysContext() : '';
     if (alwaysCtx && result.content && Array.isArray(result.content)) {
       return {
         ...result,

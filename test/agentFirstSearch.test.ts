@@ -5,6 +5,31 @@ let selectCount = 0;
 
 const entityRows = [
   {
+    id: 'rule/always',
+    type: 'rule',
+    name: 'Always rule',
+    description: 'Session-level guidance that should not be repeated by demand lookup.',
+    embedding: null,
+    communityId: null,
+    metadata: {
+      category: 'mcp',
+      appliesWhen: {
+        intents: ['edit'],
+        changeTypes: ['mcp'],
+        fileGlobs: ['src/mcp/**'],
+        technologies: ['typescript'],
+        keywords: ['rule lookup'],
+      },
+    },
+    referenceCount: 99,
+    lastReferencedAt: now,
+    createdAt: now,
+    confidence: 1,
+    provenance: 'test',
+    freshness: now,
+    scope: 'always',
+  },
+  {
     id: 'rule/frontend',
     type: 'rule',
     name: 'Frontend rule',
@@ -102,6 +127,7 @@ describe('searchKnowledgeV2 task-context applicability', () => {
     expect(selectCount).toBe(2);
     expect(result.taskContext).toBeDefined();
     expect(result.flatTopHits[0]?.entityId).toBe('rule/mcp');
+    expect(result.flatTopHits.map((hit) => hit.entityId)).not.toContain('rule/always');
     expect(result.flatTopHits[0]?.applicabilityScore).toBeGreaterThan(0.8);
     expect(result.taskContext?.changeTypes).toContain('mcp');
   });

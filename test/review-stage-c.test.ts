@@ -141,14 +141,19 @@ describe('review stage C', () => {
       },
     } as never;
 
+    let alwaysCalled = false;
     const result = await retrieveGuidance('repo', ['auth'], 'TypeScript', 'Next.js', {
-      getAlwaysOnGuidance: async () => [rows[0]],
+      getAlwaysOnGuidance: async () => {
+        alwaysCalled = true;
+        return [rows[0]];
+      },
       getOnDemandGuidance: async () => [rows[1]],
       database,
       searchMemory: async () => [], // Add mock for retrieving benchmarks
     });
 
-    expect(result.principles.map((item) => item.id)).toContain('guide-1');
+    expect(alwaysCalled).toBe(false);
+    expect(result.principles.map((item) => item.id)).not.toContain('guide-1');
     expect(result.heuristics).toHaveLength(0);
   });
 

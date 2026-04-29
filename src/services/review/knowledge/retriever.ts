@@ -1,7 +1,8 @@
 import { eq } from 'drizzle-orm';
 import { db } from '../../../db/index.js';
 import { reviewOutcomes } from '../../../db/schema.js';
-import { getAlwaysOnGuidance, getOnDemandGuidance } from '../../guidance/search.js';
+import { getOnDemandGuidance } from '../../guidance/search.js';
+import type { getAlwaysOnGuidance } from '../../guidance/search.js';
 import { searchMemory } from '../../memory.js';
 import type { GuidanceItem } from '../types.js';
 
@@ -209,7 +210,6 @@ export async function retrieveGuidance(
   framework?: string,
   deps: GuidanceRetrievalDependencies = {},
 ): Promise<GuidanceRetrievalResult> {
-  const getAlways = deps.getAlwaysOnGuidance ?? getAlwaysOnGuidance;
   const getDemand = deps.getOnDemandGuidance ?? getOnDemandGuidance;
   const database = deps.database ?? db;
 
@@ -217,13 +217,12 @@ export async function retrieveGuidance(
     .join(' ')
     .trim();
 
-  const [alwaysOn, onDemand, benchmarks] = await Promise.all([
-    getAlways().catch(() => []),
+  const [onDemand, benchmarks] = await Promise.all([
     getDemand(signalQuery).catch(() => []),
     retrieveSuccessBenchmarks(projectKey, riskSignals, language, deps),
   ]);
 
-  const allRows = [...alwaysOn, ...onDemand] as GuidanceRow[];
+  const allRows = onDemand as GuidanceRow[];
   const candidates = classifyRows(allRows);
   const archiveKeys = candidates
     .map((item) => item.id)

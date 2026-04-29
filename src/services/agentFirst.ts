@@ -880,7 +880,10 @@ export async function buildActivateProjectResult(projectRoot: string, mode?: str
 
   const normalizedRows = rows
     .map(normalizeEntity)
-    .filter((item) => item.status !== 'deprecated' && item.status !== 'rejected');
+    .filter(
+      (item) =>
+        item.status !== 'deprecated' && item.status !== 'rejected' && item.scope !== 'always',
+    );
   const byKind: Record<string, number> = {};
   const byCategory: Record<string, number> = {};
   for (const item of normalizedRows) {
@@ -1025,7 +1028,10 @@ export async function searchKnowledgeV2(input: SearchKnowledgeV2Input) {
   }
   const normalizedRows = rows
     .map(normalizeEntity)
-    .filter((item) => item.status !== 'deprecated' && item.status !== 'rejected');
+    .filter(
+      (item) =>
+        item.status !== 'deprecated' && item.status !== 'rejected' && item.scope !== 'always',
+    );
   const topLevelMode = input.filterMode ?? 'or';
   const explicitKinds = input.kinds ?? [];
   const explicitCategories = input.categories ?? [];

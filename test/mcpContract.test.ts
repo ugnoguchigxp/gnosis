@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { server } from '../src/mcp/server';
+import { server, shouldInjectAlwaysContext } from '../src/mcp/server';
 
 type RequestHandler = (request: Record<string, unknown>) => Promise<Record<string, unknown>>;
 
@@ -61,5 +61,12 @@ describe('mcp contract', () => {
     })) as { isError?: boolean; content?: Array<{ text?: string }> };
     expect(invalid.isError).toBe(true);
     expect(invalid.content?.[0]?.text).toContain('title');
+  });
+
+  it('does not inject always context into task-specific retrieval tools', () => {
+    expect(shouldInjectAlwaysContext('initial_instructions')).toBe(true);
+    expect(shouldInjectAlwaysContext('search_knowledge')).toBe(false);
+    expect(shouldInjectAlwaysContext('review_task')).toBe(false);
+    expect(shouldInjectAlwaysContext('activate_project')).toBe(true);
   });
 });

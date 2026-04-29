@@ -62,9 +62,12 @@ export async function getOnDemandGuidance(
   return results;
 }
 
-export async function getGuidanceContext(query: string): Promise<string> {
+export async function getGuidanceContext(
+  query: string,
+  options: { includeAlways?: boolean } = {},
+): Promise<string> {
   const [always, onDemand] = await Promise.all([
-    getAlwaysOnGuidance().catch(() => []),
+    options.includeAlways ? getAlwaysOnGuidance().catch(() => []) : Promise.resolve([]),
     getOnDemandGuidance(query).catch(() => []),
   ]);
 
