@@ -3,7 +3,7 @@
 
 UPDATE "vibe_memories"
 SET "memory_type" = 'raw'
-WHERE "memory_type" IS NULL OR "memory_type" NOT IN ('raw', 'episode');
+WHERE "memory_type" IS NULL OR "memory_type" NOT IN ('raw');
 --> statement-breakpoint
 
 ALTER TABLE "vibe_memories"
@@ -13,7 +13,7 @@ ALTER TABLE "vibe_memories"
   DROP CONSTRAINT IF EXISTS "vibe_memories_memory_type_check";
 ALTER TABLE "vibe_memories"
   ADD CONSTRAINT "vibe_memories_memory_type_check"
-  CHECK ("memory_type" IN ('raw', 'episode'));
+  CHECK ("memory_type" IN ('raw'));
 --> statement-breakpoint
 
 UPDATE "review_cases"

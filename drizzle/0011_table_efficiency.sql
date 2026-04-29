@@ -1,7 +1,7 @@
 -- 0011_table_efficiency.sql
 -- Non-destructive performance tuning for frequently used query paths.
 
--- consolidateEpisodes/session-scoped raw memory scan
+-- session-scoped raw memory scan
 CREATE INDEX IF NOT EXISTS "vibe_memories_session_raw_pending_idx"
   ON "vibe_memories" ("session_id", "source_task", "created_at")
   WHERE "memory_type" = 'raw' AND "is_synthesized" = false;

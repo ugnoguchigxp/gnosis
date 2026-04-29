@@ -1543,12 +1543,6 @@
           "notNull": true,
           "default": "'raw'"
         },
-        "episode_at": {
-          "name": "episode_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
-        },
         "source_task": {
           "name": "source_task",
           "type": "text",
@@ -1717,7 +1711,7 @@
       "checkConstraints": {
         "vibe_memories_memory_type_check": {
           "name": "vibe_memories_memory_type_check",
-          "value": "\"vibe_memories\".\"memory_type\" IN ('raw', 'episode')"
+          "value": "\"vibe_memories\".\"memory_type\" IN ('raw')"
         }
       },
       "isRLSEnabled": false

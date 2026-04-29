@@ -58,12 +58,62 @@ impl Default for EvalSnapshot {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationSnapshot {
+    pub automation_gate: bool,
+    pub background_worker_gate: bool,
+    pub local_llm_configured: bool,
+    pub local_llm_api_base_url: Option<String>,
+}
+
+impl Default for AutomationSnapshot {
+    fn default() -> Self {
+        Self {
+            automation_gate: false,
+            background_worker_gate: false,
+            local_llm_configured: false,
+            local_llm_api_base_url: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowFlowSnapshot {
+    pub status: String,
+    pub last_worker_ts: Option<i64>,
+    pub last_worker_summary: Option<String>,
+    pub last_seed_ts: Option<i64>,
+    pub last_seed_summary: Option<String>,
+    pub last_frontier_seed_ts: Option<i64>,
+    pub last_keyword_seed_ts: Option<i64>,
+    pub last_failure_ts: Option<i64>,
+}
+
+impl Default for KnowFlowSnapshot {
+    fn default() -> Self {
+        Self {
+            status: "unknown".to_string(),
+            last_worker_ts: None,
+            last_worker_summary: None,
+            last_seed_ts: None,
+            last_seed_summary: None,
+            last_frontier_seed_ts: None,
+            last_keyword_seed_ts: None,
+            last_failure_ts: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct MonitorSnapshotData {
     pub queue: QueueSnapshot,
     pub worker: WorkerSnapshot,
     pub eval: EvalSnapshot,
+    pub automation: AutomationSnapshot,
+    pub knowflow: KnowFlowSnapshot,
     pub task_index: Vec<TaskIndexEntry>,
 }
 
@@ -73,6 +123,8 @@ impl Default for MonitorSnapshotData {
             queue: QueueSnapshot::default(),
             worker: WorkerSnapshot::default(),
             eval: EvalSnapshot::default(),
+            automation: AutomationSnapshot::default(),
+            knowflow: KnowFlowSnapshot::default(),
             task_index: Vec::new(),
         }
     }
@@ -138,6 +190,10 @@ pub struct SnapshotCliPayload {
     pub worker: WorkerSnapshot,
     pub eval: EvalSnapshot,
     #[serde(default)]
+    pub automation: AutomationSnapshot,
+    #[serde(default)]
+    pub knowflow: KnowFlowSnapshot,
+    #[serde(default)]
     pub task_index: Vec<TaskIndexEntry>,
 }
 
@@ -149,6 +205,8 @@ impl From<SnapshotCliPayload> for SnapshotEnvelope {
                 queue: value.queue,
                 worker: value.worker,
                 eval: value.eval,
+                automation: value.automation,
+                knowflow: value.knowflow,
                 task_index: value.task_index,
             },
         }

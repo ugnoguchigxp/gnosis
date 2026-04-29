@@ -24,6 +24,8 @@ Gnosis は環境変数を中心に構成されています。一部の機能（K
 | `GNOSIS_BUN_COMMAND` | `bun` | 実行に使用する Bun バイナリのパス |
 | `GNOSIS_LLM_TIMEOUT_MS` | `90000` | LLM 処理の標準タイムアウト |
 | `GNOSIS_DOCTOR_REQUIRE_LOCAL_LLM` | `false` | `bun run doctor` で local-llm API 未起動を失敗扱いにするか |
+| `GNOSIS_ENABLE_AUTOMATION` | `true` | LaunchAgent / background manager などの自動処理を実行するか。停止したい場合だけ `false` を指定 |
+| `GNOSIS_BACKGROUND_WORKER_ENABLED` | `true` | background worker daemon の常駐処理を実行するか。停止したい場合だけ `false` を指定 |
 
 ### MCP クライアント互換
 
@@ -71,6 +73,11 @@ Gnosis は環境変数を中心に構成されています。一部の機能（K
 | :--- | :--- | :--- |
 | `KNOWFLOW_WORKER_POLL_INTERVAL_MS` | `60000` | タスクキューの監視間隔 |
 | `KNOWFLOW_WORKER_MAX_CONSECUTIVE_ERRORS` | `5` | 連続失敗時の自動停止閾値 |
+| `KNOWFLOW_FRONTIER_ENABLED` | `true` | 既存 entity からの frontier 自動投入を有効にするか |
+| `KNOWFLOW_FRONTIER_LLM_ENABLED` | `true` | frontier 候補の LLM 再順位付けを有効にするか |
+| `KNOWFLOW_FRONTIER_MAX_TOPICS` | `3` | 1 tick で queue に投入する frontier topic の最大件数 |
+| `KNOWFLOW_FRONTIER_SCAN_LIMIT` | `50` | frontier 候補生成時に見る entity 件数 |
+| `KNOWFLOW_FRONTIER_MAX_PER_COMMUNITY` | `1` | 同一 community から選ぶ frontier topic の最大件数 |
 | `USER_BUDGET` | `12` | ユーザー投入タスクの検索最大数 |
 | `CRON_BUDGET` | `6` | 定期実行タスクの検索最大数 |
 

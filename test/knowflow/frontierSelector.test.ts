@@ -73,13 +73,19 @@ describe('KnowFlow frontier selector', () => {
       degraded: true,
       output: { selected: [] },
     }));
+    const onDegraded = mock();
     const candidates = [
       candidate({ entityId: 'rule/first', score: 0.7, deterministicScore: 0.7 }),
       candidate({ entityId: 'risk/second', score: 0.6, deterministicScore: 0.6 }),
     ];
 
-    const reranked = await rerankFrontierCandidatesWithLlm(candidates, { limit: 2, runLlmTask });
+    const reranked = await rerankFrontierCandidatesWithLlm(candidates, {
+      limit: 2,
+      runLlmTask,
+      onDegraded,
+    });
 
     expect(reranked).toEqual(candidates);
+    expect(onDegraded).toHaveBeenCalledWith('llm_degraded');
   });
 });

@@ -19,6 +19,11 @@
     <string>{{PROJECT_ROOT}}/logs/report.log</string>
     <key>RunAtLoad</key>
     <false/>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>GNOSIS_ENABLE_AUTOMATION</key>
+        <string>true</string>
+    </dict>
 
 </dict>
 </plist>

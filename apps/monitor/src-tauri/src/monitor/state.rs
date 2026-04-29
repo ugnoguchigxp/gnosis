@@ -15,8 +15,8 @@ pub struct MonitorSharedState {
 #[cfg(test)]
 mod tests {
     use crate::monitor::models::{
-        EvalSnapshot, MonitorSnapshotData, QueueSnapshot, SnapshotEnvelope, TaskIndexEntry,
-        TimelineEvent, WorkerSnapshot,
+        AutomationSnapshot, EvalSnapshot, KnowFlowSnapshot, MonitorSnapshotData, QueueSnapshot,
+        SnapshotEnvelope, TaskIndexEntry, TimelineEvent, WorkerSnapshot,
     };
 
     use super::MonitorSharedState;
@@ -33,6 +33,8 @@ mod tests {
                 },
                 worker: WorkerSnapshot::default(),
                 eval: EvalSnapshot::default(),
+                automation: AutomationSnapshot::default(),
+                knowflow: KnowFlowSnapshot::default(),
                 task_index: vec![TaskIndexEntry {
                     task_id: "task-1".to_string(),
                     topic: Some("topic".to_string()),

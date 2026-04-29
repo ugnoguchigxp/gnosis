@@ -1,5 +1,6 @@
 import { mkdir, rename } from 'node:fs/promises';
-import { config } from '../config.js';
+import { config, envBoolean } from '../config.js';
+import { GNOSIS_CONSTANTS } from '../constants.js';
 import { importGuidanceArchives } from '../services/guidance/index.js';
 
 type CliArgs = {
@@ -31,7 +32,11 @@ const parseArgs = (argv: string[]): CliArgs => {
 };
 
 async function main() {
-  if (process.env.GNOSIS_ENABLE_AUTOMATION !== 'true') {
+  const automationEnabled = envBoolean(
+    process.env.GNOSIS_ENABLE_AUTOMATION,
+    GNOSIS_CONSTANTS.AUTOMATION_ENABLED_DEFAULT,
+  );
+  if (!automationEnabled) {
     console.log('[import-guidance] Automation is OFF. Skipping scheduled import.');
     process.exit(0);
   }

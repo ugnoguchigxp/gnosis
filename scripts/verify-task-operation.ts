@@ -12,6 +12,8 @@ const colors = {
   bold: '\x1b[1m',
 };
 
+const COMMAND_TIMEOUT_MS = 120_000;
+
 function log(message: string, color = colors.reset) {
   console.log(`${color}${message}${colors.reset}`);
 }
@@ -20,6 +22,7 @@ function runCommand(command: string, args: string[]) {
   log(`\n> Running: ${command} ${args.join(' ')}`, colors.cyan);
   const result = spawnSync(command, args, {
     encoding: 'utf-8',
+    timeout: COMMAND_TIMEOUT_MS,
     env: {
       ...process.env,
       GNOSIS_LLM_CONCURRENCY_LIMIT: '3',
@@ -76,6 +79,7 @@ function getLatestLogFile() {
 
 async function verify() {
   log('=== Gnosis Background Task Operation Verification ===', colors.bold + colors.blue);
+  let hasHardFailure = false;
 
   // 0. Cleanup
   cleanLocks();
@@ -94,71 +98,66 @@ async function verify() {
     log('✓ KnowFlow task processed successfully.', colors.green);
   } else {
     log('! KnowFlow task skipped or failed (Queue might be empty).', colors.yellow);
+    if (kfResult.error) log(kfResult.error.message, colors.red);
     if (kfResult.stderr) log(kfResult.stderr.trim(), colors.red);
   }
 
   const kfLog = getLatestLogFile();
   if (kfLog) log(`  Details: ${kfLog}`, colors.blue);
 
-  // 2. Episode verification
-  log('\n[2/2] Verifying Episode Consolidation...', colors.bold);
+  // 2. Monitor snapshot verification
+  log('\n[2/2] Verifying Monitor Snapshot...', colors.bold);
+  const snapshotResult = runCommand('bun', ['run', 'src/scripts/monitor-snapshot.ts', '--json']);
 
-  // Create a temporary raw memory to ensure we have something to consolidate
-  // Create multiple raw memories to ensure we have enough to consolidate (minRawCount=5)
-  log('> Registering 5 test memories for session...', colors.cyan);
-  const baseSessionId = `manual-reg-${Date.now()}`;
-  let registeredCount = 0;
-  for (let i = 1; i <= 5; i++) {
-    const regResult = runCommand('bun', [
-      'run',
-      'src/scripts/monitor-episodes.ts',
-      'register',
-      `Verification test memory ${i}`,
-      baseSessionId,
-    ]);
-    if (regResult.status === 0) {
-      registeredCount++;
-    } else {
-      log(`! Registration failed for memory ${i}`, colors.red);
-      if (regResult.stderr) log(regResult.stderr, colors.red);
-      if (regResult.stdout) log(regResult.stdout, colors.cyan);
-    }
-  }
-
-  if (registeredCount >= 5) {
-    const sessionId = baseSessionId;
-    log(`  Registered 5 memories for session: ${sessionId}`, colors.cyan);
-    log(
-      `\n> Running: bun run src/scripts/monitor-episodes.ts consolidate ${sessionId} --strict --verbose`,
-      colors.cyan,
-    );
-
-    const conResult = runCommand('bun', [
-      'run',
-      'src/scripts/monitor-episodes.ts',
-      'consolidate',
-      sessionId,
-      '--strict',
-      '--verbose',
-    ]);
-
-    if (conResult.status === 0) {
-      log('✓ Episode consolidated successfully.', colors.green);
-    } else {
-      log('! Episode consolidation failed.', colors.red);
-      if (conResult.stderr) log(conResult.stderr.trim(), colors.red);
-      if (conResult.stdout) log(conResult.stdout.trim(), colors.cyan);
-    }
+  if (snapshotResult.status !== 0) {
+    hasHardFailure = true;
+    log('! Monitor snapshot failed.', colors.red);
+    if (snapshotResult.error) log(snapshotResult.error.message, colors.red);
+    if (snapshotResult.stderr) log(snapshotResult.stderr.trim(), colors.red);
+    if (snapshotResult.stdout) log(snapshotResult.stdout.trim(), colors.cyan);
   } else {
-    log('! Failed to register test raw memories.', colors.red);
-  }
+    try {
+      const snapshot = JSON.parse(snapshotResult.stdout);
+      const queue = snapshot.queue ?? {};
+      const automation = snapshot.automation ?? {};
+      const knowflow = snapshot.knowflow ?? {};
 
-  const epLog = getLatestLogFile();
-  if (epLog) log(`  Details: ${epLog}`, colors.blue);
+      log(
+        `  Queue: pending=${queue.pending ?? 0}, running=${queue.running ?? 0}, deferred=${
+          queue.deferred ?? 0
+        }, failed=${queue.failed ?? 0}`,
+        colors.blue,
+      );
+      log(
+        `  Gates: automation=${Boolean(automation.automationGate)}, backgroundWorker=${Boolean(
+          automation.backgroundWorkerGate,
+        )}`,
+        automation.automationGate && automation.backgroundWorkerGate ? colors.green : colors.yellow,
+      );
+      log(`  KnowFlow status: ${knowflow.status ?? 'unknown'}`, colors.blue);
+
+      if (automation.automationGate !== true || automation.backgroundWorkerGate !== true) {
+        log('! Automation or background worker gate is disabled.', colors.yellow);
+      }
+      if (knowflow.status === 'degraded') {
+        hasHardFailure = true;
+        log('! KnowFlow is degraded in the monitor snapshot.', colors.red);
+      } else {
+        log('✓ Monitor snapshot collected successfully.', colors.green);
+      }
+    } catch (error) {
+      hasHardFailure = true;
+      log('! Failed to parse monitor snapshot JSON.', colors.red);
+      log(error instanceof Error ? error.message : String(error), colors.red);
+    }
+  }
 
   log('\n=== Verification Summary ===', colors.bold + colors.blue);
   log(`Logs are stored in: ${path.join(process.cwd(), 'logs', 'runs/')}`);
   log('Use "bun run task:verify:operation" to run this verification again.');
+  if (hasHardFailure) {
+    process.exitCode = 1;
+  }
 }
 
 verify().catch(console.error);

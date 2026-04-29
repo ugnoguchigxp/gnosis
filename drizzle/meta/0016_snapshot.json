@@ -487,7 +487,7 @@
       "checkConstraints": {
         "hook_candidates_kind_check": {
           "name": "hook_candidates_kind_check",
-          "value": "\"hook_candidates\".\"kind\" IN ('episode', 'lesson')"
+          "value": "\"hook_candidates\".\"kind\" IN ('lesson')"
         },
         "hook_candidates_status_check": {
           "name": "hook_candidates_status_check",
@@ -833,7 +833,7 @@
       "checkConstraints": {
         "knowflow_keyword_eval_source_type_check": {
           "name": "knowflow_keyword_eval_source_type_check",
-          "value": "\"knowflow_keyword_evaluations\".\"source_type\" IN ('episode', 'experience')"
+          "value": "\"knowflow_keyword_evaluations\".\"source_type\" IN ('experience')"
         },
         "knowflow_keyword_eval_decision_check": {
           "name": "knowflow_keyword_eval_decision_check",
@@ -2061,12 +2061,6 @@
           "notNull": true,
           "default": "'raw'"
         },
-        "episode_at": {
-          "name": "episode_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
-        },
         "source_task": {
           "name": "source_task",
           "type": "text",
@@ -2235,7 +2229,7 @@
       "checkConstraints": {
         "vibe_memories_memory_type_check": {
           "name": "vibe_memories_memory_type_check",
-          "value": "\"vibe_memories\".\"memory_type\" IN ('raw', 'episode')"
+          "value": "\"vibe_memories\".\"memory_type\" IN ('raw')"
         }
       },
       "isRLSEnabled": false

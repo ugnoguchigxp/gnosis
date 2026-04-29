@@ -380,7 +380,10 @@ export const config = {
   }),
 
   backgroundWorker: {
-    enabled: envBoolean(process.env.GNOSIS_BACKGROUND_WORKER_ENABLED, false),
+    enabled: envBoolean(
+      process.env.GNOSIS_BACKGROUND_WORKER_ENABLED,
+      GNOSIS_CONSTANTS.BACKGROUND_WORKER_ENABLED_DEFAULT,
+    ),
     intervalMs: envNumber(process.env.GNOSIS_BACKGROUND_WORKER_INTERVAL_MS, 300_000), // 5 min
     minRawCount: envNumber(process.env.GNOSIS_BACKGROUND_WORKER_MIN_RAW_COUNT, 5),
     maxConcurrency: envNumber(process.env.GNOSIS_BACKGROUND_WORKER_MAX_CONCURRENCY, 3),

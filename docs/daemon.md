@@ -206,7 +206,7 @@ false positive 対策:
 2. lifecycle manager を `starting` で作成する。
 3. ProcessRegistry に `mcp-server` entry を atomic create する。失敗時は `registryStatus: "disabled"` として WARN を出し、MCP 起動は継続する。
 4. signal/stdin/parent-watch/cleanup timeout を登録する。
-5. background workers は既存どおり `GNOSIS_ENABLE_AUTOMATION=true` のときだけ起動する。
+5. background workers は既定で起動対象になり、停止したい場合だけ `GNOSIS_ENABLE_AUTOMATION=false` を指定する。
 6. `server.connect(transport)` を開始する。
 7. connect 成功後に lifecycle state を `running` にする。
 8. registry が enabled の場合だけ heartbeat interval を開始する。heartbeat 失敗時は `registryStatus: "degraded"` として WARN を出し、watchdog apply 対象から外す。

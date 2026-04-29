@@ -18,10 +18,30 @@ export type EvalSnapshot = {
   updatedAtTs: number | null;
 };
 
+export type AutomationSnapshot = {
+  automationGate: boolean;
+  backgroundWorkerGate: boolean;
+  localLlmConfigured: boolean;
+  localLlmApiBaseUrl: string | null;
+};
+
+export type KnowFlowSnapshot = {
+  status: 'idle' | 'healthy' | 'degraded' | 'unknown';
+  lastWorkerTs: number | null;
+  lastWorkerSummary: string | null;
+  lastSeedTs: number | null;
+  lastSeedSummary: string | null;
+  lastFrontierSeedTs: number | null;
+  lastKeywordSeedTs: number | null;
+  lastFailureTs: number | null;
+};
+
 export type MonitorSnapshotData = {
   queue: QueueSnapshot;
   worker: WorkerSnapshot;
   eval: EvalSnapshot;
+  automation: AutomationSnapshot;
+  knowflow: KnowFlowSnapshot;
   taskIndex: TaskIndexEntry[];
 };
 

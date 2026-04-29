@@ -81,6 +81,7 @@ const entityRows = [
 
 mock.module('../src/db/index.js', () => ({
   db: {
+    execute: async () => [],
     select: () => {
       selectCount += 1;
       return {
@@ -105,7 +106,7 @@ mock.module('../src/hooks/service.js', () => ({
   getLoadedHookRuleCount: () => 0,
 }));
 
-import { searchKnowledgeV2 } from '../src/services/agentFirst';
+import { buildActivateProjectResult, searchKnowledgeV2 } from '../src/services/agentFirst';
 
 describe('searchKnowledgeV2 task-context applicability', () => {
   beforeEach(() => {
@@ -130,5 +131,44 @@ describe('searchKnowledgeV2 task-context applicability', () => {
     expect(result.flatTopHits.map((hit) => hit.entityId)).not.toContain('rule/always');
     expect(result.flatTopHits[0]?.applicabilityScore).toBeGreaterThan(0.8);
     expect(result.taskContext?.changeTypes).toContain('mcp');
+  });
+
+  it('asks for refinement when task-context lookup lacks concrete task scope', async () => {
+    const result = await searchKnowledgeV2({
+      preset: 'task_context',
+      intent: 'plan',
+      query: 'todo',
+    });
+
+    expect(result.suggestedNextAction).toBe('refine_query');
+    expect(result.degraded?.reason).toBe('insufficient_task_context');
+    expect(result.flatTopHits).toHaveLength(0);
+  });
+
+  it('treats explicit kind and category filters as narrowing constraints', async () => {
+    const result = await searchKnowledgeV2({
+      preset: 'task_context',
+      intent: 'edit',
+      taskGoal: 'Refactor MCP rule lookup before implementation',
+      files: ['src/mcp/tools/agentFirst.ts', 'src/services/agentFirst.ts'],
+      changeTypes: ['mcp', 'refactor'],
+      technologies: ['typescript', 'mcp'],
+      kinds: ['rule'],
+      categories: ['mcp'],
+      grouping: 'flat',
+    });
+
+    expect(result.flatTopHits.map((hit) => hit.category)).toEqual(['mcp']);
+    expect(result.flatTopHits.map((hit) => hit.entityId)).not.toContain('rule/frontend');
+  });
+
+  it('counts always guidance in project health without repeating it as contextual top items', async () => {
+    const result = await buildActivateProjectResult('/tmp/gnosis', 'planning');
+
+    expect(result.knowledgeIndex.totalActive).toBe(3);
+    expect(result.knowledgeIndex.byKind.rule).toBe(3);
+    expect(result.knowledgeIndex.topItems.map((item) => item.entityId)).not.toContain(
+      'rule/always',
+    );
   });
 });

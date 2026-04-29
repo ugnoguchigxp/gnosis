@@ -61,6 +61,17 @@ export type SelectFrontierOptions = {
   signal?: AbortSignal;
 };
 
+export type FrontierSelectionMetadata = {
+  useLlm: boolean;
+  selectionMode: 'deterministic' | 'llm' | 'llm_degraded';
+  degraded: boolean;
+  degradedReasons: string[];
+};
+
+export type FrontierSelectionResult = FrontierSelectionMetadata & {
+  candidates: FrontierCandidate[];
+};
+
 export type EnqueueFrontierOptions = SelectFrontierOptions & {
   queueRepository: QueueRepository;
   requestedBy?: string;
@@ -163,6 +174,7 @@ export const rerankFrontierCandidatesWithLlm = async (
     limit: number;
     runLlmTask?: RunFrontierSelection;
     signal?: AbortSignal;
+    onDegraded?: (reason: string) => void;
   },
 ): Promise<FrontierCandidate[]> => {
   if (candidates.length === 0) return [];
@@ -197,6 +209,7 @@ export const rerankFrontierCandidatesWithLlm = async (
   );
 
   if (result.degraded || result.output.selected.length === 0) {
+    input.onDegraded?.(result.degraded ? 'llm_degraded' : 'llm_empty_selection');
     return candidates;
   }
 
@@ -230,6 +243,13 @@ export const rerankFrontierCandidatesWithLlm = async (
 export const selectFrontierCandidates = async (
   options: SelectFrontierOptions = {},
 ): Promise<FrontierCandidate[]> => {
+  const result = await selectFrontierCandidatesWithMetadata(options);
+  return result.candidates;
+};
+
+export const selectFrontierCandidatesWithMetadata = async (
+  options: SelectFrontierOptions = {},
+): Promise<FrontierSelectionResult> => {
   const database = options.database ?? defaultDb;
   const limit = Math.max(1, Math.trunc(options.limit ?? 5));
   const scanLimit = Math.max(limit, Math.trunc(options.scanLimit ?? DEFAULT_SCAN_LIMIT));
@@ -239,6 +259,7 @@ export const selectFrontierCandidates = async (
   );
   const now = options.now ?? new Date();
   const useLlm = options.useLlm ?? config.knowflow.frontier.llmEnabled;
+  const degradedReasons: string[] = [];
 
   const rows = await database
     .select()
@@ -246,7 +267,15 @@ export const selectFrontierCandidates = async (
     .orderBy(desc(entities.referenceCount), desc(entities.lastReferencedAt), asc(entities.name))
     .limit(scanLimit);
 
-  if (rows.length === 0) return [];
+  if (rows.length === 0) {
+    return {
+      candidates: [],
+      useLlm,
+      selectionMode: useLlm ? 'llm' : 'deterministic',
+      degraded: false,
+      degradedReasons,
+    };
+  }
 
   const entityIds = rows.map((row) => row.id);
   const topicStateIds = rows.map((row) => generateTopicStateEntityId(row.name));
@@ -318,13 +347,21 @@ export const selectFrontierCandidates = async (
         limit,
         runLlmTask: options.runLlmTask,
         signal: options.signal,
+        onDegraded: (reason) => degradedReasons.push(reason),
       });
-    } catch {
+    } catch (error) {
+      degradedReasons.push(error instanceof Error ? error.message : String(error));
       finalRanked = ranked;
     }
   }
 
-  return selectWithCommunityLimit(finalRanked, limit, maxPerCommunity);
+  return {
+    candidates: selectWithCommunityLimit(finalRanked, limit, maxPerCommunity),
+    useLlm,
+    selectionMode: useLlm ? (degradedReasons.length > 0 ? 'llm_degraded' : 'llm') : 'deterministic',
+    degraded: degradedReasons.length > 0,
+    degradedReasons: [...new Set(degradedReasons)],
+  };
 };
 
 export const enqueueFrontierCandidates = async (

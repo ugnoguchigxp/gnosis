@@ -1,7 +1,6 @@
 -- 0010_memory_refactoring.sql
 ALTER TABLE vibe_memories
   ADD COLUMN IF NOT EXISTS memory_type text DEFAULT 'raw',
-  ADD COLUMN IF NOT EXISTS episode_at timestamp,
   ADD COLUMN IF NOT EXISTS source_task text,
   ADD COLUMN IF NOT EXISTS importance real DEFAULT 0.5,
   ADD COLUMN IF NOT EXISTS compressed boolean DEFAULT false;

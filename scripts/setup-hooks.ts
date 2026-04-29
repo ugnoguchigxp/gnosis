@@ -91,8 +91,8 @@ function buildHookPromptBlock(manualPath: string): string {
   return `
 # Gnosis Hook Workflow (Auto-managed)
 - Read and follow the hook guide at: ${manualPath}
-- Before saying a coding segment is done, call \`task_checkpoint\`.
-- Before starting a review, trigger \`task.ready_for_review\` via the review flow.
+- Start work with \`start_task\`, review with \`review_task\`, and close with \`finish_task\`.
+- \`review_task\` triggers the pre-review hook gate before running the review.
 - If hook gate fails, prioritize fixing lint/typecheck/test before continuing.
 - Record completion and failures so reusable lesson candidates are created.
 `.trim();
@@ -104,9 +104,9 @@ function buildManual(): string {
 This guide defines the shared hook workflow for IDE agents and LLM tools.
 
 ## Hook checkpoints
-1. Emit a segment checkpoint when an implementation chunk is complete.
-2. Run pre-review quality gate before review execution.
-3. On completion/failure, ensure candidate records can be generated.
+1. Start task traces with \`start_task\`.
+2. Run pre-review quality gate through \`review_task\`.
+3. Close task traces with \`finish_task\` so completion events and lesson candidates can be generated.
 
 ## Required quality gates
 - lint

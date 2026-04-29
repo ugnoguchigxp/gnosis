@@ -2,9 +2,11 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { desc, inArray, sql } from 'drizzle-orm';
+import { envBoolean } from '../config.js';
+import { GNOSIS_CONSTANTS } from '../constants.js';
 import { db } from '../db/index.js';
 import { entities, relations } from '../db/schema.js';
-import { getLoadedHookRuleCount } from '../hooks/service.js';
+import { dispatchHookEvent, getLoadedHookRuleCount } from '../hooks/service.js';
 import { generateEntityId } from '../utils/entityId.js';
 import { generateEmbedding } from './memory.js';
 
@@ -83,6 +85,29 @@ const KNOWLEDGE_CATEGORY_SET = new Set<KnowledgeCategory>([
   'performance',
   'reference',
 ]);
+
+async function dispatchAgentFirstHookEvent(input: {
+  event: string;
+  taskId: string;
+  projectRoot?: string;
+  payload?: Record<string, unknown>;
+  changedFiles?: string[];
+  taskMode?: string;
+  reviewRequested?: boolean;
+}): Promise<void> {
+  await dispatchHookEvent({
+    event: input.event,
+    traceId: input.taskId,
+    taskId: input.taskId,
+    payload: input.payload,
+    context: {
+      cwd: input.projectRoot,
+      changedFiles: input.changedFiles,
+      taskMode: input.taskMode,
+      reviewRequested: input.reviewRequested,
+    },
+  }).catch(() => undefined);
+}
 const TASK_CHANGE_TYPE_SET = new Set<TaskChangeType>([
   'frontend',
   'backend',
@@ -216,6 +241,8 @@ type TaskContext = {
   technologies: string[];
   taskText: string;
 };
+
+type SearchKnowledgeRefineReason = 'insufficient_task_context' | 'db_unavailable';
 
 type ToolSnapshot = {
   name: string;
@@ -526,6 +553,17 @@ function buildTaskContext(input: SearchKnowledgeV2Input, query: string): TaskCon
     technologies: inferTechnologies(input, baseText),
     taskText: baseText.toLowerCase(),
   };
+}
+
+function hasConcreteTaskContext(input: SearchKnowledgeV2Input): boolean {
+  if (input.preset !== 'task_context') return true;
+  const hasGoal = typeof input.taskGoal === 'string' && input.taskGoal.trim().length >= 12;
+  const hasQuery = typeof input.query === 'string' && input.query.trim().length >= 12;
+  const hasScope =
+    (input.files?.length ?? 0) > 0 ||
+    (input.changeTypes?.length ?? 0) > 0 ||
+    (input.technologies?.length ?? 0) > 0;
+  return (hasGoal || hasQuery) && hasScope;
 }
 
 function includesByMode(pool: string[], candidate: string[], mode: 'and' | 'or'): boolean {
@@ -880,10 +918,8 @@ export async function buildActivateProjectResult(projectRoot: string, mode?: str
 
   const normalizedRows = rows
     .map(normalizeEntity)
-    .filter(
-      (item) =>
-        item.status !== 'deprecated' && item.status !== 'rejected' && item.scope !== 'always',
-    );
+    .filter((item) => item.status !== 'deprecated' && item.status !== 'rejected');
+  const contextualRows = normalizedRows.filter((item) => item.scope !== 'always');
   const byKind: Record<string, number> = {};
   const byCategory: Record<string, number> = {};
   for (const item of normalizedRows) {
@@ -907,14 +943,14 @@ export async function buildActivateProjectResult(projectRoot: string, mode?: str
         ? 'complete'
         : 'partial';
 
-  const projectKeywords = normalizedRows
+  const projectKeywords = contextualRows
     .slice(0, 12)
     .flatMap((item) => [item.title, ...item.tags])
     .map((value) => value.toLowerCase())
     .filter((value, index, arr) => value.length > 0 && arr.indexOf(value) === index)
     .slice(0, 8);
 
-  const representativeEntities = normalizedRows.slice(0, 5).map((item) => ({
+  const representativeEntities = contextualRows.slice(0, 5).map((item) => ({
     entityId: item.entity.id,
     title: item.title,
     kind: item.kind,
@@ -922,7 +958,7 @@ export async function buildActivateProjectResult(projectRoot: string, mode?: str
     reason: `Top entity by reference count (${item.entity.referenceCount}).`,
   }));
 
-  const topItems = normalizedRows.slice(0, 5).map((item) => ({
+  const topItems = contextualRows.slice(0, 5).map((item) => ({
     entityId: item.entity.id,
     slug: item.slug,
     title: item.title,
@@ -963,10 +999,12 @@ export async function buildActivateProjectResult(projectRoot: string, mode?: str
       hooks: getLoadedHookRuleCount() > 0 ? 'enabled' : 'disabled',
       toolVersion: process.env.GNOSIS_TOOL_VERSION ?? process.env.npm_package_version ?? '0.2.0',
       warnings,
-      automation:
-        process.env.GNOSIS_ENABLE_AUTOMATION === 'true'
-          ? ('enabled' as const)
-          : ('disabled' as const),
+      automation: envBoolean(
+        process.env.GNOSIS_ENABLE_AUTOMATION,
+        GNOSIS_CONSTANTS.AUTOMATION_ENABLED_DEFAULT,
+      )
+        ? ('enabled' as const)
+        : ('disabled' as const),
     },
     onboarding: {
       status: onboardingStatus,
@@ -1002,6 +1040,24 @@ export async function buildActivateProjectResult(projectRoot: string, mode?: str
 export async function searchKnowledgeV2(input: SearchKnowledgeV2Input) {
   const query = buildQueryByPreset(input);
   const taskContext = buildTaskContext(input, query);
+  if (!hasConcreteTaskContext(input)) {
+    return {
+      groups: [],
+      flatTopHits: [],
+      taskContext: {
+        intent: taskContext.intent,
+        changeTypes: taskContext.changeTypes,
+        technologies: taskContext.technologies,
+        files: taskContext.files,
+      },
+      suggestedNextAction: 'refine_query' as const,
+      degraded: {
+        reason: 'insufficient_task_context' satisfies SearchKnowledgeRefineReason,
+        detail:
+          'Provide a concrete taskGoal or query plus at least one of files, changeTypes, or technologies before retrieving project knowledge.',
+      },
+    };
+  }
   const queryTerms = splitTerms(query);
   let queryEmbedding: number[] | null = null;
   if (query.length > 0) {
@@ -1021,7 +1077,7 @@ export async function searchKnowledgeV2(input: SearchKnowledgeV2Input) {
       flatTopHits: [],
       suggestedNextAction: 'refine_query' as const,
       degraded: {
-        reason: 'db_unavailable',
+        reason: 'db_unavailable' satisfies SearchKnowledgeRefineReason,
         detail: message,
       },
     };
@@ -1038,13 +1094,13 @@ export async function searchKnowledgeV2(input: SearchKnowledgeV2Input) {
 
   const scored = normalizedRows
     .map((item) => {
-      const filterChecks: boolean[] = [];
-      if (explicitKinds.length > 0) {
-        filterChecks.push(explicitKinds.includes(item.kind));
-      }
+      const hardFilterChecks: boolean[] = [];
+      if (explicitKinds.length > 0) hardFilterChecks.push(explicitKinds.includes(item.kind));
       if (explicitCategories.length > 0) {
-        filterChecks.push(explicitCategories.includes(item.category));
+        hardFilterChecks.push(explicitCategories.includes(item.category));
       }
+      const passHardFilters = hardFilterChecks.every(Boolean);
+      const filterChecks: boolean[] = [];
       if (input.filters?.kinds?.values?.length) {
         filterChecks.push(
           includesByMode(
@@ -1083,14 +1139,20 @@ export async function searchKnowledgeV2(input: SearchKnowledgeV2Input) {
       }
       const passFilters = matchWithMode(filterChecks, topLevelMode);
       const scoring = scoreEntity(item, queryTerms, taskContext, queryEmbedding);
-      return { item, passFilters, ...scoring };
+      return { item, passFilters: passHardFilters && passFilters, ...scoring };
     })
     .filter((row) => row.passFilters)
     .filter((row) => (queryTerms.length === 0 && !queryEmbedding ? true : row.score > 0))
     .sort((a, b) => b.score - a.score);
 
-  const limitPerCategory = Math.max(1, input.limitPerCategory ?? 3);
-  const maxCategories = Math.max(1, input.maxCategories ?? 5);
+  const limitPerCategory = Math.max(
+    1,
+    input.limitPerCategory ?? (input.preset === 'task_context' ? 2 : 3),
+  );
+  const maxCategories = Math.max(
+    1,
+    input.maxCategories ?? (input.preset === 'task_context' ? 3 : 5),
+  );
   const grouped: Record<string, typeof scored> = {};
   for (const row of scored) {
     const key = row.item.category;
@@ -1251,6 +1313,20 @@ export async function startTaskTrace(input: {
         freshness: sql`excluded.freshness`,
       },
     });
+
+  await dispatchAgentFirstHookEvent({
+    event: 'task.started',
+    taskId,
+    projectRoot: metadata.projectRoot,
+    changedFiles: metadata.files,
+    taskMode: metadata.intent,
+    payload: {
+      title: input.title,
+      intent: metadata.intent,
+      files: metadata.files,
+    },
+  });
+
   return {
     taskId,
     status: 'started',
@@ -1388,6 +1464,24 @@ export async function finishTaskTrace(input: {
       category: saved.category,
     });
   }
+
+  const projectRoot =
+    typeof taskMetadata.projectRoot === 'string' ? taskMetadata.projectRoot : process.cwd();
+  const changedFiles = Array.isArray(taskMetadata.files)
+    ? taskMetadata.files.filter((file): file is string => typeof file === 'string')
+    : [];
+  await dispatchAgentFirstHookEvent({
+    event: 'task.completed',
+    taskId: input.taskId,
+    projectRoot,
+    changedFiles,
+    payload: {
+      outcome: input.outcome,
+      checks: input.checks ?? [],
+      followUps: input.followUps ?? [],
+      learnedCount: learnedEntities.length,
+    },
+  });
 
   return {
     taskId: input.taskId,

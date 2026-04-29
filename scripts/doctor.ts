@@ -1,9 +1,11 @@
 #!/usr/bin/env bun
 
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import pkg from 'pg';
+import { envBoolean } from '../src/config.js';
+import { GNOSIS_CONSTANTS } from '../src/constants.js';
 import { scanWatchdog } from '../src/runtime/processWatchdog.js';
 import { COLORS, loadLocalEnv } from './lib/quality.ts';
 
@@ -29,9 +31,23 @@ type CommandOutput = {
   stderr: string;
 };
 
+type RunLogRecord = {
+  ts?: string;
+  event?: string;
+  data?: Record<string, unknown>;
+};
+
 const ROOT_DIR = process.cwd();
 const BUN = process.env.GNOSIS_BUN_COMMAND || process.argv[0] || 'bun';
 const IS_WINDOWS = process.platform === 'win32';
+const LAUNCH_AGENT_LABELS = [
+  'com.gnosis.sync',
+  'com.gnosis.reflect',
+  'com.gnosis.worker',
+  'com.gnosis.guidance',
+  'com.gnosis.report',
+  'com.gnosis.process-watchdog',
+];
 
 async function runCapture(spec: CommandSpec): Promise<CommandOutput> {
   return new Promise((resolve, reject) => {
@@ -183,6 +199,203 @@ function checkRuntimeProcesses(): CheckResult {
       .map((finding) => `${finding.reason}:pid=${finding.entry?.pid ?? '?'}`)
       .join(', '),
     fix: 'Run: bun run process:diagnose',
+  };
+}
+
+function checkHooks(): CheckResult {
+  const enabled = envBoolean(
+    process.env.GNOSIS_HOOKS_ENABLED,
+    GNOSIS_CONSTANTS.HOOKS_ENABLED_DEFAULT,
+  );
+  if (enabled) {
+    return {
+      name: 'hooks',
+      status: 'OK',
+      message: 'enabled by default (GNOSIS_HOOKS_ENABLED can override)',
+    };
+  }
+
+  return {
+    name: 'hooks',
+    status: 'WARN',
+    message: 'GNOSIS_HOOKS_ENABLED is false; hook events will no-op.',
+    fix: 'Unset GNOSIS_HOOKS_ENABLED or set it to true to execute hook rules.',
+  };
+}
+
+function checkAutomationGate(): CheckResult {
+  if (
+    envBoolean(process.env.GNOSIS_ENABLE_AUTOMATION, GNOSIS_CONSTANTS.AUTOMATION_ENABLED_DEFAULT)
+  ) {
+    return {
+      name: 'automation gate',
+      status: 'OK',
+      message: 'enabled by default (GNOSIS_ENABLE_AUTOMATION can override)',
+    };
+  }
+
+  return {
+    name: 'automation gate',
+    status: 'WARN',
+    message: 'GNOSIS_ENABLE_AUTOMATION is false; background automation will stay idle.',
+    fix: 'Unset GNOSIS_ENABLE_AUTOMATION or set it to true.',
+  };
+}
+
+function checkBackgroundWorkerGate(): CheckResult {
+  if (
+    envBoolean(
+      process.env.GNOSIS_BACKGROUND_WORKER_ENABLED,
+      GNOSIS_CONSTANTS.BACKGROUND_WORKER_ENABLED_DEFAULT,
+    )
+  ) {
+    return {
+      name: 'background worker gate',
+      status: 'OK',
+      message: 'enabled by default (GNOSIS_BACKGROUND_WORKER_ENABLED can override)',
+    };
+  }
+
+  return {
+    name: 'background worker gate',
+    status: 'WARN',
+    message: 'GNOSIS_BACKGROUND_WORKER_ENABLED is false; the worker daemon is disabled.',
+    fix: 'Unset GNOSIS_BACKGROUND_WORKER_ENABLED or set it to true.',
+  };
+}
+
+function parseRunLogRecord(line: string): RunLogRecord | null {
+  if (line.trim().length === 0) return null;
+  try {
+    const parsed = JSON.parse(line);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+    const record = parsed as Record<string, unknown>;
+    const data =
+      typeof record.data === 'object' && record.data !== null && !Array.isArray(record.data)
+        ? (record.data as Record<string, unknown>)
+        : undefined;
+    return {
+      ts: typeof record.ts === 'string' ? record.ts : undefined,
+      event: typeof record.event === 'string' ? record.event : undefined,
+      data,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function checkLastKnowFlowRun(): CheckResult {
+  const logsRoot = path.join(ROOT_DIR, 'logs', 'runs');
+  let files: string[] = [];
+  try {
+    files = readdirSync(logsRoot)
+      .filter((name) => name.endsWith('.jsonl'))
+      .map((name) => path.join(logsRoot, name))
+      .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)
+      .slice(0, 40);
+  } catch {
+    return {
+      name: 'last KnowFlow run',
+      status: 'WARN',
+      message: 'no run log directory found.',
+      fix: 'Run: bun run monitor:snapshot or start the background worker.',
+    };
+  }
+
+  for (const file of files) {
+    const lines = readFileSync(file, 'utf8').split('\n').reverse();
+    for (const line of lines) {
+      const record = parseRunLogRecord(line);
+      if (!record?.event) continue;
+      const taskType = record.data?.taskType;
+      const isKnowFlowBackground =
+        (record.event === 'background.task.completed' ||
+          record.event === 'background.task.failed') &&
+        typeof taskType === 'string' &&
+        taskType.startsWith('knowflow');
+      const isKnowFlowWorker =
+        record.event === 'task.done' ||
+        record.event === 'task.failed' ||
+        record.event === 'task.deferred';
+      const isManualSeed =
+        record.event === 'cli.result' && record.data?.command === 'seed-frontier';
+      if (!isKnowFlowBackground && !isKnowFlowWorker && !isManualSeed) continue;
+
+      const status =
+        record.event === 'background.task.failed' ||
+        record.event === 'task.failed' ||
+        record.event === 'task.deferred'
+          ? 'WARN'
+          : 'OK';
+      const summary =
+        typeof record.data?.summary === 'string'
+          ? ` ${record.data.summary}`
+          : typeof record.data?.resultSummary === 'string'
+            ? ` ${record.data.resultSummary}`
+            : '';
+      return {
+        name: 'last KnowFlow run',
+        status,
+        message: `${record.ts ?? 'unknown time'} ${record.event}${summary}`,
+      };
+    }
+  }
+
+  return {
+    name: 'last KnowFlow run',
+    status: 'WARN',
+    message: 'no KnowFlow run records found in recent logs.',
+    fix: 'Run: bun src/services/knowflow/cli.ts seed-frontier --limit 3 --dry-run --json',
+  };
+}
+
+async function checkLaunchAgents(): Promise<CheckResult> {
+  if (process.platform !== 'darwin') {
+    return {
+      name: 'launch agents',
+      status: 'OK',
+      message: 'skipped (launchctl is only used on macOS)',
+    };
+  }
+
+  const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+  if (uid === null) {
+    return {
+      name: 'launch agents',
+      status: 'WARN',
+      message: 'could not resolve the current user id for launchctl.',
+      fix: 'Run: scripts/setup-automation.sh status',
+    };
+  }
+
+  const loaded: string[] = [];
+  for (const label of LAUNCH_AGENT_LABELS) {
+    const result = await runCapture({
+      command: 'launchctl',
+      args: ['print', `gui/${uid}/${label}`],
+    }).catch(() => null);
+    if (result && result.code === 0) {
+      loaded.push(label);
+    }
+  }
+
+  if (loaded.length > 0) {
+    return {
+      name: 'launch agents',
+      status: loaded.length === LAUNCH_AGENT_LABELS.length ? 'OK' : 'WARN',
+      message: `${loaded.length}/${LAUNCH_AGENT_LABELS.length} loaded: ${loaded.join(', ')}`,
+      fix:
+        loaded.length === LAUNCH_AGENT_LABELS.length
+          ? undefined
+          : 'Run: scripts/setup-automation.sh install',
+    };
+  }
+
+  return {
+    name: 'launch agents',
+    status: 'WARN',
+    message: 'no Gnosis LaunchAgents are loaded.',
+    fix: 'Run: scripts/setup-automation.sh install',
   };
 }
 
@@ -338,6 +551,11 @@ async function main(): Promise<void> {
 
   results.push(checkMcpToolExposure());
   results.push(checkRuntimeProcesses());
+  results.push(checkHooks());
+  results.push(checkAutomationGate());
+  results.push(checkBackgroundWorkerGate());
+  results.push(await checkLaunchAgents());
+  results.push(checkLastKnowFlowRun());
   results.push(await checkLocalLlmHealth());
 
   process.stdout.write('\n');

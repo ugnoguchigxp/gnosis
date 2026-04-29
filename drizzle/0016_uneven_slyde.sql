@@ -10,7 +10,7 @@ CREATE TABLE "hook_candidates" (
 	"score" real,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "hook_candidates_kind_check" CHECK ("hook_candidates"."kind" IN ('episode', 'lesson')),
+	CONSTRAINT "hook_candidates_kind_check" CHECK ("hook_candidates"."kind" IN ('lesson')),
 	CONSTRAINT "hook_candidates_status_check" CHECK ("hook_candidates"."status" IN ('pending', 'scored', 'deduplicated', 'promoted', 'rejected')),
 	CONSTRAINT "hook_candidates_severity_check" CHECK ("hook_candidates"."severity" IS NULL OR "hook_candidates"."severity" IN ('low', 'medium', 'high'))
 );

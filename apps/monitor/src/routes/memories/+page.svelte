@@ -490,7 +490,7 @@ onMount(() => {
 <div class="memory-page">
   <header class="memory-header">
     <h1>Memory Console</h1>
-    <p>Episode 機能は廃止され、再利用可能な知識管理のみを提供します。</p>
+    <p>再利用可能な知識管理のみを提供します。</p>
   </header>
 
   <div class="toolbar">

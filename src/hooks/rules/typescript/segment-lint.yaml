@@ -1,5 +1,5 @@
 id: segment-lint-typescript
-event: task.segment.completed
+event: task.completed
 enabled: true
 priority: 100
 

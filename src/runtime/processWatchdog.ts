@@ -37,9 +37,13 @@ type WatchdogState = {
 
 const KNOWN_COMMAND_PATTERNS = [
   'bun run src/index.ts',
+  'src/index.ts',
   'bun run src/scripts/mcpToolsServer.ts',
+  'src/scripts/mcpToolsServer.ts',
   'bun run src/scripts/semanticCodeMcpServer.ts',
+  'src/scripts/semanticCodeMcpServer.ts',
   'bun run src/scripts/worker.ts',
+  'src/scripts/worker.ts',
 ];
 
 const KNOWN_TITLE_PATTERNS = [

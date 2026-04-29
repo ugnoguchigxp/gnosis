@@ -1,7 +1,13 @@
+import { envBoolean } from '../config.js';
+import { GNOSIS_CONSTANTS } from '../constants.js';
 import { syncAllAgentLogs } from '../services/sync.js';
 
 async function main() {
-  if (process.env.GNOSIS_ENABLE_AUTOMATION !== 'true') {
+  const automationEnabled = envBoolean(
+    process.env.GNOSIS_ENABLE_AUTOMATION,
+    GNOSIS_CONSTANTS.AUTOMATION_ENABLED_DEFAULT,
+  );
+  if (!automationEnabled) {
     console.log('[sync] Automation is OFF. Skipping scheduled sync.');
     process.exit(0);
   }

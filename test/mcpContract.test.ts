@@ -63,10 +63,20 @@ describe('mcp contract', () => {
     expect(invalid.content?.[0]?.text).toContain('title');
   });
 
-  it('does not inject always context into task-specific retrieval tools', () => {
-    expect(shouldInjectAlwaysContext('initial_instructions')).toBe(true);
-    expect(shouldInjectAlwaysContext('search_knowledge')).toBe(false);
-    expect(shouldInjectAlwaysContext('review_task')).toBe(false);
-    expect(shouldInjectAlwaysContext('activate_project')).toBe(true);
+  it('injects always context only into bootstrap instructions', () => {
+    const matrix: Record<string, boolean> = {
+      initial_instructions: true,
+      activate_project: false,
+      search_knowledge: false,
+      start_task: false,
+      record_task_note: false,
+      finish_task: false,
+      review_task: false,
+      doctor: false,
+    };
+
+    for (const [toolName, expected] of Object.entries(matrix)) {
+      expect(shouldInjectAlwaysContext(toolName)).toBe(expected);
+    }
   });
 });

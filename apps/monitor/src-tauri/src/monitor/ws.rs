@@ -314,8 +314,8 @@ mod tests {
     use tokio::sync::broadcast;
 
     use crate::monitor::models::{
-        EvalSnapshot, MonitorSnapshotData, OutboundBroadcast, QueueSnapshot, SnapshotEnvelope,
-        TaskIndexEntry, TimelineEvent, WorkerSnapshot,
+        AutomationSnapshot, EvalSnapshot, KnowFlowSnapshot, MonitorSnapshotData, OutboundBroadcast,
+        QueueSnapshot, SnapshotEnvelope, TaskIndexEntry, TimelineEvent, WorkerSnapshot,
     };
 
     use super::drain_initial_broadcasts;
@@ -345,6 +345,8 @@ mod tests {
                 queue: QueueSnapshot::default(),
                 worker: WorkerSnapshot::default(),
                 eval: EvalSnapshot::default(),
+                automation: AutomationSnapshot::default(),
+                knowflow: KnowFlowSnapshot::default(),
                 task_index: vec![TaskIndexEntry {
                     task_id: "task-1".to_string(),
                     topic: Some("topic".to_string()),

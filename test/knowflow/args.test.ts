@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { resolveFrontierUseLlm } from '../../src/services/knowflow/cli.js';
 import {
   parseArgMap,
   readBooleanFlag,
@@ -89,5 +90,27 @@ describe('readBooleanFlag', () => {
 
   it('returns false when key is missing', () => {
     expect(readBooleanFlag({}, 'flag')).toBe(false);
+  });
+});
+
+describe('resolveFrontierUseLlm', () => {
+  it('defaults dry-run frontier selection to deterministic mode', () => {
+    expect(resolveFrontierUseLlm({}, true, true)).toBe(false);
+  });
+
+  it('uses the configured default for non-dry-run frontier selection', () => {
+    expect(resolveFrontierUseLlm({}, false, true)).toBe(true);
+    expect(resolveFrontierUseLlm({}, false, false)).toBe(false);
+  });
+
+  it('allows explicit frontier LLM overrides', () => {
+    expect(resolveFrontierUseLlm({ 'use-llm': true }, true, false)).toBe(true);
+    expect(resolveFrontierUseLlm({ 'no-llm': true }, false, true)).toBe(false);
+  });
+
+  it('rejects conflicting frontier LLM flags', () => {
+    expect(() => resolveFrontierUseLlm({ 'use-llm': true, 'no-llm': true }, true, true)).toThrow(
+      '--use-llm and --no-llm cannot be used together',
+    );
   });
 });

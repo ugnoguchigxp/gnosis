@@ -19,6 +19,8 @@ REFLECT_PLIST="com.gnosis.reflect.plist"
 WORKER_PLIST="com.gnosis.worker.plist"
 GUIDANCE_PLIST="com.gnosis.guidance.plist"
 REPORT_PLIST="com.gnosis.report.plist"
+WATCHDOG_PLIST="com.gnosis.process-watchdog.plist"
+PLISTS=("$SYNC_PLIST" "$REFLECT_PLIST" "$WORKER_PLIST" "$GUIDANCE_PLIST" "$REPORT_PLIST" "$WATCHDOG_PLIST")
 
 # ログディレクトリの作成
 mkdir -p "$PROJECT_ROOT/logs"
@@ -35,16 +37,14 @@ function install() {
     echo "Using PROJECT_ROOT: $PROJECT_ROOT"
 
     # ファイルをコピーしてプレースホルダーを置換
-    for plist in "$SYNC_PLIST" "$REFLECT_PLIST" "$WORKER_PLIST" "$GUIDANCE_PLIST" "$REPORT_PLIST"; do
+    for plist in "${PLISTS[@]}"; do
         sed "s|{{PROJECT_ROOT}}|$PROJECT_ROOT|g; s|{{BUN_PATH}}|$BUN_PATH|g" "$PLIST_DIR/$plist" > "$LAUNCH_AGENTS_DIR/$plist"
     done
     
     # 権限の確認
-    chmod 644 "$LAUNCH_AGENTS_DIR/$SYNC_PLIST"
-    chmod 644 "$LAUNCH_AGENTS_DIR/$REFLECT_PLIST"
-    chmod 644 "$LAUNCH_AGENTS_DIR/$WORKER_PLIST"
-    chmod 644 "$LAUNCH_AGENTS_DIR/$GUIDANCE_PLIST"
-    chmod 644 "$LAUNCH_AGENTS_DIR/$REPORT_PLIST"
+    for plist in "${PLISTS[@]}"; do
+        chmod 644 "$LAUNCH_AGENTS_DIR/$plist"
+    done
     
     echo "Done. Files copied to $LAUNCH_AGENTS_DIR."
     echo "To start the jobs, run: $0 load"
@@ -52,38 +52,45 @@ function install() {
 
 function load() {
     echo "Loading Gnosis jobs into launchctl..."
-    launchctl load "$LAUNCH_AGENTS_DIR/$SYNC_PLIST"
-    launchctl load "$LAUNCH_AGENTS_DIR/$REFLECT_PLIST"
-    launchctl load "$LAUNCH_AGENTS_DIR/$WORKER_PLIST"
-    launchctl load "$LAUNCH_AGENTS_DIR/$GUIDANCE_PLIST"
-    launchctl load "$LAUNCH_AGENTS_DIR/$REPORT_PLIST"
+    for plist in "${PLISTS[@]}"; do
+        launchctl load "$LAUNCH_AGENTS_DIR/$plist"
+    done
     echo "Jobs loaded."
 }
 
 function unload() {
     echo "Unloading Gnosis jobs from launchctl..."
-    launchctl unload "$LAUNCH_AGENTS_DIR/$SYNC_PLIST"
-    launchctl unload "$LAUNCH_AGENTS_DIR/$REFLECT_PLIST"
-    launchctl unload "$LAUNCH_AGENTS_DIR/$WORKER_PLIST"
-    launchctl unload "$LAUNCH_AGENTS_DIR/$GUIDANCE_PLIST"
-    launchctl unload "$LAUNCH_AGENTS_DIR/$REPORT_PLIST"
+    for plist in "${PLISTS[@]}"; do
+        launchctl unload "$LAUNCH_AGENTS_DIR/$plist" 2>/dev/null || true
+    done
     echo "Jobs unloaded."
 }
 
 function uninstall() {
     echo "Uninstalling Gnosis LaunchAgents..."
     unload
-    rm "$LAUNCH_AGENTS_DIR/$SYNC_PLIST"
-    rm "$LAUNCH_AGENTS_DIR/$REFLECT_PLIST"
-    rm "$LAUNCH_AGENTS_DIR/$WORKER_PLIST"
-    rm "$LAUNCH_AGENTS_DIR/$GUIDANCE_PLIST"
-    rm "$LAUNCH_AGENTS_DIR/$REPORT_PLIST"
+    for plist in "${PLISTS[@]}"; do
+        rm -f "$LAUNCH_AGENTS_DIR/$plist"
+    done
     echo "Files removed."
 }
 
 function status() {
     echo "Status of Gnosis jobs:"
-    launchctl list | grep com.gnosis
+    for plist in "${PLISTS[@]}"; do
+        label="${plist%.plist}"
+        target="$LAUNCH_AGENTS_DIR/$plist"
+        echo "--- $label ---"
+        if [ ! -f "$target" ]; then
+            echo "not installed"
+            continue
+        fi
+        if launchctl print "gui/$UID/$label" >/dev/null 2>&1; then
+            launchctl print "gui/$UID/$label" | grep -E "state =|last exit code|pid =|path =|program =|program arguments =" || true
+        else
+            echo "not loaded"
+        fi
+    done
 }
 
 

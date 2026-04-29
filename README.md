@@ -3,7 +3,7 @@
 Gnosis は、LLM エージェント向けの agent-first な知識・記憶・レビュー基盤です。  
 MCP サーバーとして動作し、一次導線は `activate_project -> search_knowledge -> start_task` を中心に設計されています。
 
-Episode 機能は中核ワークフローから外し、再利用可能な knowledge（rule/lesson/procedure/skill/decision/risk/command recipe）に寄せています。
+中核ワークフローは、再利用可能な knowledge（rule/lesson/procedure/skill/decision/risk/command recipe）に寄せています。
 
 ## 5分で最小起動 (minimal)
 
@@ -103,10 +103,10 @@ bun run maintenance
 - [Startup Guide](docs/startup.md)
 - [Configuration](docs/configuration.md)
 - [MCP Tools](docs/mcp-tools.md)
-- [Architecture](docs/architecture.md)
 - [Data Layers](docs/data-layers.md)
 - [Hooks Guide](docs/hooks-guide.md)
 - [KnowFlow Guide](docs/knowflow-guide.md)
+- [Active-Use Improvement Plan](docs/active-use-improvement-plan.md)
 - [Agent-First Refactoring Plan](docs/agent-first-gnosis-refactoring-plan.md)
 
 ## ライセンス

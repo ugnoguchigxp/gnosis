@@ -11,6 +11,7 @@ const mockGetReviewLLMService = mock();
 const mockRunReviewStageB = mock();
 const mockRunReviewStageD = mock();
 const mockRunReviewStageE = mock();
+const mockDispatchHookEvent = mock();
 
 mock.module('../../../src/services/agentFirst.js', () => ({
   buildActivateProjectResult: mockBuildActivateProjectResult,
@@ -28,6 +29,9 @@ mock.module('../../../src/services/review/orchestrator.js', () => ({
   runReviewStageB: mockRunReviewStageB,
   runReviewStageD: mockRunReviewStageD,
   runReviewStageE: mockRunReviewStageE,
+}));
+mock.module('../../../src/hooks/service.js', () => ({
+  dispatchHookEvent: mockDispatchHookEvent,
 }));
 
 import { agentFirstTools } from '../../../src/mcp/tools/agentFirst.js';
@@ -51,6 +55,15 @@ describe('agent-first MCP tools', () => {
     mockRunReviewStageB.mockReset();
     mockRunReviewStageD.mockReset();
     mockRunReviewStageE.mockReset();
+    mockDispatchHookEvent.mockReset();
+    mockDispatchHookEvent.mockResolvedValue({
+      blocked: false,
+      guidance: [],
+      warnings: [],
+      riskTags: [],
+      candidateIds: [],
+      ruleResults: [],
+    });
   });
 
   it('initial_instructions returns first-call guidance', async () => {
@@ -60,14 +73,23 @@ describe('agent-first MCP tools', () => {
     const payload = JSON.parse(text) as {
       firstCall?: string;
       alwaysRules?: string[];
-      preImplementationRuleLookup?: { required?: boolean; tool?: string };
+      knowledgeLookupDecision?: {
+        defaultAction?: string;
+        useWhen?: string;
+        requiredContext?: string[];
+      };
+      preImplementationRuleLookup?: { required?: string; tool?: string; preset?: string };
     };
     expect(payload.firstCall).toBe('activate_project');
     expect(payload.alwaysRules).toContain(
-      'Before code edits, search task-specific rules with search_knowledge using concrete task context.',
+      'initial_instructions: once per session; again only before review flow.',
     );
-    expect(payload.preImplementationRuleLookup?.required).toBe(true);
+    expect(payload.knowledgeLookupDecision?.defaultAction).toBe('skip_search_knowledge');
+    expect(payload.knowledgeLookupDecision?.useWhen).toContain('non-trivial edit/review');
+    expect(payload.knowledgeLookupDecision?.requiredContext).toContain('taskGoal');
+    expect(payload.preImplementationRuleLookup?.required).toBe('conditional');
     expect(payload.preImplementationRuleLookup?.tool).toBe('search_knowledge');
+    expect(payload.preImplementationRuleLookup?.preset).toBe('task_context');
   });
 
   it('activate_project delegates to buildActivateProjectResult', async () => {
@@ -225,6 +247,12 @@ describe('agent-first MCP tools', () => {
     expect(mockRunReviewStageD).toHaveBeenCalledWith(
       expect.objectContaining({ knowledgePolicy: 'required' }),
       expect.anything(),
+    );
+    expect(mockDispatchHookEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'task.ready_for_review' }),
+    );
+    expect(mockDispatchHookEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'review.completed' }),
     );
     expect(payload.knowledgeUsed?.length).toBe(1);
     expect((payload as { findings?: unknown[] }).findings?.length).toBe(1);

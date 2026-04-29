@@ -3,6 +3,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
+import { envBoolean } from '../../config.js';
+import { GNOSIS_CONSTANTS } from '../../constants.js';
+import { dispatchHookEvent } from '../../hooks/service.js';
 import {
   buildActivateProjectResult,
   buildDoctorRuntimeHealth,
@@ -288,86 +291,31 @@ TYPICAL NEXT TOOL:
     handler: async () => {
       const payload = {
         firstCall: 'activate_project',
-        why: 'Project health, always-on rules, and task-specific rule lookup guidance are required before editing.',
         alwaysRules: [
-          'Run initial_instructions at session start.',
-          'Run initial_instructions again before review flow.',
-          'Do not call review_task before initial_instructions.',
-          'Do not perform git add, commit, push, or PR creation unless the user explicitly asks.',
-          'Do not implement authentication bypasses.',
-          'Do not perform large rollback or destructive database operations without user confirmation.',
-          'Before code edits, search task-specific rules with search_knowledge using concrete task context.',
+          'initial_instructions: once per session; again only before review flow.',
+          'review_task requires prior initial_instructions.',
+          'No git/auth/destructive DB actions without explicit user instruction.',
         ],
-        globalRules: [
-          'Run initial_instructions at session start.',
-          'Run initial_instructions again before review flow.',
-          'Do not call review_task before initial_instructions.',
-        ],
+        knowledgeLookupDecision: {
+          defaultAction: 'skip_search_knowledge',
+          useWhen: 'non-trivial edit/review with project-specific uncertainty or repeated failure',
+          requiredContext: ['taskGoal', 'files/changeTypes'],
+        },
         preImplementationRuleLookup: {
-          required: true,
+          required: 'conditional',
           tool: 'search_knowledge',
-          when: [
-            'before code edits',
-            'before architecture or API changes',
-            'before review_task',
-            'when the task scope or target files change',
-          ],
-          how: {
-            preset: 'task_context',
-            intent: 'plan | edit | debug | review | finish',
-            taskGoal: 'Describe the concrete implementation goal in one sentence.',
-            query: 'Include affected area, risk, and implementation intent.',
-            files: 'Known target files or directories.',
-            changeTypes:
-              'frontend | backend | api | auth | db | docs | test | mcp | refactor | config | build | review',
-            kinds: ['rule', 'procedure', 'risk', 'lesson'],
-          },
-          example: {
-            preset: 'task_context',
-            intent: 'edit',
-            taskGoal: 'Refactor MCP initial instructions and task-specific rule retrieval.',
-            query: 'MCP Agent-First rule lookup before implementation',
-            files: ['src/mcp/tools/agentFirst.ts', 'src/services/agentFirst.ts'],
-            changeTypes: ['mcp', 'refactor'],
-            technologies: ['typescript', 'mcp'],
-            kinds: ['rule', 'procedure', 'risk', 'lesson'],
-            categories: ['mcp', 'architecture', 'workflow', 'coding_convention'],
-          },
-        },
-        scenarioGuides: {
-          review: {
-            requiredOrder: [
-              'initial_instructions',
-              'activate_project(mode=review)',
-              'search_knowledge(preset=review_context)',
-              'review_task',
-              'record_task_note (optional)',
-            ],
-          },
-        },
-        toolPlaybook: {
-          review_task: {
-            when: 'Primary review entrypoint for code/document/spec/plan/design.',
-            doNotUseWhen: 'You need hook/background-integrated review pipeline behavior.',
-            requiredInput: 'targetType + target(diff|content|documentPath)',
-            example: {
-              targetType: 'code_diff',
-              target: { filePaths: ['src/services/review/orchestrator.ts'] },
-              reviewMode: 'standard',
-            },
-          },
-        },
-        recovery: {
-          whenOutOfOrder: ['doctor', 'activate_project', 'search_knowledge', 'review_task'],
+          preset: 'task_context',
         },
         recommendedWorkflow: [
           'activate_project',
-          'search_knowledge(preset=task_context with taskGoal/files/changeTypes)',
-          'start_task',
-          'record_task_note / finish_task',
+          'start_task when editing',
+          'finish_task when done',
         ],
-        caution:
-          'Use the Agent-First workflow only. Non-primary tools are not part of the MCP surface.',
+        reviewWorkflow: [
+          'activate_project(mode=review)',
+          'search_knowledge(preset=review_context)',
+          'review_task',
+        ],
       };
       return { content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }] };
     },
@@ -393,9 +341,9 @@ TYPICAL NEXT TOOL:
   {
     name: 'search_knowledge',
     description: `WHEN TO USE:
-- 実装前・レビュー前に再利用知識（rule/lesson/procedure/risk 等）を取得するとき。
+- 非自明な実装・レビュー前に、再利用知識（rule/lesson/procedure/risk 等）が結果を変え得るとき。
 DO NOT USE WHEN:
-- なし（再利用知識検索の標準入口です）。
+- 単純なTODO作成、状態確認、コマンド出力確認、ローカルファイル確認だけで足りる自己完結タスク。
 WHAT IT RETURNS:
 - category 別 grouped hits、flatTopHits、reason/snippet/matchSources を含む explainable 結果。
 TYPICAL NEXT TOOL:
@@ -492,6 +440,39 @@ TYPICAL NEXT TOOL:
             {
               type: 'text',
               text: 'review_task(document/spec/design/implementation_plan) requires target.content or target.documentPath.',
+            },
+          ],
+          isError: true,
+        };
+      }
+      const preReviewHookResult = await dispatchHookEvent({
+        event: 'task.ready_for_review',
+        traceId: randomUUID(),
+        payload: {
+          targetType: input.targetType,
+          goal: input.goal,
+        },
+        context: {
+          cwd: input.repoPath ?? process.cwd(),
+          changedFiles: input.target.filePaths,
+          reviewRequested: true,
+        },
+      }).catch(() => null);
+      if (preReviewHookResult?.blocked) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(
+                {
+                  blocked: true,
+                  event: 'task.ready_for_review',
+                  guidance: preReviewHookResult.guidance,
+                  warnings: preReviewHookResult.warnings,
+                },
+                null,
+                2,
+              ),
             },
           ],
           isError: true,
@@ -688,6 +669,21 @@ TYPICAL NEXT TOOL:
         summary,
         suggestedNotes,
       };
+      await dispatchHookEvent({
+        event: 'review.completed',
+        traceId: randomUUID(),
+        payload: {
+          targetType: input.targetType,
+          providerUsed,
+          findingCount: findings.length,
+          summary,
+        },
+        context: {
+          cwd: input.repoPath ?? process.cwd(),
+          changedFiles: input.target.filePaths,
+          reviewRequested: true,
+        },
+      }).catch(() => undefined);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     },
   },
@@ -713,10 +709,12 @@ TYPICAL NEXT TOOL:
       const runtimeHealth = await buildDoctorRuntimeHealth(exposedToolNames);
       const result = {
         runtime: {
-          automation:
-            process.env.GNOSIS_ENABLE_AUTOMATION === 'true'
-              ? ('enabled' as const)
-              : ('disabled' as const),
+          automation: envBoolean(
+            process.env.GNOSIS_ENABLE_AUTOMATION,
+            GNOSIS_CONSTANTS.AUTOMATION_ENABLED_DEFAULT,
+          )
+            ? ('enabled' as const)
+            : ('disabled' as const),
           cwd: process.cwd(),
         },
         toolVisibility: runtimeHealth.toolVisibility,

@@ -2,10 +2,16 @@
 /**
  * 定期実行（Cron）用の省察・統合スクリプト
  */
+import { envBoolean } from '../config.js';
+import { GNOSIS_CONSTANTS } from '../constants.js';
 import { synthesizeKnowledge } from '../services/synthesis.js';
 
 async function main() {
-  if (process.env.GNOSIS_ENABLE_AUTOMATION !== 'true') {
+  const automationEnabled = envBoolean(
+    process.env.GNOSIS_ENABLE_AUTOMATION,
+    GNOSIS_CONSTANTS.AUTOMATION_ENABLED_DEFAULT,
+  );
+  if (!automationEnabled) {
     console.log('[reflect] Automation is OFF. Skipping scheduled reflect.');
     process.exit(0);
   }

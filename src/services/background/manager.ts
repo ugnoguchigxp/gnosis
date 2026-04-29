@@ -1,4 +1,5 @@
-import { config } from '../../config.js';
+import { config, envBoolean } from '../../config.js';
+import { GNOSIS_CONSTANTS } from '../../constants.js';
 import { processQueue } from './runner.js';
 import { scheduler } from './scheduler.js';
 
@@ -10,7 +11,11 @@ let lastTickStart = 0;
  * すべてのバックグラウンドプロセスを管理するマネージャー。
  */
 export function startBackgroundWorkers(): void {
-  if (process.env.GNOSIS_ENABLE_AUTOMATION !== 'true') {
+  const automationEnabled = envBoolean(
+    process.env.GNOSIS_ENABLE_AUTOMATION,
+    GNOSIS_CONSTANTS.AUTOMATION_ENABLED_DEFAULT,
+  );
+  if (!automationEnabled) {
     console.error('[BackgroundManager] Automation is OFF. Skipping background worker startup.');
     return;
   }

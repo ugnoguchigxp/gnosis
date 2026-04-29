@@ -2,7 +2,8 @@ import { resolve } from 'node:path';
 // Set process title for easier identification
 process.title = 'gnosis-worker';
 import { createLocalLlmRetriever } from '../adapters/retriever/mcpRetriever.js';
-import { config, envNumber } from '../config.js';
+import { config, envBoolean, envNumber } from '../config.js';
+import { GNOSIS_CONSTANTS } from '../constants.js';
 import { startBackgroundWorkers, stopBackgroundWorkers } from '../services/background/manager.js';
 
 // Add diagnostic info to environment
@@ -23,7 +24,11 @@ import { notifyTaskEnd, notifyTaskStart } from '../supervisor/client.js';
 import { withGlobalSemaphore } from '../utils/lock.js';
 
 async function main() {
-  if (process.env.GNOSIS_ENABLE_AUTOMATION !== 'true') {
+  const automationEnabled = envBoolean(
+    process.env.GNOSIS_ENABLE_AUTOMATION,
+    GNOSIS_CONSTANTS.AUTOMATION_ENABLED_DEFAULT,
+  );
+  if (!automationEnabled) {
     console.error('[Worker] Automation is OFF. Skipping daemon startup.');
     process.exit(0);
   }

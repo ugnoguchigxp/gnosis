@@ -1,6 +1,8 @@
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { envBoolean } from './config.js';
+import { GNOSIS_CONSTANTS } from './constants.js';
 import { closeDbPool } from './db/index.js';
 import { server } from './mcp/server.js';
 import { RuntimeLifecycle } from './runtime/lifecycle.js';
@@ -114,13 +116,15 @@ async function main() {
 
   const transport = new StdioServerTransport();
 
-  // 実装中の暴発を避けるため、明示的に有効化した場合のみ起動する。
-  const automationEnabled = process.env.GNOSIS_ENABLE_AUTOMATION === 'true';
+  const automationEnabled = envBoolean(
+    process.env.GNOSIS_ENABLE_AUTOMATION,
+    GNOSIS_CONSTANTS.AUTOMATION_ENABLED_DEFAULT,
+  );
   if (automationEnabled && process.env.GNOSIS_NO_WORKERS !== 'true') {
     startBackgroundWorkers();
   } else {
     console.error(
-      '[Main] Background workers are OFF (set GNOSIS_ENABLE_AUTOMATION=true to enable).',
+      '[Main] Background workers are OFF (set GNOSIS_ENABLE_AUTOMATION=false or GNOSIS_NO_WORKERS=true only when intentionally disabled).',
     );
   }
 

@@ -52,6 +52,22 @@ const createInitialSnapshot = (): MonitorSnapshotData => ({
     failed: 0,
     updatedAtTs: null,
   },
+  automation: {
+    automationGate: false,
+    backgroundWorkerGate: false,
+    localLlmConfigured: false,
+    localLlmApiBaseUrl: null,
+  },
+  knowflow: {
+    status: 'unknown',
+    lastWorkerTs: null,
+    lastWorkerSummary: null,
+    lastSeedTs: null,
+    lastSeedSummary: null,
+    lastFrontierSeedTs: null,
+    lastKeywordSeedTs: null,
+    lastFailureTs: null,
+  },
   taskIndex: [],
 });
 
@@ -169,6 +185,15 @@ const formatTime = (ts: number | null | undefined): string => {
     return '-';
   }
   return new Date(ts).toLocaleString('ja-JP', { hour12: false });
+};
+
+const formatBoolean = (value: boolean): string => (value ? 'on' : 'off');
+
+const statusTone = (status: string): string => {
+  if (status === 'healthy') return 'connected';
+  if (status === 'degraded') return 'offline';
+  if (status === 'idle') return 'reconnecting';
+  return '';
 };
 
 const eventDetail = (event: TimelineEvent): string => {
@@ -481,6 +506,29 @@ onMount(() => {
 				<div class="metric"><div class="metric-label">degraded rate</div><div class="metric-value">{snapshot.eval.degradedRate.toFixed(2)}%</div></div>
 				<div class="metric"><div class="metric-label">passed / failed</div><div class="metric-value">{snapshot.eval.passed} / {snapshot.eval.failed}</div></div>
 				<div class="metric" style="grid-column: span 2;"><div class="metric-label">updated</div><div class="metric-value" style="font-size: 0.92rem;">{formatTime(snapshot.eval.updatedAtTs)}</div></div>
+			</div>
+		</section>
+
+		<section class="panel">
+			<h2>Automation</h2>
+			<div class="stat-row">
+				<div class="metric"><div class="metric-label">automation</div><div class="metric-value">{formatBoolean(snapshot.automation.automationGate)}</div></div>
+				<div class="metric"><div class="metric-label">worker gate</div><div class="metric-value">{formatBoolean(snapshot.automation.backgroundWorkerGate)}</div></div>
+				<div class="metric"><div class="metric-label">local LLM</div><div class="metric-value">{formatBoolean(snapshot.automation.localLlmConfigured)}</div></div>
+				<div class="metric"><div class="metric-label">api</div><div class="metric-value" style="font-size: 0.78rem;">{snapshot.automation.localLlmApiBaseUrl ?? '-'}</div></div>
+			</div>
+		</section>
+
+		<section class="panel">
+			<h2>KnowFlow</h2>
+			<div class="stat-row">
+				<div class="metric"><div class="metric-label">status</div><div class={`badge ${statusTone(snapshot.knowflow.status)}`}>{snapshot.knowflow.status}</div></div>
+				<div class="metric"><div class="metric-label">last worker</div><div class="metric-value" style="font-size: 0.82rem;">{formatTime(snapshot.knowflow.lastWorkerTs)}</div></div>
+				<div class="metric"><div class="metric-label">last seed</div><div class="metric-value" style="font-size: 0.82rem;">{formatTime(snapshot.knowflow.lastSeedTs)}</div></div>
+				<div class="metric"><div class="metric-label">last failure</div><div class="metric-value" style="font-size: 0.82rem;">{formatTime(snapshot.knowflow.lastFailureTs)}</div></div>
+				<div class="metric"><div class="metric-label">frontier</div><div class="metric-value" style="font-size: 0.82rem;">{formatTime(snapshot.knowflow.lastFrontierSeedTs)}</div></div>
+				<div class="metric"><div class="metric-label">keyword</div><div class="metric-value" style="font-size: 0.82rem;">{formatTime(snapshot.knowflow.lastKeywordSeedTs)}</div></div>
+				<div class="metric" style="grid-column: span 2;"><div class="metric-label">summary</div><div class="metric-value" style="font-size: 0.78rem;">{snapshot.knowflow.lastSeedSummary ?? snapshot.knowflow.lastWorkerSummary ?? '-'}</div></div>
 			</div>
 		</section>
 	</div>

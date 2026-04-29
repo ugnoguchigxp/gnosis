@@ -7,7 +7,10 @@ import { db as defaultDb } from '../../db/index.js';
 import { searchKnowledgeClaims } from '../knowledge.js';
 import { type TaskMode, type TaskSource, createTask } from './domain/task';
 import { runEvalSuite } from './eval/runner';
-import { enqueueFrontierCandidates, selectFrontierCandidates } from './frontier/selector';
+import {
+  enqueueFrontierCandidates,
+  selectFrontierCandidatesWithMetadata,
+} from './frontier/selector';
 import { PgKnowledgeRepository } from './knowledge/repository';
 import { KnowledgeUpsertInputSchema } from './knowledge/types';
 import type { StructuredLogger } from './ops/logger';
@@ -32,7 +35,7 @@ const usage = `Usage:
   bun src/services/knowflow/cli.ts search-knowledge --query <text> [--limit <n>]
   bun src/services/knowflow/cli.ts get-knowledge --topic <text>
   bun src/services/knowflow/cli.ts merge-knowledge --input <json> [--dry-run]
-  bun src/services/knowflow/cli.ts seed-frontier [--limit <n>] [--max-per-community <n>] [--dry-run]
+  bun src/services/knowflow/cli.ts seed-frontier [--limit <n>] [--max-per-community <n>] [--dry-run] [--use-llm|--no-llm]
   bun src/services/knowflow/cli.ts eval-run [--suite local] [--max-degraded-rate <0-100>] [--mock]
 
 Global options:
@@ -101,6 +104,21 @@ const parseSource = (raw?: string): TaskSource => {
     return raw;
   }
   return 'user';
+};
+
+export const resolveFrontierUseLlm = (
+  args: Record<string, string | boolean>,
+  dryRun: boolean,
+  defaultUseLlm: boolean,
+): boolean => {
+  const useLlmFlag = readBooleanFlag(args, 'use-llm');
+  const noLlmFlag = readBooleanFlag(args, 'no-llm');
+  if (useLlmFlag && noLlmFlag) {
+    throw new Error('--use-llm and --no-llm cannot be used together');
+  }
+  if (useLlmFlag) return true;
+  if (noLlmFlag) return false;
+  return dryRun ? false : defaultUseLlm;
 };
 
 const run = async () => {
@@ -407,20 +425,26 @@ const run = async () => {
     if (command === 'seed-frontier') {
       const limit = readNumberFlag(args, 'limit') ?? 5;
       const maxPerCommunity = readNumberFlag(args, 'max-per-community');
+      const useLlm = resolveFrontierUseLlm(args, dryRun, config.knowflow.frontier.llmEnabled);
       const queueRepository = buildQueueRepository();
 
       if (dryRun) {
-        const candidates = await selectFrontierCandidates({
+        const selection = await selectFrontierCandidatesWithMetadata({
           limit,
           maxPerCommunity,
           database: defaultDb,
+          useLlm,
         });
         writeResult({
           command,
           runId: runLogger.runId,
           dryRun: true,
           profilePath,
-          candidates,
+          useLlm,
+          selectionMode: selection.selectionMode,
+          degraded: selection.degraded,
+          degradedReasons: selection.degradedReasons,
+          candidates: selection.candidates,
         });
         return;
       }
@@ -430,11 +454,13 @@ const run = async () => {
         maxPerCommunity,
         database: defaultDb,
         queueRepository,
+        useLlm,
       });
       writeResult({
         command,
         runId: runLogger.runId,
         profilePath,
+        useLlm,
         ...result,
       });
       return;
@@ -475,8 +501,10 @@ const run = async () => {
   }
 };
 
-run().catch((error) => {
-  const message = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`${message}\n\n${usage}`);
-  process.exitCode = 1;
-});
+if (import.meta.main) {
+  run().catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`${message}\n\n${usage}`);
+    process.exitCode = 1;
+  });
+}

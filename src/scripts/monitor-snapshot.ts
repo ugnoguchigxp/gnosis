@@ -1,6 +1,9 @@
 import { readFile, readdir } from 'node:fs/promises';
+import { createConnection } from 'node:net';
 import { join, resolve } from 'node:path';
 import { desc, inArray, sql } from 'drizzle-orm';
+import { envBoolean } from '../config.js';
+import { GNOSIS_CONSTANTS } from '../constants.js';
 import { db } from '../db/index.js';
 import { topicTasks } from '../db/schema.js';
 import { parseArgMap, readNumberFlag, readStringFlag } from '../services/knowflow/utils/args';
@@ -26,6 +29,24 @@ type EvalSnapshot = {
   updatedAtTs: number | null;
 };
 
+type AutomationSnapshot = {
+  automationGate: boolean;
+  backgroundWorkerGate: boolean;
+  localLlmConfigured: boolean;
+  localLlmApiBaseUrl: string | null;
+};
+
+type KnowFlowSnapshot = {
+  lastWorkerTs: number | null;
+  lastWorkerSummary: string | null;
+  lastSeedTs: number | null;
+  lastSeedSummary: string | null;
+  lastFrontierSeedTs: number | null;
+  lastKeywordSeedTs: number | null;
+  lastFailureTs: number | null;
+  status: 'idle' | 'healthy' | 'degraded' | 'unknown';
+};
+
 type TaskIndexEntry = {
   taskId: string;
   topic: string | null;
@@ -39,6 +60,8 @@ type MonitorSnapshot = {
   queue: QueueSnapshot;
   worker: WorkerSnapshot;
   eval: EvalSnapshot;
+  automation: AutomationSnapshot;
+  knowflow: KnowFlowSnapshot;
   taskIndex: TaskIndexEntry[];
 };
 
@@ -51,6 +74,45 @@ type RunEventRecord = {
 const MONITORED_QUEUE_STATUSES = ['pending', 'running', 'deferred', 'failed'] as const;
 const FALLBACK_FILE_LIMIT = 40;
 const FALLBACK_TASK_INDEX_LIMIT = 300;
+const DEFAULT_DATABASE_URL = 'postgres://postgres:postgres@localhost:7888/gnosis';
+
+const emptyQueueSnapshot = (): QueueSnapshot => ({
+  pending: 0,
+  running: 0,
+  deferred: 0,
+  failed: 0,
+});
+
+const canReachDatabase = async (timeoutMs = 250): Promise<boolean> => {
+  let url: URL;
+  try {
+    url = new URL(process.env.DATABASE_URL || DEFAULT_DATABASE_URL);
+  } catch {
+    return false;
+  }
+
+  if (url.protocol !== 'postgres:' && url.protocol !== 'postgresql:') {
+    return false;
+  }
+
+  const host = !url.hostname || url.hostname === 'localhost' ? '127.0.0.1' : url.hostname;
+  const port = Number(url.port || 5432);
+  if (!Number.isFinite(port)) {
+    return false;
+  }
+
+  return await new Promise((resolve) => {
+    const socket = createConnection({ host, port });
+    const finish = (reachable: boolean) => {
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(reachable);
+    };
+    socket.setTimeout(timeoutMs, () => finish(false));
+    socket.once('connect', () => finish(true));
+    socket.once('error', () => finish(false));
+  });
+};
 
 const toTimestampMs = (raw: unknown): number | null => {
   if (typeof raw !== 'string') {
@@ -71,8 +133,16 @@ const toNumber = (value: unknown): number | null => {
   return null;
 };
 
+const toStringValue = (value: unknown): string | null => {
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+};
+
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+};
+
+const isKnowFlowTaskType = (taskType: string | null): boolean => {
+  return taskType === 'knowflow' || taskType?.startsWith('knowflow_') === true;
 };
 
 const parseRunEventRecord = (line: string): RunEventRecord | null => {
@@ -124,22 +194,22 @@ const listRecentRunLogs = async (logsRoot: string, limit: number): Promise<strin
 };
 
 const countQueueStatuses = async (): Promise<QueueSnapshot> => {
-  const initial: QueueSnapshot = {
-    pending: 0,
-    running: 0,
-    deferred: 0,
-    failed: 0,
-  };
+  const initial = emptyQueueSnapshot();
 
-  const rows = await db
-    .select({
-      status: topicTasks.status,
-      count: sql<number>`count(*)::int`,
-    })
-    .from(topicTasks)
-    .where(inArray(topicTasks.status, [...MONITORED_QUEUE_STATUSES]))
-    .groupBy(topicTasks.status)
-    .orderBy(desc(topicTasks.status));
+  let rows: Array<{ status: string; count: number }>;
+  try {
+    rows = await db
+      .select({
+        status: topicTasks.status,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(topicTasks)
+      .where(inArray(topicTasks.status, [...MONITORED_QUEUE_STATUSES]))
+      .groupBy(topicTasks.status)
+      .orderBy(desc(topicTasks.status));
+  } catch {
+    return initial;
+  }
 
   for (const row of rows) {
     if (row.status === 'pending') {
@@ -160,16 +230,26 @@ const countQueueStatuses = async (): Promise<QueueSnapshot> => {
 };
 
 const collectTaskIndex = async (limit: number): Promise<TaskIndexEntry[]> => {
-  const rows = await db
-    .select({
-      id: topicTasks.id,
-      status: topicTasks.status,
-      payload: topicTasks.payload,
-      updatedAt: topicTasks.updatedAt,
-    })
-    .from(topicTasks)
-    .orderBy(desc(topicTasks.updatedAt))
-    .limit(Math.max(1, limit));
+  let rows: Array<{
+    id: string;
+    status: string;
+    payload: unknown;
+    updatedAt: Date | string | null;
+  }>;
+  try {
+    rows = await db
+      .select({
+        id: topicTasks.id,
+        status: topicTasks.status,
+        payload: topicTasks.payload,
+        updatedAt: topicTasks.updatedAt,
+      })
+      .from(topicTasks)
+      .orderBy(desc(topicTasks.updatedAt))
+      .limit(Math.max(1, limit));
+  } catch {
+    return [];
+  }
 
   return rows.map((row) => {
     const payload = isRecord(row.payload) ? row.payload : {};
@@ -186,10 +266,14 @@ const collectTaskIndex = async (limit: number): Promise<TaskIndexEntry[]> => {
   });
 };
 
-const collectWorkerAndEval = async (
+export const collectWorkerEvalAndKnowFlow = async (
   logsRoot: string,
   fileLimit: number,
-): Promise<{ worker: WorkerSnapshot; evalResult: EvalSnapshot }> => {
+): Promise<{
+  worker: WorkerSnapshot;
+  evalResult: EvalSnapshot;
+  knowflow: KnowFlowSnapshot;
+}> => {
   const worker: WorkerSnapshot = {
     lastSuccessTs: null,
     lastFailureTs: null,
@@ -201,6 +285,17 @@ const collectWorkerAndEval = async (
     passed: 0,
     failed: 0,
     updatedAtTs: null,
+  };
+
+  const knowflow: KnowFlowSnapshot = {
+    lastWorkerTs: null,
+    lastWorkerSummary: null,
+    lastSeedTs: null,
+    lastSeedSummary: null,
+    lastFrontierSeedTs: null,
+    lastKeywordSeedTs: null,
+    lastFailureTs: null,
+    status: 'unknown',
   };
 
   const files = await listRecentRunLogs(logsRoot, fileLimit);
@@ -223,6 +318,11 @@ const collectWorkerAndEval = async (
         if (worker.lastSuccessTs === null && ts !== null) {
           worker.lastSuccessTs = ts;
         }
+        if (knowflow.lastWorkerTs === null && ts !== null) {
+          knowflow.lastWorkerTs = ts;
+          knowflow.lastWorkerSummary =
+            toStringValue(record.data?.summary) ?? toStringValue(record.data?.resultSummary);
+        }
         if (!consecutiveCounterDone) {
           consecutiveCounterDone = true;
         }
@@ -232,8 +332,70 @@ const collectWorkerAndEval = async (
         if (worker.lastFailureTs === null && ts !== null) {
           worker.lastFailureTs = ts;
         }
+        if (knowflow.lastFailureTs === null && ts !== null) {
+          knowflow.lastFailureTs = ts;
+        }
         if (!consecutiveCounterDone) {
           worker.consecutiveFailures += 1;
+        }
+      }
+
+      if (
+        (record.event === 'background.task.completed' ||
+          record.event === 'background.task.failed') &&
+        record.data
+      ) {
+        const taskType = toStringValue(record.data.taskType);
+        const isKnowFlowBackgroundTask = isKnowFlowTaskType(taskType);
+        if (
+          record.event === 'background.task.failed' &&
+          isKnowFlowBackgroundTask &&
+          knowflow.lastFailureTs === null &&
+          ts !== null
+        ) {
+          knowflow.lastFailureTs = ts;
+        }
+
+        if (
+          isKnowFlowBackgroundTask &&
+          taskType === 'knowflow' &&
+          knowflow.lastWorkerTs === null &&
+          ts !== null
+        ) {
+          knowflow.lastWorkerTs = ts;
+          knowflow.lastWorkerSummary = toStringValue(record.data.summary);
+        }
+
+        if (
+          (taskType === 'knowflow_frontier_seed' || taskType === 'knowflow_keyword_seed') &&
+          knowflow.lastSeedTs === null &&
+          ts !== null
+        ) {
+          knowflow.lastSeedTs = ts;
+          knowflow.lastSeedSummary = toStringValue(record.data.summary);
+        }
+
+        if (
+          taskType === 'knowflow_frontier_seed' &&
+          knowflow.lastFrontierSeedTs === null &&
+          ts !== null
+        ) {
+          knowflow.lastFrontierSeedTs = ts;
+        }
+
+        if (
+          taskType === 'knowflow_keyword_seed' &&
+          knowflow.lastKeywordSeedTs === null &&
+          ts !== null
+        ) {
+          knowflow.lastKeywordSeedTs = ts;
+        }
+      }
+
+      if (record.event === 'cli.result' && record.data?.command === 'seed-frontier') {
+        if (knowflow.lastSeedTs === null && ts !== null) {
+          knowflow.lastSeedTs = ts;
+          knowflow.lastSeedSummary = 'manual seed-frontier run';
         }
       }
 
@@ -263,11 +425,41 @@ const collectWorkerAndEval = async (
     }
   }
 
+  if (
+    knowflow.lastFailureTs !== null &&
+    knowflow.lastWorkerTs === null &&
+    knowflow.lastSeedTs === null
+  ) {
+    knowflow.status = 'degraded';
+  } else if (knowflow.lastWorkerTs !== null || knowflow.lastSeedTs !== null) {
+    knowflow.status =
+      knowflow.lastFailureTs !== null &&
+      Math.max(knowflow.lastWorkerTs ?? 0, knowflow.lastSeedTs ?? 0) < knowflow.lastFailureTs
+        ? 'degraded'
+        : 'healthy';
+  } else {
+    knowflow.status = 'idle';
+  }
+
   return {
     worker,
     evalResult,
+    knowflow,
   };
 };
+
+const collectAutomation = (): AutomationSnapshot => ({
+  automationGate: envBoolean(
+    process.env.GNOSIS_ENABLE_AUTOMATION,
+    GNOSIS_CONSTANTS.AUTOMATION_ENABLED_DEFAULT,
+  ),
+  backgroundWorkerGate: envBoolean(
+    process.env.GNOSIS_BACKGROUND_WORKER_ENABLED,
+    GNOSIS_CONSTANTS.BACKGROUND_WORKER_ENABLED_DEFAULT,
+  ),
+  localLlmConfigured: Boolean(process.env.LOCAL_LLM_API_BASE_URL?.trim()),
+  localLlmApiBaseUrl: process.env.LOCAL_LLM_API_BASE_URL?.trim() || null,
+});
 
 const run = async (): Promise<void> => {
   const args = parseArgMap(process.argv.slice(2));
@@ -277,15 +469,21 @@ const run = async (): Promise<void> => {
   const fileLimit = readNumberFlag(args, 'file-limit') ?? FALLBACK_FILE_LIMIT;
   const taskIndexLimit = readNumberFlag(args, 'task-index-limit') ?? FALLBACK_TASK_INDEX_LIMIT;
 
-  const queue = await countQueueStatuses();
-  const { worker, evalResult } = await collectWorkerAndEval(logsRoot, Math.max(1, fileLimit));
-  const taskIndex = await collectTaskIndex(taskIndexLimit);
+  const databaseReachable = await canReachDatabase();
+  const queue = databaseReachable ? await countQueueStatuses() : emptyQueueSnapshot();
+  const { worker, evalResult, knowflow } = await collectWorkerEvalAndKnowFlow(
+    logsRoot,
+    Math.max(1, fileLimit),
+  );
+  const taskIndex = databaseReachable ? await collectTaskIndex(taskIndexLimit) : [];
 
   const payload: MonitorSnapshot = {
     ts: Date.now(),
     queue,
     worker,
     eval: evalResult,
+    automation: collectAutomation(),
+    knowflow,
     taskIndex,
   };
 

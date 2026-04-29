@@ -15,7 +15,7 @@ CREATE TABLE "knowflow_keyword_evaluations" (
 	"model_alias" text NOT NULL,
 	"created_at" timestamp DEFAULT now() NOT NULL,
 	CONSTRAINT "knowflow_keyword_eval_run_source_topic_unique" UNIQUE("run_id","source_type","source_id","topic"),
-	CONSTRAINT "knowflow_keyword_eval_source_type_check" CHECK ("knowflow_keyword_evaluations"."source_type" IN ('episode', 'experience')),
+	CONSTRAINT "knowflow_keyword_eval_source_type_check" CHECK ("knowflow_keyword_evaluations"."source_type" IN ('experience')),
 	CONSTRAINT "knowflow_keyword_eval_decision_check" CHECK ("knowflow_keyword_evaluations"."decision" IN ('enqueued', 'skipped')),
 	CONSTRAINT "knowflow_keyword_eval_model_alias_check" CHECK ("knowflow_keyword_evaluations"."model_alias" IN ('bonsai', 'gemma4', 'bedrock', 'openai')),
 	CONSTRAINT "knowflow_keyword_eval_search_score_check" CHECK ("knowflow_keyword_evaluations"."search_score" >= 0 AND "knowflow_keyword_evaluations"."search_score" <= 10),

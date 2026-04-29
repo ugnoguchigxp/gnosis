@@ -1,13 +1,11 @@
-import { db as defaultDb } from '../../db/index.js';
-import { withGlobalSemaphore } from '../../utils/lock.js';
-import { scheduler } from './scheduler.js';
-import { embeddingBatchTask } from './tasks/embeddingBatchTask.js';
-import { synthesisTask } from './tasks/synthesisTask.js';
-
+import { appendFile, mkdir } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { createLocalLlmRetriever } from '../../adapters/retriever/mcpRetriever.js';
 // KnowFlow 関連のインポート (Port from scripts/worker.ts)
 import { config } from '../../config.js';
+import { db as defaultDb } from '../../db/index.js';
 import { promotePendingHookCandidates } from '../../hooks/service.js';
+import { withGlobalSemaphore } from '../../utils/lock.js';
 import { runKeywordSeederOnce } from '../knowflow/cron/keywordSeeder.js';
 import type { KeywordSeederRunResult } from '../knowflow/cron/types.js';
 import { enqueueFrontierCandidates } from '../knowflow/frontier/selector.js';
@@ -19,6 +17,9 @@ import {
 } from '../knowflow/worker/knowFlowHandler.js';
 import { runWorkerOnce } from '../knowflow/worker/loop.js';
 import type { RunOnceResult } from '../knowflow/worker/loop.js';
+import { scheduler } from './scheduler.js';
+import { embeddingBatchTask } from './tasks/embeddingBatchTask.js';
+import { synthesisTask } from './tasks/synthesisTask.js';
 
 interface TaskPayload {
   batchSize?: number;
@@ -34,6 +35,41 @@ export type TaskOutcome = {
   error?: string;
   stats?: Record<string, unknown>;
 };
+
+type BackgroundTaskRunRecord = {
+  taskId: string;
+  taskType: string;
+  ok: boolean;
+  processed?: boolean;
+  summary?: string;
+  error?: string;
+  stats?: Record<string, unknown>;
+};
+
+type ProcessQueueDeps = {
+  database: typeof defaultDb;
+  runWorkerOnce?: typeof runWorkerOnce;
+  runKeywordSeederOnce?: typeof runKeywordSeederOnce;
+  enqueueFrontierCandidates?: typeof enqueueFrontierCandidates;
+  recordBackgroundTaskRun?: (input: BackgroundTaskRunRecord) => Promise<void>;
+};
+
+async function recordBackgroundTaskRun(input: BackgroundTaskRunRecord): Promise<void> {
+  const logPath = join(process.cwd(), 'logs', 'runs', 'background-manager.jsonl');
+  const payload = {
+    ts: new Date().toISOString(),
+    runId: 'background-manager',
+    event: input.ok ? 'background.task.completed' : 'background.task.failed',
+    data: input,
+  };
+
+  try {
+    await mkdir(dirname(logPath), { recursive: true });
+    await appendFile(logPath, `${JSON.stringify(payload)}\n`);
+  } catch (error) {
+    console.error('[TaskRunner] Failed to record background task run:', error);
+  }
+}
 
 const readNonNegativeInt = (value: unknown): number | undefined => {
   const raw =
@@ -280,7 +316,7 @@ async function runKnowFlowFrontierSeedIteration(
  */
 export async function processQueue(
   customScheduler = scheduler,
-  deps: { database: typeof defaultDb } = { database: defaultDb },
+  deps: ProcessQueueDeps = { database: defaultDb },
 ) {
   // 30分以上経過した停滞タスクをリセット
   customScheduler.cleanupStaleTasks();
@@ -343,6 +379,14 @@ export async function processQueue(
               );
             }
 
+            await (deps.recordBackgroundTaskRun ?? recordBackgroundTaskRun)({
+              taskId: task.id,
+              taskType: task.type,
+              ok: true,
+              processed: outcome.processed,
+              summary: outcome.summary,
+              stats: outcome.stats,
+            });
             customScheduler.updateTaskStatus(task.id, 'completed');
             customScheduler.deleteTask(task.id);
           } catch (error) {
@@ -351,6 +395,12 @@ export async function processQueue(
             const errorMessage =
               error instanceof Error ? `${error.message}\n${error.stack}` : String(error);
 
+            await (deps.recordBackgroundTaskRun ?? recordBackgroundTaskRun)({
+              taskId: task.id,
+              taskType: task.type,
+              ok: false,
+              error: error instanceof Error ? error.message : String(error),
+            });
             const nextRetry = Date.now() + 5 * 60 * 1000;
             customScheduler.updateTaskStatus(task.id, 'failed', errorMessage, nextRetry);
           }

@@ -1,5 +1,7 @@
 import { exec } from 'node:child_process';
 import { sql } from 'drizzle-orm';
+import { envBoolean } from '../config.js';
+import { GNOSIS_CONSTANTS } from '../constants.js';
 import { db } from '../db/index.js';
 import { experienceLogs, knowledgeClaims, knowledgeTopics, vibeMemories } from '../db/schema.js';
 
@@ -23,7 +25,11 @@ async function getDbSize(): Promise<string> {
 }
 
 async function main() {
-  if (process.env.GNOSIS_ENABLE_AUTOMATION !== 'true') {
+  const automationEnabled = envBoolean(
+    process.env.GNOSIS_ENABLE_AUTOMATION,
+    GNOSIS_CONSTANTS.AUTOMATION_ENABLED_DEFAULT,
+  );
+  if (!automationEnabled) {
     console.log('[status-report] Automation is OFF. Skipping scheduled report.');
     process.exit(0);
   }

@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
-import { config } from '../config.js';
+import { config, envBoolean } from '../config.js';
+import { GNOSIS_CONSTANTS } from '../constants.js';
 import { db } from '../db/index.js';
 import { scheduler } from '../services/background/scheduler.js';
 import { PgJsonbQueueRepository } from '../services/knowflow/queue/pgJsonbRepository.js';
@@ -9,7 +10,11 @@ import { PgJsonbQueueRepository } from '../services/knowflow/queue/pgJsonbReposi
  * cron 起動や、定期的な整理のために実行されることを想定しています。
  */
 async function main() {
-  if (process.env.GNOSIS_ENABLE_AUTOMATION !== 'true') {
+  const automationEnabled = envBoolean(
+    process.env.GNOSIS_ENABLE_AUTOMATION,
+    GNOSIS_CONSTANTS.AUTOMATION_ENABLED_DEFAULT,
+  );
+  if (!automationEnabled) {
     console.error('[Maintenance] Automation is OFF. Skipping scheduled maintenance.');
     process.exit(0);
   }

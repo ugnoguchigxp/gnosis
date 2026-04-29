@@ -25,11 +25,9 @@ if (import.meta.main) {
 let alwaysCache: { content: string; expiresAt: number } | null = null;
 const ALWAYS_CACHE_TTL_MS = 5 * 60 * 1000;
 const FULL_ALWAYS_CONTEXT_TOOLS = new Set(['initial_instructions']);
-const SKIP_ALWAYS_CONTEXT_TOOLS = new Set(['search_knowledge', 'review_task']);
 
 export function shouldInjectAlwaysContext(toolName: string): boolean {
-  if (FULL_ALWAYS_CONTEXT_TOOLS.has(toolName)) return true;
-  return !SKIP_ALWAYS_CONTEXT_TOOLS.has(toolName);
+  return FULL_ALWAYS_CONTEXT_TOOLS.has(toolName);
 }
 
 async function getAlwaysContext(): Promise<string> {

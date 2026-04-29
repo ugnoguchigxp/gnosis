@@ -10,6 +10,7 @@ const mockSynthesis = mock(async () => ({
   failedCount: 0,
 }));
 const mockRunWorkerOnce = mock(async (): Promise<unknown> => ({ processed: false }));
+const mockRecordBackgroundTaskRun = mock(async () => {});
 const mockRunKeywordSeederOnce = mock(async () => ({
   runId: '00000000-0000-4000-8000-000000000000',
   aliasUsed: 'gemma4',
@@ -99,11 +100,13 @@ describe('background runner', () => {
       runWorkerOnce: mockRunWorkerOnce,
       runKeywordSeederOnce: mockRunKeywordSeederOnce,
       enqueueFrontierCandidates: mockEnqueueFrontierCandidates,
+      recordBackgroundTaskRun: mockRecordBackgroundTaskRun,
     };
 
     mockEmbedding.mockClear();
     mockSynthesis.mockClear();
     mockRunWorkerOnce.mockClear();
+    mockRecordBackgroundTaskRun.mockClear();
     mockRunKeywordSeederOnce.mockClear();
     mockEnqueueFrontierCandidates.mockClear();
   });
@@ -168,6 +171,9 @@ describe('background runner', () => {
 
       expect(mockScheduler.dequeueTask).toHaveBeenCalledTimes(2);
       expect(mockSynthesis).toHaveBeenCalled();
+      expect(mockRecordBackgroundTaskRun).toHaveBeenCalledWith(
+        expect.objectContaining({ taskType: 'synthesis', ok: true }),
+      );
     });
 
     it('handles task failure and sets retry with stack trace', async () => {
@@ -183,6 +189,9 @@ describe('background runner', () => {
         'failed',
         expect.stringMatching(/Test error/),
         expect.any(Number),
+      );
+      expect(mockRecordBackgroundTaskRun).toHaveBeenCalledWith(
+        expect.objectContaining({ taskType: 'synthesis', ok: false }),
       );
     });
 
