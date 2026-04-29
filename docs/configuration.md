@@ -26,11 +26,14 @@ Gnosis は環境変数を中心に構成されています。一部の機能（K
 | `GNOSIS_DOCTOR_REQUIRE_LOCAL_LLM` | `false` | `bun run doctor` で local-llm API 未起動を失敗扱いにするか |
 | `GNOSIS_ENABLE_AUTOMATION` | `true` | LaunchAgent / background manager などの自動処理を実行するか。停止したい場合だけ `false` を指定 |
 | `GNOSIS_BACKGROUND_WORKER_ENABLED` | `true` | background worker daemon の常駐処理を実行するか。停止したい場合だけ `false` を指定 |
+| `GNOSIS_NO_WORKERS` | `false` | MCP host 内で background workers を起動しない。`scripts/setup-automation.sh` の `com.gnosis.mcp-host` は worker LaunchAgent との二重起動を避けるため `true` を指定 |
+| `GNOSIS_MCP_HOST_REPLACE_EXISTING` | `false` | 起動時に既存 MCP host が健康な場合、それを shutdown して自プロセスが host を引き継ぐ。LaunchAgent の `KeepAlive` ループ防止用 |
 
 ### MCP クライアント互換
 
 - MCP `tools/list` は Agent-First 公開面に固定されています。
 - クライアント側のツールキャッシュ不整合が疑われる場合は、MCP サーバーとクライアントを再起動してください。
+- macOS ログイン時から MCP host を常駐させる場合は `scripts/setup-automation.sh install` と `scripts/setup-automation.sh load` を実行します。`com.gnosis.mcp-host` は `RunAtLoad` / `KeepAlive` で起動し、stdio adapter はこの host へ接続します。既存の手動 host が残っている場合は LaunchAgent 側が shutdown して引き継ぎます。
 
 ### 埋め込み (Embedding)
 

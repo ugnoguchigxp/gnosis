@@ -20,10 +20,12 @@ WORKER_PLIST="com.gnosis.worker.plist"
 GUIDANCE_PLIST="com.gnosis.guidance.plist"
 REPORT_PLIST="com.gnosis.report.plist"
 WATCHDOG_PLIST="com.gnosis.process-watchdog.plist"
-PLISTS=("$SYNC_PLIST" "$REFLECT_PLIST" "$WORKER_PLIST" "$GUIDANCE_PLIST" "$REPORT_PLIST" "$WATCHDOG_PLIST")
+MCP_HOST_PLIST="com.gnosis.mcp-host.plist"
+PLISTS=("$SYNC_PLIST" "$REFLECT_PLIST" "$WORKER_PLIST" "$GUIDANCE_PLIST" "$REPORT_PLIST" "$WATCHDOG_PLIST" "$MCP_HOST_PLIST")
 
 # ログディレクトリの作成
 mkdir -p "$PROJECT_ROOT/logs"
+mkdir -p "$LAUNCH_AGENTS_DIR"
 
 function install() {
     echo "Installing Gnosis LaunchAgents..."

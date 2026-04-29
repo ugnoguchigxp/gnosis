@@ -21,6 +21,7 @@
     "process:diagnose": "bun run scripts/diagnose-processes.ts",
     "process:dedupe": "bun run scripts/dedupe-processes.ts",
     "process:watchdog": "bun run src/scripts/process-watchdog.ts",
+    "mcp:host": "bun run src/scripts/mcp-host.ts",
     "supervisor:start": "bun run src/supervisor/daemon.ts",
     "supervisor:status": "bun run src/scripts/supervisor-status.ts",
     "onboarding:smoke": "bun run scripts/onboarding-smoke.ts",

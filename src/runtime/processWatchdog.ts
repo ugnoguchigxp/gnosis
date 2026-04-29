@@ -36,6 +36,8 @@ type WatchdogState = {
 };
 
 const KNOWN_COMMAND_PATTERNS = [
+  'bun run src/scripts/mcp-host.ts',
+  'src/scripts/mcp-host.ts',
   'bun run src/index.ts',
   'src/index.ts',
   'bun run src/scripts/mcpToolsServer.ts',
@@ -47,6 +49,8 @@ const KNOWN_COMMAND_PATTERNS = [
 ];
 
 const KNOWN_TITLE_PATTERNS = [
+  'gnosis-mcp-host',
+  'gnosis-mcp-adapter',
   'gnosis-mcp-server',
   'gnosis-mcp-logic',
   'gnosis-tools',
@@ -133,15 +137,23 @@ function isKnownGnosisProcess(snapshot: ProcessSnapshot): boolean {
 }
 
 function isMcpStdioRole(entry: ProcessRegistryEntry): boolean {
-  return entry.role === 'mcp-server' || entry.role === 'mcp-tools' || entry.role === 'semantic-mcp';
+  return (
+    entry.role === 'mcp-adapter' ||
+    entry.role === 'mcp-server' ||
+    entry.role === 'mcp-tools' ||
+    entry.role === 'semantic-mcp'
+  );
 }
 
 function isStale(entry: ProcessRegistryEntry, snapshot: ProcessSnapshot): string | null {
   if (snapshot.stat.includes('Z')) return 'zombie_state';
   if (entry.registryStatus === 'degraded') return 'registry_degraded';
   if (!isKnownGnosisProcess(snapshot)) return 'pid_reuse_or_command_mismatch';
+  if (entry.role === 'mcp-server') return 'legacy_mcp_server';
   if (isMcpStdioRole(entry) && snapshot.ppid === 1) return 'orphan_ppid_1';
-  if (entry.originalPpid > 1 && !parentAlive(entry.originalPpid)) return 'original_parent_dead';
+  if (isMcpStdioRole(entry) && entry.originalPpid > 1 && !parentAlive(entry.originalPpid)) {
+    return 'original_parent_dead';
+  }
 
   const heartbeatMs = Date.parse(entry.heartbeatAt);
   if (!Number.isNaN(heartbeatMs) && Date.now() - heartbeatMs > 60_000) {

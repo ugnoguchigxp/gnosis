@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.gnosis.mcp-host</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{BUN_PATH}}</string>
+        <string>run</string>
+        <string>src/scripts/mcp-host.ts</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>{{PROJECT_ROOT}}</string>
+    <key>StandardOutPath</key>
+    <string>{{PROJECT_ROOT}}/logs/mcp-host.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{PROJECT_ROOT}}/logs/mcp-host.log</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>GNOSIS_ENABLE_AUTOMATION</key>
+        <string>true</string>
+        <key>GNOSIS_NO_WORKERS</key>
+        <string>true</string>
+        <key>GNOSIS_MCP_HOST_REPLACE_EXISTING</key>
+        <string>true</string>
+    </dict>
+</dict>
+</plist>

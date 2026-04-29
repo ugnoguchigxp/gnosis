@@ -1,23 +1,17 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+  type Tool,
+} from '@modelcontextprotocol/sdk/types.js';
 import { eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { entities } from '../db/schema.js';
 import { isGnosisError } from '../domain/errors.js';
 import { buildToolSnapshotForDoctor } from '../services/agentFirst.js';
+import type { McpHostTool } from './hostProtocol.js';
+import type { ToolResult } from './registry.js';
 import { getExposedToolEntries } from './tools/index.js';
-
-// ---------------------------------------------------------------------------
-// Process Metadata
-// ---------------------------------------------------------------------------
-if (import.meta.main) {
-  console.error('[Error] src/mcp/server.ts cannot be run directly.');
-  console.error('[Error] Please use src/index.ts as the entry point.');
-  process.exit(1);
-} else {
-  // Logic-only title (may be overwritten by index.ts)
-  process.title = 'gnosis-mcp-logic';
-}
 
 // ---------------------------------------------------------------------------
 // scope:'always' エンティティのキャッシュ（TTL: 5分）
@@ -54,17 +48,12 @@ async function getAlwaysContext(): Promise<string> {
   }
 }
 
-export const server = new Server(
-  {
-    name: 'gnosis-memory-kg',
-    version: '0.1.0',
-  },
-  {
-    capabilities: {
-      tools: {},
-    },
-  },
-);
+export type GnosisMcpService = {
+  name: string;
+  version: string;
+  listTools: () => McpHostTool[];
+  callTool: (name: string, args: unknown) => Promise<ToolResult>;
+};
 
 (globalThis as Record<string, unknown>).__GNOSIS_TOOL_SNAPSHOT = buildToolSnapshotForDoctor(
   getExposedToolEntries().map((tool) => ({
@@ -77,16 +66,15 @@ export const server = new Server(
   (tool) => tool.name,
 );
 
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: getExposedToolEntries().map((t) => ({
+export function listGnosisTools(): McpHostTool[] {
+  return getExposedToolEntries().map((t) => ({
     name: t.name,
     description: t.description,
     inputSchema: t.inputSchema,
-  })),
-}));
+  }));
+}
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
+export async function callGnosisTool(name: string, args: unknown): Promise<ToolResult> {
   const entry = getExposedToolEntries().find((t) => t.name === name);
   if (!entry) {
     return {
@@ -113,4 +101,46 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       isError: true,
     };
   }
-});
+}
+
+export function createGnosisMcpService(): GnosisMcpService {
+  return {
+    name: 'gnosis-memory-kg',
+    version: '0.1.0',
+    listTools: listGnosisTools,
+    callTool: callGnosisTool,
+  };
+}
+
+export function createGnosisMcpServer(): Server {
+  const sdkServer = new Server(
+    {
+      name: 'gnosis-memory-kg',
+      version: '0.1.0',
+    },
+    {
+      capabilities: {
+        tools: {},
+      },
+    },
+  );
+
+  sdkServer.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: listGnosisTools() as Tool[],
+  }));
+
+  sdkServer.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const { name, arguments: args } = request.params;
+    return callGnosisTool(name, args);
+  });
+
+  return sdkServer;
+}
+
+export const server = createGnosisMcpServer();
+
+if (import.meta.main) {
+  console.error('[Error] src/mcp/server.ts cannot be run directly.');
+  console.error('[Error] Please use src/index.ts as the entry point.');
+  process.exit(1);
+}

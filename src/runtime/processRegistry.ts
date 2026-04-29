@@ -10,6 +10,8 @@ import {
 import { join, resolve } from 'node:path';
 
 export type ProcessRole =
+  | 'mcp-host'
+  | 'mcp-adapter'
   | 'mcp-server'
   | 'mcp-tools'
   | 'semantic-mcp'

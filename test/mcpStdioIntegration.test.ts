@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { sendMcpHostRequest } from '../src/mcp/hostProtocol.js';
 
 describe('MCP stdio integration', () => {
   let transport: StdioClientTransport | null = null;
@@ -10,6 +11,7 @@ describe('MCP stdio integration', () => {
       await transport.close().catch(() => {});
       transport = null;
     }
+    await sendMcpHostRequest({ type: 'shutdown' }, { timeoutMs: 500 }).catch(() => {});
   });
 
   it('starts the stdio server and calls initial_instructions', async () => {
@@ -19,6 +21,8 @@ describe('MCP stdio integration', () => {
       env: {
         ...process.env,
         GNOSIS_NO_WORKERS: 'true',
+        GNOSIS_MCP_ADAPTER_IDLE_MS: '1000',
+        GNOSIS_MCP_HOST_IDLE_EXIT_MS: '1000',
       },
     });
     const client = new Client(
