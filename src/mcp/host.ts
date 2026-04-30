@@ -10,6 +10,7 @@ import { startBackgroundWorkers, stopBackgroundWorkers } from '../services/backg
 import { lookupFailureFirewallContext } from '../services/failureFirewall/context.js';
 import { runFailureFirewall } from '../services/failureFirewall/index.js';
 import { suggestFailureFirewallLearningCandidates } from '../services/failureFirewall/learningCandidates.js';
+import { isProcessAlive } from '../runtime/childProcesses.js';
 import { MCP_HOST_SOURCE_FINGERPRINT } from './hostFingerprint.js';
 import {
   MCP_HOST_MESSAGE_DELIMITER,
@@ -127,7 +128,10 @@ async function acquireHostLock(
       };
     } catch {
       const startedAt = Date.now();
-      while (Date.now() - startedAt < 5000) {
+      const lockContent = existsSync(lockPath) ? readFileSync(lockPath, 'utf8').trim() : '';
+      const existingPid = Number.parseInt(lockContent, 10);
+
+      while (Date.now() - startedAt < 10000) {
         const existingHealth = await getExistingHostHealth(rootDir, options.socketPath);
         if (existingHealth) {
           if (options.replaceExisting || !existingHostMatchesCurrentSource(existingHealth)) {
@@ -136,8 +140,20 @@ async function acquireHostLock(
           }
           process.exit(0);
         }
-        await new Promise((resolve) => setTimeout(resolve, 100));
+
+        // ロック保持プロセスが死んでいれば即座にブレイク
+        if (!Number.isNaN(existingPid) && !isProcessAlive(existingPid)) {
+          break;
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 500));
       }
+
+      // プロセスが生きているのに応答がない場合は、そちらに任せて終了する
+      if (!Number.isNaN(existingPid) && isProcessAlive(existingPid)) {
+        process.exit(0);
+      }
+
       rmSync(lockPath, { force: true });
     }
   }

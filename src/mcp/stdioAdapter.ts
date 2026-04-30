@@ -81,16 +81,21 @@ async function shutdownStaleHost(rootDir: string): Promise<void> {
   await waitForHostExit(rootDir, envNumber(process.env.GNOSIS_MCP_HOST_REPLACE_TIMEOUT_MS, 5000));
 }
 
+let hostStartupPromise: Promise<void> | null = null;
+
 async function ensureHostRunning(rootDir: string): Promise<void> {
-  let health: McpHostHealth | null = null;
-  try {
-    health = await sendMcpHostRequest<McpHostHealth>(
-      { type: 'health' },
-      { rootDir, timeoutMs: 500 },
-    );
-  } catch {
-    health = null;
-  }
+  if (hostStartupPromise) return hostStartupPromise;
+
+  hostStartupPromise = (async () => {
+    let health: McpHostHealth | null = null;
+    try {
+      health = await sendMcpHostRequest<McpHostHealth>(
+        { type: 'health' },
+        { rootDir, timeoutMs: 1000 }, // Increased from 500ms
+      );
+    } catch {
+      health = null;
+    }
 
   if (health) {
     if (hostMatchesCurrentSource(health)) return;
@@ -118,7 +123,12 @@ async function ensureHostRunning(rootDir: string): Promise<void> {
     env: process.env,
   });
   child.unref();
-  await waitForHost(rootDir, envNumber(process.env.GNOSIS_MCP_HOST_START_TIMEOUT_MS, 5000));
+  await waitForHost(rootDir, envNumber(process.env.GNOSIS_MCP_HOST_START_TIMEOUT_MS, 10000)); // Increased from 5000ms
+})().finally(() => {
+  hostStartupPromise = null;
+});
+
+  return hostStartupPromise;
 }
 
 export async function runStdioAdapter(rootDir = process.cwd()): Promise<void> {

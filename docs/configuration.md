@@ -67,7 +67,7 @@ Gnosis は環境変数を中心に構成されています。一部の機能（K
 | `MEMORY_LOOP_DEFAULT_ALIAS` | `gemma4` | ループ処理の第一候補ローカルモデル |
 | `MEMORY_LOOP_LIGHT_ALIAS` | `bonsai` | 軽量処理向けローカルモデル |
 | `MEMORY_LOOP_INTERVAL_MS` | `300000` | ループ間隔（5分） |
-| `MEMORY_LOOP_MAX_LOCAL_RETRIES` | `3` | ローカルLLMの再試行回数 |
+| `MEMORY_LOOP_MAX_LOCAL_RETRIES` | `1` | ローカルLLMの再試行回数 |
 | `MEMORY_LOOP_MIN_QUALITY_SCORE` | `0.5` | quality スコア閾値（cloud 切替判定） |
 | `MEMORY_LOOP_IDLE_BACKOFF_MULTIPLIER` | `2` | idle 連続時の間隔倍率 |
 | `MEMORY_LOOP_MAX_INTERVAL_MS` | `900000` | idle バックオフの上限間隔（15分） |

@@ -85,6 +85,21 @@ describe('routeMemoryLoopLlm', () => {
     expect(result.cloudEnabledForAttempt).toBe(false);
   });
 
+  it('keeps local primary alias on retry when fallbackLocalAlias is null', () => {
+    const result = routeMemoryLoopLlm(
+      {
+        taskKind: 'classification',
+        retryCount: 1,
+        riskLevel: 'low',
+        preferredLocalAlias: 'gemma4',
+        fallbackLocalAlias: null,
+      },
+      runtime,
+    );
+    expect(result.alias).toBe('gemma4');
+    expect(result.reason).toBe('local-fallback-route');
+  });
+
   it('falls back to secondary local alias on retry', () => {
     const result = routeMemoryLoopLlm(
       { taskKind: 'distillation', retryCount: 1, riskLevel: 'low' },

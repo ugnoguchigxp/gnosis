@@ -101,6 +101,11 @@ const TASK_CHANGE_TYPE_SET = new Set<TaskChangeType>([
   'review',
 ]);
 
+function withDegradedCode(code: string, detail: string): string {
+  const trimmed = detail.trim();
+  return `${code}:${trimmed.length > 0 ? ` ${trimmed}` : ''}`.trimEnd();
+}
+
 function relationTypeForKnowledgeKind(kind: KnowledgeKind): string {
   if (kind === 'lesson') return 'captured_lesson';
   if (kind === 'rule') return 'captured_rule';
@@ -1510,7 +1515,10 @@ export async function agenticSearch(input: AgenticSearchInput) {
       );
     } catch (error) {
       degradedReasons.push(
-        `raw memory search failed: ${error instanceof Error ? error.message : String(error)}`,
+        withDegradedCode(
+          'RAW_MEMORY_SEARCH_FAILED',
+          error instanceof Error ? error.message : String(error),
+        ),
       );
     }
   }
@@ -1520,17 +1528,43 @@ export async function agenticSearch(input: AgenticSearchInput) {
   let localLlmUsed = false;
   let decisions = new Map<string, AgenticLlmDecision>();
   const localLlmEnabled = input.localLlm?.enabled ?? candidates.length > 0;
+  const localLlmRequired = input.localLlm?.required === true;
+  if (localLlmRequired && !localLlmEnabled && candidates.length > 0) {
+    degradedReasons.push(
+      withDegradedCode(
+        'LLM_REQUIRED_DISABLED',
+        'localLlm.required=true but localLlm.enabled=false; fallback injection is blocked.',
+      ),
+    );
+    return {
+      taskSummary,
+      decision: 'degraded' as const,
+      confidence: 0,
+      usedKnowledge: [],
+      ...(failureFirewall ? { failureFirewall } : {}),
+      skippedCount: candidates.length,
+      maybeCount: 0,
+      gaps: ['Local LLM classification was required but disabled.'],
+      diagnostics: {
+        entityCandidates: entityCandidates.length,
+        rawMemoryCandidates: rawMemoryCandidates.length,
+        localLlmUsed,
+        degradedReasons,
+      },
+      nextAction: 'retry_later' as const,
+    };
+  }
   if (localLlmEnabled && candidates.length > 0) {
     try {
       decisions = await classifyAgenticCandidatesWithLocalLlm(
         taskSummary,
         candidates,
-        input.localLlm?.timeoutMs ?? 30_000,
+        input.localLlm?.timeoutMs ?? 180_000,
       );
       localLlmUsed = true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      degradedReasons.push(`local LLM filter failed: ${message}`);
+      degradedReasons.push(withDegradedCode('LLM_FILTER_FAILED', message));
       return {
         taskSummary,
         decision: 'degraded' as const,

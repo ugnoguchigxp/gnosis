@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, mock } from 'bun:test';
 const now = new Date('2026-01-01T00:00:00.000Z');
 let selectCount = 0;
 let llmRouterShouldFail = false;
+let llmRouterLastTimeoutMs: number | undefined;
 
 const entityRows = [
   {
@@ -110,7 +111,8 @@ mock.module('../src/services/memory.js', () => ({
 }));
 
 mock.module('../src/services/memoryLoopLlmRouter.js', () => ({
-  runPromptWithMemoryLoopRouter: async () => {
+  runPromptWithMemoryLoopRouter: async (input: { llmTimeoutMs?: number }) => {
+    llmRouterLastTimeoutMs = input.llmTimeoutMs;
     if (llmRouterShouldFail) throw new Error('Gemma4 failed');
     return {
       output: JSON.stringify({
@@ -151,6 +153,7 @@ describe('searchKnowledgeV2 task-context applicability', () => {
   beforeEach(() => {
     selectCount = 0;
     llmRouterShouldFail = false;
+    llmRouterLastTimeoutMs = undefined;
   });
 
   it('prioritizes rules whose applicability metadata matches the task context', async () => {
@@ -225,6 +228,7 @@ describe('searchKnowledgeV2 task-context applicability', () => {
     expect(result.diagnostics.localLlmUsed).toBe(true);
     expect(result.usedKnowledge.map((item) => item.id)).toContain('rule/mcp');
     expect(result.usedKnowledge.map((item) => item.id)).not.toContain('rule/frontend');
+    expect(llmRouterLastTimeoutMs).toBe(180_000);
   });
 
   it('does not inject unfiltered candidates when Gemma4 filtering fails', async () => {
@@ -239,6 +243,22 @@ describe('searchKnowledgeV2 task-context applicability', () => {
     expect(result.decision).toBe('degraded');
     expect(result.usedKnowledge).toHaveLength(0);
     expect(result.skippedCount).toBeGreaterThan(0);
+    expect(result.diagnostics.degradedReasons.join('\n')).toContain('LLM_FILTER_FAILED:');
     expect(result.diagnostics.degradedReasons.join('\n')).toContain('Gemma4 failed');
+  });
+
+  it('returns degraded when localLlm.required=true but localLlm.enabled=false', async () => {
+    const result = await agenticSearch({
+      userRequest: 'Refactor MCP rule lookup before implementation',
+      files: ['src/mcp/tools/agentFirst.ts', 'src/services/agentFirst.ts'],
+      changeTypes: ['mcp', 'refactor'],
+      technologies: ['typescript', 'mcp'],
+      localLlm: { enabled: false, required: true },
+    });
+
+    expect(result.decision).toBe('degraded');
+    expect(result.usedKnowledge).toHaveLength(0);
+    expect(result.nextAction).toBe('retry_later');
+    expect(result.diagnostics.degradedReasons.join('\n')).toContain('LLM_REQUIRED_DISABLED:');
   });
 });
