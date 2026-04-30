@@ -97,11 +97,11 @@ bun run failure-firewall --mode git_diff
 }
 ```
 
-MCP 公開面は Agent-First の 8 tool を維持する。Failure Firewall は `review_task` のモード、または `goal` / `focus` のプリセットとして扱う。
+Gnosis primary MCP 公開面は Agent-First の6 tool を維持する。Failure Firewall は新 tool ではなく、`review_task` のモード、または `goal` / `focus` のプリセットとして扱う。
 
 ### 3.3 Hook 経由
 
-`review_task` の pre-review hook（`task.ready_for_review`）または `finish_task` の完了 hook（`task.completed`）で実行する。
+`review_task` の pre-review hook（`task.ready_for_review`）または `record_task_note` で保存される明示的な知見を入力として実行する。
 
 - `error`: Golden Path の必須条件を破り、過去失敗または強い静的証拠がある場合はブロック
 - `warning`: Golden Path から外れているが、代替実装の妥当性が未確認の場合は要確認
@@ -1233,7 +1233,7 @@ Gnosis の既存ルールと相性が良い Golden Path から始める。失敗
 
 ### 19.1 新 primary MCP tool は増やさない
 
-Agent-First の公開面は現在 8 tool に整理されている。Failure Firewall を primary tool にすると、エージェントが `review_task` と使い分ける必要が出る。初期版では `review_task` のモードとして扱う。
+Agent-First の公開面は現在 primary 6 tool に整理されている。Failure Firewall を primary tool にすると、エージェントが `review_task` と使い分ける必要が出る。初期版では `review_task` のモードとして扱う。
 
 ### 19.2 Golden Path / Pattern の source of truth は切り替え可能
 

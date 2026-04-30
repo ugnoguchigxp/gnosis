@@ -24,7 +24,7 @@
 - 導入コマンドを `bootstrap` / `doctor` / `onboarding:smoke` に整理
 - README 冒頭で minimal 導線を固定
 - 導線を fresh clone 検証に接続
-- MCP 公開面は Agent-First 固定（切替なし）
+- Gnosis primary MCP 公開面は Agent-First 6件に固定（切替なし）
 
 ## 実装バックログ（完了）
 
