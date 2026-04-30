@@ -309,22 +309,26 @@ describe('agent-first MCP tools', () => {
     const payload = JSON.parse(result.content[0]?.text ?? '{}') as {
       summary?: string;
       findings?: unknown[];
+      diagnostics?: { errorCode?: string; timeoutMs?: number; provider?: string };
     };
 
     expect(mockGetReviewLLMService).toHaveBeenCalledWith(
       'local',
       expect.objectContaining({
         invoker: 'mcp',
-        timeoutMs: 180000,
+        timeoutMs: 90000,
         disableFallback: true,
       }),
     );
-    expect(payload.summary).toContain('LLM document review degraded');
+    expect(payload.summary).toContain('LLM review degraded');
     expect(payload.findings?.length).toBe(0);
+    expect(payload.diagnostics?.errorCode).toBe('E016');
+    expect(payload.diagnostics?.timeoutMs).toBe(90000);
+    expect(payload.diagnostics?.provider).toBe('local');
     expect(mockGenerateImplementationPlan).not.toHaveBeenCalled();
   });
 
-  it('review_task uses OpenAI as the default MCP reviewer', async () => {
+  it('review_task uses Azure OpenAI as the default MCP reviewer', async () => {
     mockAgenticSearch.mockResolvedValue({ usedKnowledge: [] });
     mockGetReviewLLMService.mockResolvedValue({ provider: 'cloud' });
     mockRunReviewStageD.mockResolvedValue({
@@ -355,14 +359,53 @@ describe('agent-first MCP tools', () => {
     });
     const payload = JSON.parse(result.content[0]?.text ?? '{}') as { providerUsed?: string };
 
-    expect(payload.providerUsed).toBe('openai');
+    expect(payload.providerUsed).toBe('azure-openai');
     expect(mockGetReviewLLMService).toHaveBeenCalledWith(
       undefined,
       expect.objectContaining({
         invoker: 'mcp',
-        timeoutMs: 180000,
+        timeoutMs: 90000,
         disableFallback: true,
       }),
+    );
+  });
+
+  it('review_task treats GNOSIS_REVIEWER=openai as Azure OpenAI', async () => {
+    process.env.GNOSIS_REVIEWER = 'openai';
+    mockAgenticSearch.mockResolvedValue({ usedKnowledge: [] });
+    mockGetReviewLLMService.mockResolvedValue({ provider: 'cloud' });
+    mockRunReviewStageD.mockResolvedValue({
+      review_id: 'r-azure-alias',
+      review_status: 'ok',
+      findings: [],
+      summary: 'ok',
+      next_actions: [],
+      rerun_review: false,
+      metadata: {
+        reviewed_files: 0,
+        risk_level: 'low',
+        static_analysis_used: false,
+        knowledge_applied: [],
+        degraded_mode: false,
+        degraded_reasons: [],
+        local_llm_used: false,
+        heavy_llm_used: true,
+        review_duration_ms: 1,
+      },
+      markdown: '',
+    });
+
+    const handler = getHandler('review_task');
+    const result = await handler({
+      targetType: 'code_diff',
+      target: { diff: 'diff --git a b' },
+    });
+    const payload = JSON.parse(result.content[0]?.text ?? '{}') as { providerUsed?: string };
+
+    expect(payload.providerUsed).toBe('azure-openai');
+    expect(mockGetReviewLLMService).toHaveBeenCalledWith(
+      undefined,
+      expect.objectContaining({ invoker: 'mcp' }),
     );
   });
 
@@ -396,7 +439,7 @@ describe('agent-first MCP tools', () => {
       provider: 'openai',
     });
     expect(mockGetReviewLLMService).toHaveBeenCalledWith(
-      'openai',
+      'azure-openai',
       expect.objectContaining({ invoker: 'mcp' }),
     );
   });

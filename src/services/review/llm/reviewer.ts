@@ -150,7 +150,7 @@ export function resolveReviewerAlias(): ReviewerAlias {
   ) {
     return env as ReviewerAlias;
   }
-  return 'openai';
+  return 'azure-openai';
 }
 
 /**
@@ -169,7 +169,7 @@ export async function getReviewLLMService(
   const requestId = runtime.requestId;
 
   // If the caller explicitly asks local/cloud, that intent should win.
-  // Otherwise resolve through GNOSIS_REVIEWER, falling back to OpenAI.
+  // Otherwise resolve through GNOSIS_REVIEWER, falling back to Azure OpenAI.
   const useAlias = preference === undefined;
 
   if (useAlias) {
@@ -198,7 +198,10 @@ export async function getReviewLLMService(
       case 'bedrock':
         return createCloudReviewLLMService({ provider: 'bedrock', timeoutMs: runtime.timeoutMs });
       case 'openai':
-        return createCloudReviewLLMService({ provider: 'openai', timeoutMs: runtime.timeoutMs });
+        return createCloudReviewLLMService({
+          provider: 'azure-openai',
+          timeoutMs: runtime.timeoutMs,
+        });
       case 'azure-openai':
         return createCloudReviewLLMService({
           provider: 'azure-openai',
@@ -218,7 +221,7 @@ export async function getReviewLLMService(
   });
   const cloudFallback = () =>
     createCloudReviewLLMService({
-      provider: pref === 'openai' || pref === 'bedrock' ? pref : undefined,
+      provider: pref === 'openai' ? 'azure-openai' : pref === 'bedrock' ? 'bedrock' : undefined,
       timeoutMs: runtime.timeoutMs,
     });
 
@@ -256,7 +259,7 @@ export async function getReviewLLMService(
   if (pref === 'openai' || pref === 'bedrock' || pref === 'azure-openai') {
     try {
       const cloud = createCloudReviewLLMService({
-        provider: pref,
+        provider: pref === 'openai' ? 'azure-openai' : pref,
         timeoutMs: runtime.timeoutMs,
       });
       return {
@@ -278,6 +281,7 @@ export async function getReviewLLMService(
         },
       };
     } catch (error) {
+      if (runtime.disableFallback) throw error;
       if (error instanceof ReviewError) {
         return local;
       }

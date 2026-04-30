@@ -123,6 +123,10 @@ export function createLocalReviewLLMService(options: LocalProviderOptions = {}):
         stdoutLength: result.stdout.length,
       });
 
+      if (result.error?.message.includes('timed out')) {
+        throw new ReviewError('E006', result.error.message);
+      }
+
       if (result.status !== 0) {
         const classified = classifyLocalLlmCrash(result.stderr);
         throw new ReviewError(

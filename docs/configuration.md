@@ -94,7 +94,7 @@ Gnosis は環境変数を中心に構成されています。一部の機能（K
 | :--- | :--- | :--- |
 | `GNOSIS_REVIEW_MCP_MODE` | `cli` | MCP `review` ツールの実行経路（`cli` / `inproc`）。`cli` は `src/scripts/review.ts` へ委譲 |
 | `GNOSIS_REVIEW_ALLOW_UNSAFE_MLX_IN_SEATBELT` | `false` | `CODEX_SANDBOX=seatbelt` でも review 経路で `LOCAL_LLM_ALLOW_MLX_IN_SEATBELT=1` をそのまま使うか（デバッグ専用） |
-| `GNOSIS_REVIEW_LLM_PROVIDER` | `openai` | Cloud reviewer のプロバイダ（`openai` / `azure-openai` / `bedrock` / `anthropic` / `google`） |
+| `GNOSIS_REVIEW_LLM_PROVIDER` | `azure-openai` | Cloud reviewer のプロバイダ（`openai` は Azure OpenAI alias。`azure-openai` / `bedrock` / `anthropic` / `google`） |
 | `GNOSIS_REVIEW_LLM_API_BASE_URL` | プロバイダ依存 | Cloud reviewer の API base URL（Azure 利用時は必須） |
 | `AWS_ACCESS_KEY_ID` | - | Bedrock 利用時の AWS access key |
 | `AWS_SECRET_ACCESS_KEY` | - | Bedrock 利用時の AWS secret access key |

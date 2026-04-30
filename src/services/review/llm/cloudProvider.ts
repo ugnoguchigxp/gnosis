@@ -9,6 +9,7 @@ import type {
 } from './types.js';
 
 export type ReviewCloudProvider = 'openai' | 'bedrock' | 'azure-openai' | 'anthropic' | 'google';
+type EffectiveReviewCloudProvider = Exclude<ReviewCloudProvider, 'openai'>;
 
 type CloudProviderOptions = {
   provider?: ReviewCloudProvider;
@@ -31,8 +32,9 @@ const DEFAULTS: Record<
   { baseUrl: string; path: string; apiVersion?: string }
 > = {
   openai: {
-    baseUrl: 'https://api.openai.com',
-    path: '/v1/chat/completions',
+    baseUrl: '',
+    path: '/openai/deployments',
+    apiVersion: '2025-04-01-preview',
   },
   bedrock: {
     baseUrl: '',
@@ -52,6 +54,12 @@ const DEFAULTS: Record<
     path: '/v1beta/models',
   },
 };
+
+export function resolveEffectiveReviewCloudProvider(
+  provider: ReviewCloudProvider,
+): EffectiveReviewCloudProvider {
+  return provider === 'openai' ? 'azure-openai' : provider;
+}
 
 const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -102,9 +110,9 @@ const extractGoogleText = (payload: Record<string, unknown>): string => {
 
 function normalizeProvider(value: string | undefined): ReviewCloudProvider {
   if (value === 'bedrock' || value === 'aws-bedrock' || value === 'aws') return 'bedrock';
-  if (value === 'azure' || value === 'azure-openai') return 'azure-openai';
-  if (value === 'anthropic' || value === 'google' || value === 'openai') return value;
-  return 'openai';
+  if (value === 'azure' || value === 'azure-openai' || value === 'openai') return 'azure-openai';
+  if (value === 'anthropic' || value === 'google') return value;
+  return 'azure-openai';
 }
 
 const extractAnthropicText = (payload: Record<string, unknown>): string => {
@@ -132,6 +140,16 @@ const extractBedrockText = (payload: Record<string, unknown>): string => {
 
   return '';
 };
+
+function isAbortError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === 'AbortError') return true;
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'name' in error &&
+    (error as { name?: unknown }).name === 'AbortError'
+  );
+}
 
 const hexFromBytes = (bytes: ArrayBuffer): string =>
   [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
@@ -391,12 +409,65 @@ async function runBedrockRequest(params: {
   );
 }
 
+function getProviderApiKeyEnv(provider: EffectiveReviewCloudProvider): string | undefined {
+  switch (provider) {
+    case 'azure-openai':
+      return process.env.AZURE_OPENAI_API_KEY;
+    case 'anthropic':
+      return process.env.ANTHROPIC_API_KEY;
+    case 'google':
+      return process.env.GOOGLE_API_KEY;
+    case 'bedrock':
+      return undefined;
+  }
+}
+
+function getProviderModelEnv(provider: EffectiveReviewCloudProvider): string | undefined {
+  switch (provider) {
+    case 'azure-openai':
+      return process.env.AZURE_OPENAI_MODEL;
+    case 'anthropic':
+      return process.env.ANTHROPIC_MODEL;
+    case 'google':
+      return process.env.GOOGLE_MODEL;
+    case 'bedrock':
+      return undefined;
+  }
+}
+
+function getProviderApiKeyEnvName(provider: EffectiveReviewCloudProvider): string {
+  switch (provider) {
+    case 'azure-openai':
+      return 'AZURE_OPENAI_API_KEY';
+    case 'anthropic':
+      return 'ANTHROPIC_API_KEY';
+    case 'google':
+      return 'GOOGLE_API_KEY';
+    case 'bedrock':
+      return 'AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY';
+  }
+}
+
+function getProviderModelEnvName(provider: EffectiveReviewCloudProvider): string {
+  switch (provider) {
+    case 'azure-openai':
+      return 'AZURE_OPENAI_MODEL';
+    case 'anthropic':
+      return 'ANTHROPIC_MODEL';
+    case 'google':
+      return 'GOOGLE_MODEL';
+    case 'bedrock':
+      return 'GNOSIS_REVIEW_LLM_BEDROCK_MODEL_ID';
+  }
+}
+
 export function createCloudReviewLLMService(options: CloudProviderOptions = {}): ReviewLLMService {
-  const provider =
+  const requestedProvider =
     options.provider ??
     normalizeProvider(
       process.env.GNOSIS_REVIEW_LLM_PROVIDER || GNOSIS_CONSTANTS.REVIEW_LLM_PROVIDER_DEFAULT,
     );
+  const provider = resolveEffectiveReviewCloudProvider(requestedProvider);
   const defaults = DEFAULTS[provider];
   const apiBaseUrl =
     options.apiBaseUrl ??
@@ -413,22 +484,8 @@ export function createCloudReviewLLMService(options: CloudProviderOptions = {}):
   const apiVersion =
     options.apiVersion ?? process.env.GNOSIS_REVIEW_LLM_API_VERSION ?? defaults.apiVersion;
   const timeoutMs = options.timeoutMs ?? REVIEW_LIMITS.LLM_TIMEOUT_MS;
-  const providerApiKeyEnv =
-    provider === 'azure-openai'
-      ? process.env.AZURE_OPENAI_API_KEY
-      : provider === 'anthropic'
-        ? process.env.ANTHROPIC_API_KEY
-        : provider === 'google'
-          ? process.env.GOOGLE_API_KEY
-          : process.env.OPENAI_API_KEY;
-  const providerModelEnv =
-    provider === 'azure-openai'
-      ? process.env.AZURE_OPENAI_MODEL
-      : provider === 'anthropic'
-        ? process.env.ANTHROPIC_MODEL
-        : provider === 'google'
-          ? process.env.GOOGLE_MODEL
-          : process.env.OPENAI_MODEL;
+  const providerApiKeyEnv = getProviderApiKeyEnv(provider);
+  const providerModelEnv = getProviderModelEnv(provider);
   const apiKey = options.apiKey ?? providerApiKeyEnv ?? process.env.GNOSIS_REVIEW_LLM_API_KEY;
   const model =
     options.model ??
@@ -467,28 +524,14 @@ export function createCloudReviewLLMService(options: CloudProviderOptions = {}):
     }
   } else {
     if (!apiKey) {
-      const envVarName =
-        provider === 'azure-openai'
-          ? 'AZURE_OPENAI_API_KEY'
-          : provider === 'anthropic'
-            ? 'ANTHROPIC_API_KEY'
-            : provider === 'google'
-              ? 'GOOGLE_API_KEY'
-              : 'OPENAI_API_KEY';
+      const envVarName = getProviderApiKeyEnvName(provider);
       throw new ReviewError(
         'E007',
         `Cloud review LLM is not configured: missing API key (set ${envVarName} in .env or pass --api-key)`,
       );
     }
     if (!model) {
-      const envVarName =
-        provider === 'azure-openai'
-          ? 'AZURE_OPENAI_MODEL'
-          : provider === 'anthropic'
-            ? 'ANTHROPIC_MODEL'
-            : provider === 'google'
-              ? 'GOOGLE_MODEL'
-              : 'OPENAI_MODEL';
+      const envVarName = getProviderModelEnvName(provider);
       throw new ReviewError(
         'E007',
         `Cloud review LLM is not configured: missing model (set ${envVarName} in .env or pass --model)`,
@@ -599,6 +642,12 @@ export function createCloudReviewLLMService(options: CloudProviderOptions = {}):
         '';
       if (!content.trim()) throw new ReviewError('E007', 'Cloud LLM returned an empty response');
       return content.trim();
+    } catch (error) {
+      if (error instanceof ReviewError) throw error;
+      if (isAbortError(error)) {
+        throw new ReviewError('E006', `Cloud LLM request timed out after ${timeoutMs}ms`);
+      }
+      throw new ReviewError('E007', `Cloud LLM request failed: ${error}`);
     } finally {
       clearTimeout(timer);
     }
@@ -673,9 +722,9 @@ export function createCloudReviewLLMService(options: CloudProviderOptions = {}):
           };
         }
 
-        // OpenAI / Azure OpenAI path (native tool_calls)
+        // Azure OpenAI path, including the openai compatibility alias (native tool_calls)
         // google / anthropic: delegate to callTextGenerate (text-only, no tool_calls)
-        if (provider !== 'openai' && provider !== 'azure-openai') {
+        if (provider !== 'azure-openai') {
           const textResult = await callTextGenerate(messages, opts);
           return { text: textResult };
         }
@@ -739,6 +788,12 @@ export function createCloudReviewLLMService(options: CloudProviderOptions = {}):
           text,
           toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
         };
+      } catch (error) {
+        if (error instanceof ReviewError) throw error;
+        if (isAbortError(error)) {
+          throw new ReviewError('E006', `Cloud LLM request timed out after ${timeoutMs}ms`);
+        }
+        throw new ReviewError('E007', `Cloud LLM request failed: ${error}`);
       } finally {
         clearTimeout(timer);
       }
@@ -842,7 +897,7 @@ export function createCloudReviewLLMService(options: CloudProviderOptions = {}):
         return content.trim();
       } catch (error) {
         if (error instanceof ReviewError) throw error;
-        if (error instanceof DOMException && error.name === 'AbortError') {
+        if (isAbortError(error)) {
           throw new ReviewError('E006', `Cloud LLM request timed out after ${timeoutMs}ms`);
         }
         throw new ReviewError('E007', `Cloud LLM request failed: ${error}`);

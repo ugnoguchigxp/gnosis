@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import {
   type ReviewCloudProvider,
   createCloudReviewLLMService,
+  resolveEffectiveReviewCloudProvider,
 } from '../services/review/llm/cloudProvider.js';
 import type { ChatMessage } from '../services/review/llm/types.js';
 import { buildToolInstruction, runConversationTurn } from './llmConversation.js';
@@ -217,15 +218,7 @@ export function parseArgs(argv: string[]): CloudCliArgs {
 }
 
 function resolveEffectiveProvider(args: CloudCliArgs): ReviewCloudProvider {
-  if (
-    args.provider === 'openai' &&
-    !args.apiKey &&
-    !process.env.OPENAI_API_KEY &&
-    process.env.AZURE_OPENAI_API_KEY
-  ) {
-    return 'azure-openai';
-  }
-  return args.provider;
+  return resolveEffectiveReviewCloudProvider(args.provider);
 }
 
 function buildService(args: CloudCliArgs) {
@@ -245,13 +238,13 @@ function buildService(args: CloudCliArgs) {
     args.apiKey ??
     (effectiveProvider === 'azure-openai'
       ? process.env.AZURE_OPENAI_API_KEY ?? process.env.GNOSIS_REVIEW_LLM_API_KEY
-      : process.env.OPENAI_API_KEY ?? process.env.GNOSIS_REVIEW_LLM_API_KEY);
+      : undefined);
 
   const model =
     args.model ??
     (effectiveProvider === 'azure-openai'
       ? process.env.AZURE_OPENAI_MODEL ?? process.env.GNOSIS_REVIEW_LLM_MODEL
-      : process.env.OPENAI_MODEL ?? process.env.GNOSIS_REVIEW_LLM_MODEL ?? 'gpt-5-mini');
+      : undefined);
 
   return createCloudReviewLLMService({
     provider: effectiveProvider,
@@ -278,11 +271,6 @@ function resolveModelLabel(args: CloudCliArgs): string {
     const model =
       args.model ?? process.env.AZURE_OPENAI_MODEL ?? process.env.GNOSIS_REVIEW_LLM_MODEL ?? '';
     return `Azure OpenAI${model ? ` (${model})` : ''}`;
-  }
-  if (effectiveProvider === 'openai') {
-    const model =
-      args.model ?? process.env.OPENAI_MODEL ?? process.env.GNOSIS_REVIEW_LLM_MODEL ?? 'gpt-5-mini';
-    return `OpenAI (${model})`;
   }
   if (effectiveProvider === 'bedrock') {
     const model =

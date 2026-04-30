@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { createCloudReviewLLMService } from '../src/services/review/llm/cloudProvider.js';
 
 const originalFetch = globalThis.fetch;
@@ -23,14 +23,14 @@ function mockFetch(
 }
 
 describe('review cloud provider', () => {
-  test('uses the OpenAI API shape', async () => {
+  test('treats openai provider alias as Azure OpenAI API shape', async () => {
     let seenUrl = '';
     let seenHeaders: Record<string, string> | undefined;
     let seenBody = '';
 
     mockFetch(
       {
-        choices: [{ message: { content: 'openai-response' } }],
+        choices: [{ message: { content: 'azure-response' } }],
       },
       (url, init) => {
         seenUrl = url;
@@ -41,23 +41,26 @@ describe('review cloud provider', () => {
 
     const service = createCloudReviewLLMService({
       provider: 'openai',
-      apiBaseUrl: 'https://api.openai.com',
-      apiPath: '/v1/chat/completions',
-      apiKey: 'sk-openai',
-      model: 'gpt-4.1',
+      apiBaseUrl: 'https://example.openai.azure.com',
+      apiVersion: '2024-06-01',
+      apiKey: 'azure-key',
+      model: 'review-deployment',
     });
 
     const output = await service.generate('Review this diff.', { format: 'json' });
 
-    expect(output).toBe('openai-response');
-    expect(seenUrl).toBe('https://api.openai.com/v1/chat/completions');
+    expect(output).toBe('azure-response');
+    expect(seenUrl).toBe(
+      'https://example.openai.azure.com/openai/deployments/review-deployment/chat/completions?api-version=2024-06-01',
+    );
     expect(seenHeaders).toMatchObject({
-      Authorization: 'Bearer sk-openai',
+      'api-key': 'azure-key',
       'content-type': 'application/json',
     });
+    expect((seenHeaders as Record<string, string>).Authorization).toBeUndefined();
 
     const body = JSON.parse(seenBody) as Record<string, unknown>;
-    expect(body.model).toBe('gpt-4.1');
+    expect(body.model).toBeUndefined();
     expect(body.messages).toEqual([{ role: 'user', content: 'Review this diff.' }]);
     expect(body.response_format).toEqual({ type: 'json_object' });
   });
@@ -105,11 +108,13 @@ describe('review cloud provider', () => {
     expect(body.response_format).toEqual({ type: 'json_object' });
   });
 
-  test('reads OPENAI_API_KEY and OPENAI_MODEL env vars when no options given', async () => {
-    const savedKey = process.env.OPENAI_API_KEY;
-    const savedModel = process.env.OPENAI_MODEL;
-    process.env.OPENAI_API_KEY = 'env-openai-key';
-    process.env.OPENAI_MODEL = 'gpt-env-model';
+  test('openai provider alias reads Azure OpenAI env vars', async () => {
+    const savedKey = process.env.AZURE_OPENAI_API_KEY;
+    const savedModel = process.env.AZURE_OPENAI_MODEL;
+    const savedBaseUrl = process.env.GNOSIS_REVIEW_LLM_API_BASE_URL;
+    process.env.AZURE_OPENAI_API_KEY = 'env-azure-key';
+    process.env.AZURE_OPENAI_MODEL = 'azure-env-model';
+    process.env.GNOSIS_REVIEW_LLM_API_BASE_URL = 'https://example.openai.azure.com';
 
     let seenHeaders: Record<string, string> | undefined;
     let seenBody = '';
@@ -122,13 +127,16 @@ describe('review cloud provider', () => {
     try {
       const service = createCloudReviewLLMService({ provider: 'openai' });
       await service.generate('hello');
-      expect(seenHeaders?.Authorization).toBe('Bearer env-openai-key');
-      expect((JSON.parse(seenBody) as Record<string, unknown>).model).toBe('gpt-env-model');
+      expect(seenHeaders?.['api-key']).toBe('env-azure-key');
+      expect((seenHeaders as Record<string, string>).Authorization).toBeUndefined();
+      expect((JSON.parse(seenBody) as Record<string, unknown>).model).toBeUndefined();
     } finally {
-      if (savedKey === undefined) process.env.OPENAI_API_KEY = undefined;
-      else process.env.OPENAI_API_KEY = savedKey;
-      if (savedModel === undefined) process.env.OPENAI_MODEL = undefined;
-      else process.env.OPENAI_MODEL = savedModel;
+      if (savedKey === undefined) process.env.AZURE_OPENAI_API_KEY = undefined;
+      else process.env.AZURE_OPENAI_API_KEY = savedKey;
+      if (savedModel === undefined) process.env.AZURE_OPENAI_MODEL = undefined;
+      else process.env.AZURE_OPENAI_MODEL = savedModel;
+      if (savedBaseUrl === undefined) process.env.GNOSIS_REVIEW_LLM_API_BASE_URL = undefined;
+      else process.env.GNOSIS_REVIEW_LLM_API_BASE_URL = savedBaseUrl;
     }
   });
 
@@ -278,20 +286,38 @@ describe('review cloud provider', () => {
     }
   });
 
-  test('throws E007 when API key is missing for openai provider', () => {
-    const savedKey = process.env.OPENAI_API_KEY;
+  test('throws E007 when Azure API key is missing for openai provider alias', () => {
+    const savedKey = process.env.AZURE_OPENAI_API_KEY;
     const savedGnosis = process.env.GNOSIS_REVIEW_LLM_API_KEY;
-    process.env.OPENAI_API_KEY = undefined;
+    process.env.AZURE_OPENAI_API_KEY = undefined;
     process.env.GNOSIS_REVIEW_LLM_API_KEY = undefined;
 
     try {
-      expect(() => createCloudReviewLLMService({ provider: 'openai', model: 'gpt-4.1' })).toThrow(
-        'missing API key',
-      );
+      expect(() =>
+        createCloudReviewLLMService({ provider: 'openai', model: 'review-deployment' }),
+      ).toThrow('missing API key');
     } finally {
-      if (savedKey !== undefined) process.env.OPENAI_API_KEY = savedKey;
+      if (savedKey !== undefined) process.env.AZURE_OPENAI_API_KEY = savedKey;
+      else process.env.AZURE_OPENAI_API_KEY = undefined;
       if (savedGnosis !== undefined) process.env.GNOSIS_REVIEW_LLM_API_KEY = savedGnosis;
+      else process.env.GNOSIS_REVIEW_LLM_API_KEY = undefined;
     }
+  });
+
+  test('normalizes fetch aborts to E006 timeouts', async () => {
+    globalThis.fetch = (async () => {
+      throw { name: 'AbortError' };
+    }) as unknown as typeof fetch;
+
+    const service = createCloudReviewLLMService({
+      provider: 'azure-openai',
+      apiBaseUrl: 'https://example.openai.azure.com',
+      apiKey: 'azure-key',
+      model: 'review-deployment',
+      timeoutMs: 1,
+    });
+
+    await expect(service.generate('hello')).rejects.toThrow('[E006]');
   });
 
   test('bedrock ignores GNOSIS_REVIEW_LLM_API_BASE_URL so Azure URL does not leak', async () => {

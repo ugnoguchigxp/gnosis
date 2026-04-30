@@ -81,7 +81,8 @@ const TASK_CHANGE_TYPES = [
   'review',
 ] as const;
 
-const MCP_REVIEW_LLM_TIMEOUT_MS = 180_000;
+const MCP_REVIEW_LLM_TIMEOUT_MS = 90_000;
+const MCP_REVIEW_LLM_TIMEOUT_MAX_MS = 105_000;
 
 const initialInstructionsSchema = z.object({});
 
@@ -345,7 +346,7 @@ function getMcpReviewLlmTimeoutMs(): number {
   const raw = process.env.GNOSIS_MCP_REVIEW_LLM_TIMEOUT_MS;
   const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
   if (!Number.isFinite(parsed) || parsed <= 0) return MCP_REVIEW_LLM_TIMEOUT_MS;
-  return Math.min(parsed, MCP_REVIEW_LLM_TIMEOUT_MS);
+  return Math.min(parsed, MCP_REVIEW_LLM_TIMEOUT_MAX_MS);
 }
 
 async function getMcpReviewLLMService(provider?: ReviewLLMPreference): Promise<ReviewLLMService> {
@@ -358,43 +359,41 @@ async function getMcpReviewLLMService(provider?: ReviewLLMPreference): Promise<R
 }
 
 function getMcpReviewProviderLabel(explicitProvider?: ReviewLLMPreference): ReviewLLMPreference {
+  if (explicitProvider === 'openai') return 'azure-openai';
   if (explicitProvider) return explicitProvider;
   const reviewer = process.env.GNOSIS_REVIEWER?.trim().toLowerCase();
-  if (reviewer === 'bedrock' || reviewer === 'openai' || reviewer === 'azure-openai')
-    return reviewer;
+  if (reviewer === 'openai') return 'azure-openai';
+  if (reviewer === 'bedrock' || reviewer === 'azure-openai') return reviewer;
   if (reviewer === 'gemma4' || reviewer === 'qwen' || reviewer === 'bonsai') return 'local';
-  return 'openai';
+  return 'azure-openai';
 }
 
-function isDocumentReviewUnavailable(error: unknown): boolean {
+function isMcpReviewUnavailable(error: unknown): boolean {
   if (error instanceof ReviewError) {
-    return error.code === 'E006' || error.code === 'E016' || error.code === 'E017';
+    return (
+      error.code === 'E006' ||
+      error.code === 'E007' ||
+      error.code === 'E016' ||
+      error.code === 'E017'
+    );
   }
   return false;
 }
 
-function buildDegradedDocumentReview(
-  input: {
-    documentType: 'spec' | 'plan';
-    documentPath?: string;
-  },
+function getReviewErrorCode(error: unknown): string | undefined {
+  return error instanceof ReviewError ? error.code : undefined;
+}
+
+function buildMcpReviewDegradedDiagnostics(
+  providerUsed: ReviewLLMPreference,
   error: unknown,
-): ReviewDocumentOutput {
+): Record<string, unknown> {
   const message = error instanceof Error ? error.message : String(error);
   return {
-    reviewId: randomUUID(),
-    documentType: input.documentType,
-    status: 'no_major_findings',
-    findings: [],
-    summary: `LLM document review degraded: ${message}`,
-    nextActions: ['Review deterministic alignment findings and retry LLM review if needed.'],
-    appliedContext: {
-      procedureIds: [],
-      lessonIds: [],
-      guidanceIds: [],
-      memoryIds: [],
-    },
-    markdown: '',
+    provider: providerUsed,
+    timeoutMs: getMcpReviewLlmTimeoutMs(),
+    errorCode: getReviewErrorCode(error),
+    degradedReasons: [message],
   };
 }
 
@@ -402,25 +401,14 @@ async function reviewDocumentForMcp(
   input: Parameters<typeof reviewDocument>[0],
   llmService: ReviewLLMService,
 ): Promise<ReviewDocumentOutput> {
-  try {
-    return await reviewDocument(input, {
-      llmService,
-      queryProcedureFn: async () => null,
-      recallLessonsFn: async () => [],
-      searchMemoryFn: async () => [],
-      getAlwaysGuidanceFn: async () => [],
-      getOnDemandGuidanceFn: async () => [],
-    });
-  } catch (error) {
-    if (!isDocumentReviewUnavailable(error)) throw error;
-    return buildDegradedDocumentReview(
-      {
-        documentType: input.documentType,
-        documentPath: input.documentPath,
-      },
-      error,
-    );
-  }
+  return reviewDocument(input, {
+    llmService,
+    queryProcedureFn: async () => null,
+    recallLessonsFn: async () => [],
+    searchMemoryFn: async () => [],
+    getAlwaysGuidanceFn: async () => [],
+    getOnDemandGuidanceFn: async () => [],
+  });
 }
 
 export const agentFirstTools: ToolEntry[] = [
@@ -638,7 +626,12 @@ TYPICAL NEXT TOOL:
         .join('\n\n');
 
       const providerUsed = getMcpReviewProviderLabel(input.provider);
-      const llmPreference = input.provider === 'local' ? 'local' : input.provider;
+      const llmPreference =
+        input.provider === 'openai'
+          ? 'azure-openai'
+          : input.provider === 'local'
+            ? 'local'
+            : input.provider;
       let findings: Array<{
         severity: 'critical' | 'major' | 'minor' | 'info';
         title: string;
@@ -649,155 +642,163 @@ TYPICAL NEXT TOOL:
         relatedKnowledge?: string[];
       }> = [];
       let summary = '';
+      let diagnostics: Record<string, unknown> | undefined;
 
-      if (input.targetType === 'code_diff') {
-        const request = ReviewRequestSchema.parse({
-          taskId: `review-task-${Date.now()}`,
-          repoPath: input.repoPath ?? process.cwd(),
-          baseRef: 'main',
-          headRef: 'HEAD',
-          trigger: 'manual',
-          sessionId: `review-task-${Date.now()}`,
-          mode: 'worktree',
-          taskGoal: reviewGoal || input.target.content || 'Review current code changes',
-          changedFiles: input.target.filePaths,
-          knowledgePolicy: useKnowledge ? input.knowledgePolicy ?? 'required' : 'off',
-        });
-        const llmService = await getMcpReviewLLMService(llmPreference);
-        const reviewDeps = {
-          llmService,
-          retrieveGuidanceFn: async () => agenticGuidance,
-          searchSimilarFindingsFn: async () => [],
-        };
-        const stage = input.reviewMode ?? 'standard';
-        const reviewResult =
-          stage === 'fast'
-            ? await runReviewStageB(request, reviewDeps)
-            : stage === 'deep'
-              ? await runReviewStageE(request, reviewDeps)
-              : await runReviewStageD(request, reviewDeps);
-        findings = mapReviewOutputFindings(reviewResult);
-        summary = reviewResult.summary;
-      } else if (input.targetType === 'implementation_plan') {
-        const repoPath = input.repoPath ?? process.cwd();
-        const llmService = await getMcpReviewLLMService(llmPreference);
-        const referencePlan = useKnowledge
-          ? await generateImplementationPlan({
+      try {
+        if (input.targetType === 'code_diff') {
+          const request = ReviewRequestSchema.parse({
+            taskId: `review-task-${Date.now()}`,
+            repoPath: input.repoPath ?? process.cwd(),
+            baseRef: 'main',
+            headRef: 'HEAD',
+            trigger: 'manual',
+            sessionId: `review-task-${Date.now()}`,
+            mode: 'worktree',
+            taskGoal: reviewGoal || input.target.content || 'Review current code changes',
+            changedFiles: input.target.filePaths,
+            knowledgePolicy: useKnowledge ? input.knowledgePolicy ?? 'required' : 'off',
+          });
+          const llmService = await getMcpReviewLLMService(llmPreference);
+          const reviewDeps = {
+            llmService,
+            retrieveGuidanceFn: async () => agenticGuidance,
+            searchSimilarFindingsFn: async () => [],
+          };
+          const stage = input.reviewMode ?? 'standard';
+          const reviewResult =
+            stage === 'fast'
+              ? await runReviewStageB(request, reviewDeps)
+              : stage === 'deep'
+                ? await runReviewStageE(request, reviewDeps)
+                : await runReviewStageD(request, reviewDeps);
+          findings = mapReviewOutputFindings(reviewResult);
+          summary = reviewResult.summary;
+        } else if (input.targetType === 'implementation_plan') {
+          const repoPath = input.repoPath ?? process.cwd();
+          const llmService = await getMcpReviewLLMService(llmPreference);
+          const referencePlan = useKnowledge
+            ? await generateImplementationPlan({
+                goal: input.goal ?? 'Review implementation plan',
+                includeLessons: true,
+              })
+            : null;
+          const mergedContext = [
+            input.goal,
+            agenticKnowledgeContext,
+            input.target.content,
+            referencePlan?.markdown
+              ? `Reference plan generated from procedural memory:\n${referencePlan.markdown}`
+              : undefined,
+            'Review policy: focus on missing Golden Path steps and missing mitigation for caution tasks.',
+          ]
+            .filter((line): line is string => typeof line === 'string' && line.trim().length > 0)
+            .join('\n\n');
+          const review = await reviewDocumentForMcp(
+            {
+              repoPath,
+              documentPath: input.target.documentPath,
+              content: input.target.content,
+              documentType: 'plan',
               goal: input.goal ?? 'Review implementation plan',
-              includeLessons: true,
-            })
-          : null;
-        const mergedContext = [
-          input.goal,
-          agenticKnowledgeContext,
-          input.target.content,
-          referencePlan?.markdown
-            ? `Reference plan generated from procedural memory:\n${referencePlan.markdown}`
-            : undefined,
-          'Review policy: focus on missing Golden Path steps and missing mitigation for caution tasks.',
-        ]
-          .filter((line): line is string => typeof line === 'string' && line.trim().length > 0)
-          .join('\n\n');
-        const review = await reviewDocumentForMcp(
-          {
+              context: mergedContext,
+              llmPreference,
+            },
+            llmService,
+          );
+          const planText = await loadReviewTargetText(
             repoPath,
-            documentPath: input.target.documentPath,
-            content: input.target.content,
-            documentType: 'plan',
-            goal: input.goal ?? 'Review implementation plan',
-            context: mergedContext,
-            llmPreference,
-          },
-          llmService,
-        );
-        const planText = await loadReviewTargetText(
-          repoPath,
-          input.target.documentPath,
-          input.target.content,
-        );
-        const alignment = referencePlan ? analyzePlanAlignment(planText, referencePlan) : null;
-        const mergedFindings = [...(alignment?.findings ?? []), ...review.findings].filter(
-          (finding, index, all) => {
-            const key = `${finding.title}:${finding.rationale}`;
-            return all.findIndex((item) => `${item.title}:${item.rationale}` === key) === index;
-          },
-        );
-        findings = mergedFindings.map((finding) =>
-          mapDocumentFinding(finding, input.target.documentPath ?? 'inline:implementation_plan'),
-        );
-        summary = review.summary;
-      } else if (input.targetType === 'spec') {
-        const repoPath = input.repoPath ?? process.cwd();
-        const llmService = await getMcpReviewLLMService(llmPreference);
-        const referencePlan = useKnowledge
-          ? await generateImplementationPlan({
+            input.target.documentPath,
+            input.target.content,
+          );
+          const alignment = referencePlan ? analyzePlanAlignment(planText, referencePlan) : null;
+          const mergedFindings = [...(alignment?.findings ?? []), ...review.findings].filter(
+            (finding, index, all) => {
+              const key = `${finding.title}:${finding.rationale}`;
+              return all.findIndex((item) => `${item.title}:${item.rationale}` === key) === index;
+            },
+          );
+          findings = mergedFindings.map((finding) =>
+            mapDocumentFinding(finding, input.target.documentPath ?? 'inline:implementation_plan'),
+          );
+          summary = review.summary;
+        } else if (input.targetType === 'spec') {
+          const repoPath = input.repoPath ?? process.cwd();
+          const llmService = await getMcpReviewLLMService(llmPreference);
+          const referencePlan = useKnowledge
+            ? await generateImplementationPlan({
+                goal: input.goal ?? 'Review specification',
+                includeLessons: false,
+              })
+            : null;
+          const mergedContext = [
+            input.goal,
+            agenticKnowledgeContext,
+            input.target.content,
+            referencePlan?.markdown
+              ? `Reference plan generated from procedural memory:\n${referencePlan.markdown}`
+              : undefined,
+            'Review policy: verify requirement clarity, acceptance criteria, and Golden Path coverage.',
+          ]
+            .filter((line): line is string => typeof line === 'string' && line.trim().length > 0)
+            .join('\n\n');
+          const review = await reviewDocumentForMcp(
+            {
+              repoPath,
+              documentPath: input.target.documentPath,
+              content: input.target.content,
+              documentType: 'spec',
               goal: input.goal ?? 'Review specification',
-              includeLessons: false,
-            })
-          : null;
-        const mergedContext = [
-          input.goal,
-          agenticKnowledgeContext,
-          input.target.content,
-          referencePlan?.markdown
-            ? `Reference plan generated from procedural memory:\n${referencePlan.markdown}`
-            : undefined,
-          'Review policy: verify requirement clarity, acceptance criteria, and Golden Path coverage.',
-        ]
-          .filter((line): line is string => typeof line === 'string' && line.trim().length > 0)
-          .join('\n\n');
-        const review = await reviewDocumentForMcp(
-          {
+              context: mergedContext,
+              llmPreference,
+            },
+            llmService,
+          );
+          const specText = await loadReviewTargetText(
             repoPath,
-            documentPath: input.target.documentPath,
-            content: input.target.content,
-            documentType: 'spec',
-            goal: input.goal ?? 'Review specification',
-            context: mergedContext,
-            llmPreference,
-          },
-          llmService,
-        );
-        const specText = await loadReviewTargetText(
-          repoPath,
-          input.target.documentPath,
-          input.target.content,
-        );
-        const alignment = analyzeSpecAlignment(specText, referencePlan);
-        const mergedFindings = [...alignment.findings, ...review.findings].filter(
-          (finding, index, all) => {
-            const key = `${finding.title}:${finding.rationale}`;
-            return all.findIndex((item) => `${item.title}:${item.rationale}` === key) === index;
-          },
-        );
-        findings = mergedFindings.map((finding) =>
-          mapDocumentFinding(finding, input.target.documentPath ?? 'inline:spec_document'),
-        );
-        summary = review.summary;
-      } else {
-        const repoPath = input.repoPath ?? process.cwd();
-        const llmService = await getMcpReviewLLMService(llmPreference);
-        const documentType = input.targetType === 'design' ? 'plan' : 'spec';
-        const review = await reviewDocumentForMcp(
-          {
-            repoPath,
-            documentPath: input.target.documentPath,
-            content: input.target.content,
-            documentType,
-            goal: input.goal,
-            context: agenticKnowledgeContext,
-            llmPreference,
-          },
-          llmService,
-        );
-        findings = review.findings.map((finding) =>
-          mapDocumentFinding(
-            finding,
-            input.target.documentPath ??
-              `inline:${input.targetType === 'design' ? 'plan' : 'spec'}`,
-          ),
-        );
-        summary = review.summary;
+            input.target.documentPath,
+            input.target.content,
+          );
+          const alignment = analyzeSpecAlignment(specText, referencePlan);
+          const mergedFindings = [...alignment.findings, ...review.findings].filter(
+            (finding, index, all) => {
+              const key = `${finding.title}:${finding.rationale}`;
+              return all.findIndex((item) => `${item.title}:${item.rationale}` === key) === index;
+            },
+          );
+          findings = mergedFindings.map((finding) =>
+            mapDocumentFinding(finding, input.target.documentPath ?? 'inline:spec_document'),
+          );
+          summary = review.summary;
+        } else {
+          const repoPath = input.repoPath ?? process.cwd();
+          const llmService = await getMcpReviewLLMService(llmPreference);
+          const documentType = input.targetType === 'design' ? 'plan' : 'spec';
+          const review = await reviewDocumentForMcp(
+            {
+              repoPath,
+              documentPath: input.target.documentPath,
+              content: input.target.content,
+              documentType,
+              goal: input.goal,
+              context: agenticKnowledgeContext,
+              llmPreference,
+            },
+            llmService,
+          );
+          findings = review.findings.map((finding) =>
+            mapDocumentFinding(
+              finding,
+              input.target.documentPath ??
+                `inline:${input.targetType === 'design' ? 'plan' : 'spec'}`,
+            ),
+          );
+          summary = review.summary;
+        }
+      } catch (error) {
+        if (!isMcpReviewUnavailable(error)) throw error;
+        diagnostics = buildMcpReviewDegradedDiagnostics(providerUsed, error);
+        summary = `LLM review degraded: ${error instanceof Error ? error.message : String(error)}`;
+        findings = [];
       }
 
       const suggestedNotes = findings.slice(0, 3).map((finding, index) => ({
@@ -814,6 +815,7 @@ TYPICAL NEXT TOOL:
         findings,
         summary,
         suggestedNotes,
+        ...(diagnostics ? { diagnostics } : {}),
       };
       await dispatchHookEvent({
         event: 'review.completed',
