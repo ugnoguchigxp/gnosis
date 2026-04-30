@@ -989,6 +989,7 @@ You have access to Gnosis, a sophisticated memory system. Before reaching conclu
 1. Use 'query_procedure' to fetch project-specific instructions and constraints. Pay special attention to "Golden Paths" (tasks with high confidence).
 2. Use 'recall_lessons' if you encounter patterns that might have caused issues in the past.
 3. Use 'query_graph' to understand the relationships and dependencies of the components you are auditing.
+4. Use 'lookup_failure_firewall_context' only when the diff suggests Golden Path deviation or recurrence risk. Treat it as bounded reference evidence, not as a mandatory preflight.
 
 Knowledge policy: ${knowledgePolicy}
 Knowledge retrieval status (pre-check): ${knowledgeRetrievalStatus}

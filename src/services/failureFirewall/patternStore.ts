@@ -386,8 +386,10 @@ export async function loadFailureKnowledge(
     }
   }
 
-  goldenPaths.push(...seedKnowledge.goldenPaths);
-  failurePatterns.push(...seedKnowledge.failurePatterns);
+  if (sourceMode !== 'dedicated') {
+    goldenPaths.push(...seedKnowledge.goldenPaths);
+    failurePatterns.push(...seedKnowledge.failurePatterns);
+  }
 
   if (sourceMode === 'entities' || sourceMode === 'hybrid') {
     try {

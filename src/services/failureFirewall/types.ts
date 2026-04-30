@@ -123,3 +123,98 @@ export interface FailureKnowledgeSource {
   goldenPaths: GoldenPath[];
   failurePatterns: FailurePattern[];
 }
+
+export interface FailureFirewallContext {
+  shouldUse: boolean;
+  reason: string;
+  riskSignals: string[];
+  changedFiles: string[];
+  goldenPathCandidates: Array<{
+    id: string;
+    title: string;
+    source: GoldenPath['source'];
+    pathType: string;
+    appliesWhen: string[];
+    requiredSteps: string[];
+    allowedAlternatives: string[];
+    score: number;
+  }>;
+  failurePatternCandidates: Array<{
+    id: string;
+    title: string;
+    source: FailurePattern['source'];
+    patternType: string;
+    severity: FailureSeverity;
+    requiredEvidence: string[];
+    score: number;
+  }>;
+  suggestedUse: 'skip' | 'review_reference' | 'run_fast_gate' | 'generate_learning_candidates';
+  degradedReasons: string[];
+}
+
+export interface LookupFailureFirewallContextInput {
+  repoPath?: string;
+  rawDiff?: string;
+  taskGoal?: string;
+  files?: string[];
+  changeTypes?: string[];
+  technologies?: string[];
+  maxGoldenPaths?: number;
+  maxFailurePatterns?: number;
+  knowledgeSource?: FailureKnowledgeSourceMode;
+}
+
+export interface FailureFirewallLearningCandidate {
+  candidateId: string;
+  status: 'needs_review';
+  sourceEvent: 'verified_commit_approval';
+  verifyCommand: string;
+  commitApprovedByUser: true;
+  successPattern?: {
+    kind: 'procedure' | 'skill' | 'rule' | 'decision';
+    title: string;
+    content: string;
+    goldenPath: {
+      pathType: string;
+      appliesWhen: string[];
+      requiredSteps: string[];
+      allowedAlternatives: string[];
+      blockWhenMissing: string[];
+      riskSignals: string[];
+    };
+  };
+  failurePattern?: {
+    kind: 'risk' | 'lesson' | 'rule';
+    title: string;
+    content: string;
+    failureFirewall: {
+      patternType: string;
+      severity: FailureSeverity;
+      riskSignals: string[];
+      matchHints: string[];
+      requiredEvidence: string[];
+      goldenPathCandidateId?: string;
+    };
+  };
+}
+
+export interface SuggestFailureFirewallLearningCandidatesInput {
+  repoPath?: string;
+  rawDiff: string;
+  verifyCommand: string;
+  verifyPassed: boolean;
+  commitApprovedByUser: boolean;
+  reviewFindings?: Array<{
+    title: string;
+    severity: string;
+    accepted?: boolean;
+    filePath?: string;
+    evidence?: string;
+  }>;
+  knowledgeSource?: FailureKnowledgeSourceMode;
+}
+
+export interface FailureFirewallLearningCandidatesOutput {
+  candidates: FailureFirewallLearningCandidate[];
+  skippedReason?: string;
+}

@@ -7,6 +7,9 @@ import { closeDbPool } from '../db/index.js';
 import { RuntimeLifecycle } from '../runtime/lifecycle.js';
 import { registerProcess } from '../runtime/processRegistry.js';
 import { startBackgroundWorkers, stopBackgroundWorkers } from '../services/background/manager.js';
+import { lookupFailureFirewallContext } from '../services/failureFirewall/context.js';
+import { runFailureFirewall } from '../services/failureFirewall/index.js';
+import { suggestFailureFirewallLearningCandidates } from '../services/failureFirewall/learningCandidates.js';
 import { MCP_HOST_SOURCE_FINGERPRINT } from './hostFingerprint.js';
 import {
   MCP_HOST_MESSAGE_DELIMITER,
@@ -36,6 +39,25 @@ function writeResponse(socket: Socket, response: McpHostResponse): boolean {
 
 function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+async function handleFailureFirewallHostRequest(request: McpHostRequest) {
+  if (request.type === 'failure_firewall/context') {
+    return lookupFailureFirewallContext(request.input);
+  }
+  if (request.type === 'failure_firewall/run') {
+    return runFailureFirewall({
+      repoPath: request.input.repoPath,
+      rawDiff: request.input.rawDiff,
+      mode: request.input.mode,
+      diffMode: request.input.diffMode,
+      knowledgeSource: request.input.knowledgeSource,
+    });
+  }
+  if (request.type === 'failure_firewall/suggest_learning_candidates') {
+    return suggestFailureFirewallLearningCandidates(request.input);
+  }
+  return null;
 }
 
 function hostLockPath(rootDir: string): string {
@@ -349,6 +371,15 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
       if (request.type === 'shutdown') {
         respond({ id: request.id, ok: true, result: null });
         void lifecycle.requestShutdown('manual');
+        return;
+      }
+      if (
+        request.type === 'failure_firewall/context' ||
+        request.type === 'failure_firewall/run' ||
+        request.type === 'failure_firewall/suggest_learning_candidates'
+      ) {
+        const result = await handleFailureFirewallHostRequest(request);
+        respond({ id: request.id, ok: true, result });
         return;
       }
       respond({

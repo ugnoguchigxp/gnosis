@@ -282,6 +282,20 @@ describe('failure firewall', () => {
     expect(knowledge.failurePatterns[0]?.source).toBe('dedicated');
   });
 
+  test('runFailureFirewall forwards knowledge source to the pattern store', async () => {
+    const result = await runFailureFirewall({
+      rawDiff: cacheMissingDiff,
+      mode: 'fast',
+      knowledgeSource: 'dedicated',
+      database: makeFailureKnowledgeDb() as never,
+    });
+
+    expect(result.goldenPathsEvaluated).toBe(1);
+    expect(result.patternsEvaluated).toBe(1);
+    expect(result.matches[0]?.failurePattern?.source).toBe('dedicated');
+    expect(result.matches[0]?.failurePattern?.id).toBe('dedicated-ff-cache');
+  });
+
   test('hybrid mode prefers dedicated rows over seed and entity rows for the same id', async () => {
     const knowledge = await loadFailureKnowledge({
       database: makeFailureKnowledgeDb({

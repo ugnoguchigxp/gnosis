@@ -693,14 +693,17 @@ bun run lint
 - primary MCP tool は増えない。
 - `bun run verify` が通る。
 
-## 最初に実装するべき最小スライス
+## 実装状況
 
-最初の1 PR では、以下だけを実装する。
+2026-04-30 時点で、以下を実装済み。
 
-1. `knowledgeSource` 引き渡し修正。
-2. CLI 既定実行を MCP host private request に寄せる設計を入れる。
+1. `knowledgeSource` 引き渡し修正。`dedicated` は専用テーブルのみを読み、読めない場合だけ seed fallback する。
+2. CLI 既定実行を MCP host private request に変更。`--direct` の場合だけ CLI process 内で実行する。
 3. `lookupFailureFirewallContext` 追加。
-4. Agentic Search にはまだ接続せず、context service の unit test を作る。
-5. docs から lifecycle 前提を消す。
+4. Agentic Search が必要時だけ Failure Firewall context を補助情報として返す。
+5. `review_task` の agentic reviewer が内部 tool `lookup_failure_firewall_context` を必要時だけ参照できる。
+6. verify 合格とユーザー commit 承認後の success/failure learning candidate 生成を追加。
+7. `record_task_note` は `failure-firewall` / `golden-path` tags の候補を `needs_review` として保存する。
+8. docs から Failure Firewall の lifecycle tool 前提を削除し、現行 primary MCP surface に合わせた。
 
-この順番なら既存 review flow を壊さず、次の PR で Agentic Search / `review_task` に接続できる。
+未実装として残るのは、`needs_review` 候補の明示昇格 CLI/UI と false positive feedback による自動 severity 調整である。これは Phase 7 の独立作業として扱う。

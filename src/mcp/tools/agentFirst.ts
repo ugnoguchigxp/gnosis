@@ -190,6 +190,7 @@ const recordTaskNoteSchema = z.object({
     )
     .optional(),
   files: z.array(z.string()).optional(),
+  metadata: z.record(z.unknown()).optional(),
   confidence: z.number().min(0).max(1).optional(),
   source: z.enum(['manual', 'task', 'review', 'onboarding', 'import']).optional(),
 });
@@ -251,6 +252,20 @@ type AgenticReviewKnowledge = {
   reason?: string;
 };
 
+type AgenticFailureFirewallHint = {
+  shouldUse: boolean;
+  reason: string;
+  suggestedUse: string;
+  riskSignals: string[];
+  goldenPathCandidates: Array<{ id: string; title: string; score: number }>;
+  failurePatternCandidates: Array<{
+    id: string;
+    title: string;
+    severity: string;
+    score: number;
+  }>;
+};
+
 function guidanceBucketForAgenticHit(
   hit: AgenticReviewKnowledge,
 ): 'principle' | 'heuristic' | 'pattern' | 'skill' {
@@ -309,6 +324,32 @@ function formatAgenticKnowledgeContext(hits: AgenticReviewKnowledge[]): string |
     return `- ${hit.id}${label ? ` (${label})` : ''}: ${hit.title}\n  ${body}`;
   });
   return `Agentic search selected knowledge:\n${lines.join('\n')}`;
+}
+
+function formatFailureFirewallContext(hint?: AgenticFailureFirewallHint): string | undefined {
+  if (!hint || !hint.shouldUse) return undefined;
+  const goldenPaths = hint.goldenPathCandidates
+    .slice(0, 3)
+    .map((candidate) => `- ${candidate.id}: ${candidate.title} (${candidate.score})`);
+  const failurePatterns = hint.failurePatternCandidates
+    .slice(0, 3)
+    .map(
+      (candidate) =>
+        `- ${candidate.id}: ${candidate.title} [${candidate.severity}] (${candidate.score})`,
+    );
+  return [
+    'Optional Failure Firewall / Golden Path context:',
+    `Reason: ${hint.reason}`,
+    `Suggested use: ${hint.suggestedUse}`,
+    `Risk signals: ${hint.riskSignals.join(', ') || '(none)'}`,
+    goldenPaths.length > 0 ? `Golden Path candidates:\n${goldenPaths.join('\n')}` : undefined,
+    failurePatterns.length > 0
+      ? `Failure pattern candidates:\n${failurePatterns.join('\n')}`
+      : undefined,
+    'Use this only when it is directly relevant to a grounded review finding.',
+  ]
+    .filter((line): line is string => typeof line === 'string' && line.trim().length > 0)
+    .join('\n');
 }
 
 function isWithin(base: string, target: string): boolean {
@@ -580,8 +621,14 @@ TYPICAL NEXT TOOL:
         };
       }
       const selectedKnowledge = (retrieval.usedKnowledge ?? []) as AgenticReviewKnowledge[];
+      const failureFirewallHint =
+        'failureFirewall' in retrieval
+          ? (retrieval as { failureFirewall?: AgenticFailureFirewallHint }).failureFirewall ??
+            undefined
+          : undefined;
       const agenticGuidance = buildGuidanceFromAgenticKnowledge(selectedKnowledge);
       const agenticKnowledgeContext = formatAgenticKnowledgeContext(selectedKnowledge);
+      const failureFirewallContext = formatFailureFirewallContext(failureFirewallHint);
       const knowledgeUsed = selectedKnowledge.map((hit) => ({
         slug: hit.id,
         kind: hit.kind,
@@ -589,7 +636,7 @@ TYPICAL NEXT TOOL:
         title: hit.title,
         reason: hit.reason,
       }));
-      const reviewGoal = [input.goal, agenticKnowledgeContext]
+      const reviewGoal = [input.goal, agenticKnowledgeContext, failureFirewallContext]
         .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
         .join('\n\n');
 
@@ -780,6 +827,7 @@ TYPICAL NEXT TOOL:
       const result = {
         providerUsed,
         knowledgeUsed,
+        ...(failureFirewallHint ? { failureFirewall: failureFirewallHint } : {}),
         findings,
         summary,
         suggestedNotes,

@@ -1,4 +1,5 @@
 import { ReviewError } from '../errors.js';
+import { lookupFailureFirewallContextToolEntry } from './failureFirewall.js';
 import { getSymbolsToolEntry } from './getSymbols.js';
 import {
   gitBlameToolEntry,
@@ -86,6 +87,7 @@ export function createDefaultReviewerToolRegistry(): ReviewerToolRegistry {
   registry.register(getGuidanceToolEntry);
   registry.register(queryProcedureToolEntry);
   registry.register(queryGraphToolEntry);
+  registry.register(lookupFailureFirewallContextToolEntry);
   registry.register(webSearchToolEntry);
   return registry;
 }

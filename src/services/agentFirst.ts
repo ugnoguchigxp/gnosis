@@ -7,6 +7,8 @@ import { GNOSIS_CONSTANTS } from '../constants.js';
 import { db } from '../db/index.js';
 import { entities, relations } from '../db/schema.js';
 import { generateEntityId } from '../utils/entityId.js';
+import { lookupFailureFirewallContext } from './failureFirewall/context.js';
+import type { FailureFirewallContext } from './failureFirewall/types.js';
 import { generateEmbedding, searchMemoriesByType } from './memory.js';
 import { runPromptWithMemoryLoopRouter } from './memoryLoopLlmRouter.js';
 
@@ -269,6 +271,21 @@ type NormalizedToolSnapshot = {
   descriptionHash: string;
 };
 
+type AgenticSearchFailureFirewallHint = {
+  shouldUse: boolean;
+  reason: string;
+  suggestedUse: FailureFirewallContext['suggestedUse'];
+  riskSignals: string[];
+  goldenPathCandidates: Array<{ id: string; title: string; score: number }>;
+  failurePatternCandidates: Array<{
+    id: string;
+    title: string;
+    severity: string;
+    score: number;
+  }>;
+  degradedReasons: string[];
+};
+
 export type StaleMetadataSignal = {
   status: 'ok' | 'suspected_stale' | 'unknown';
   reasons: Array<
@@ -524,6 +541,54 @@ function inferTechnologies(input: SearchKnowledgeV2Input, taskText: string): str
   if (text.includes('mcp')) technologies.add('mcp');
   if (text.includes('bun')) technologies.add('bun');
   return [...technologies];
+}
+
+function shouldLookupFailureFirewallContext(input: AgenticSearchInput): boolean {
+  const text = [
+    input.userRequest,
+    ...(input.files ?? []),
+    ...(input.changeTypes ?? []),
+    ...(input.technologies ?? []),
+  ]
+    .join('\n')
+    .toLowerCase();
+  if ((input.changeTypes ?? []).length > 0 && input.changeTypes?.every((type) => type === 'docs')) {
+    return false;
+  }
+  return /\b(review|security|auth|db|database|schema|migration|cache|mutation|mcp|api|backend|test|verify|commit|failure[-_ ]firewall|golden path)\b/.test(
+    text,
+  );
+}
+
+async function buildFailureFirewallHint(
+  input: AgenticSearchInput,
+): Promise<AgenticSearchFailureFirewallHint | undefined> {
+  if (!shouldLookupFailureFirewallContext(input)) return undefined;
+  const context = await lookupFailureFirewallContext({
+    repoPath: input.repoPath,
+    taskGoal: input.userRequest,
+    files: input.files,
+    changeTypes: input.changeTypes,
+    technologies: input.technologies,
+  });
+  return {
+    shouldUse: context.shouldUse,
+    reason: context.reason,
+    suggestedUse: context.suggestedUse,
+    riskSignals: context.riskSignals,
+    goldenPathCandidates: context.goldenPathCandidates.map((candidate) => ({
+      id: candidate.id,
+      title: candidate.title,
+      score: candidate.score,
+    })),
+    failurePatternCandidates: context.failurePatternCandidates.map((candidate) => ({
+      id: candidate.id,
+      title: candidate.title,
+      severity: candidate.severity,
+      score: candidate.score,
+    })),
+    degradedReasons: context.degradedReasons,
+  };
 }
 
 function buildQueryByPreset(input: SearchKnowledgeV2Input): string {
@@ -1450,6 +1515,7 @@ export async function agenticSearch(input: AgenticSearchInput) {
   }
 
   const candidates = [...entityCandidates, ...rawMemoryCandidates].slice(0, maxCandidates);
+  const failureFirewall = await buildFailureFirewallHint(input);
   let localLlmUsed = false;
   let decisions = new Map<string, AgenticLlmDecision>();
   const localLlmEnabled = input.localLlm?.enabled ?? candidates.length > 0;
@@ -1469,6 +1535,7 @@ export async function agenticSearch(input: AgenticSearchInput) {
         decision: 'degraded' as const,
         confidence: 0,
         usedKnowledge: [],
+        ...(failureFirewall ? { failureFirewall } : {}),
         skippedCount: candidates.length,
         maybeCount: 0,
         gaps: ['Gemma4 relevance filtering failed; unfiltered candidates were not injected.'],
@@ -1552,6 +1619,7 @@ export async function agenticSearch(input: AgenticSearchInput) {
       summary: itemDecision.summary ?? candidate.summary,
       reason: itemDecision.reason,
     })),
+    ...(failureFirewall ? { failureFirewall } : {}),
     skippedCount,
     maybeCount,
     gaps: used.length === 0 ? ['No candidate was relevant enough for this task.'] : [],
@@ -1578,6 +1646,7 @@ export type RecordTaskNoteInput = {
   title?: string;
   purpose?: string;
   tags?: string[];
+  metadata?: Record<string, unknown>;
   evidence?: Array<{ type?: string; value?: string; uri?: string }>;
   files?: string[];
   confidence?: number;
@@ -1643,22 +1712,36 @@ export async function recordTaskNote(input: RecordTaskNoteInput) {
   const now = new Date();
   const kind = input.kind ?? DEFAULT_KNOWLEDGE_KIND;
   const category = input.category ?? fallbackCategoryByKind(kind);
+  const tags = input.tags ?? [];
+  const isFailureFirewallCandidate =
+    tags.includes('failure-firewall') || tags.includes('golden-path');
   const title =
     input.title?.trim() && input.title.trim().length > 0
       ? input.title.trim()
       : input.content.trim().replace(/\s+/g, ' ').slice(0, 80) || `note-${now.getTime()}`;
   const entityId = generateEntityId(kind, `${title}-${now.getTime()}`);
+  const extraMetadata = asRecord(input.metadata);
   const metadata = {
+    ...extraMetadata,
     slug: toSlug(title),
     category,
     purpose: input.purpose ?? `Reusable ${kind} for ${category} work.`,
-    tags: input.tags ?? [],
+    tags,
     files: input.files ?? [],
     evidence: input.evidence ?? [],
     source: input.source ?? 'task',
     taskId: input.taskId,
-    status: 'active',
+    status: isFailureFirewallCandidate ? 'needs_review' : 'active',
     enrichmentState: 'pending',
+    ...(isFailureFirewallCandidate
+      ? {
+          failureFirewallCandidate: {
+            ...asRecord(extraMetadata.failureFirewallCandidate),
+            status: 'needs_review',
+            active: false,
+          },
+        }
+      : {}),
     inferred: {
       title: !input.title,
       kind: !input.kind,
@@ -1705,6 +1788,9 @@ export async function recordTaskNote(input: RecordTaskNoteInput) {
     kind,
     category,
     enrichmentState: 'pending',
+    ...(isFailureFirewallCandidate
+      ? { failureFirewallCandidateState: 'needs_review' as const }
+      : {}),
     relationLinked,
   };
 }

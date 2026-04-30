@@ -78,6 +78,7 @@ bun test test/mcpHostServices.test.ts test/mcpStdioIntegration.test.ts
   - `taskSummary`
   - `decision`: `use_knowledge|no_relevant_knowledge|needs_clarification|degraded`
   - `usedKnowledge`
+  - `failureFirewall`（該当タスクのみ）: Golden Path / failure pattern 候補と推奨利用方法
   - `skippedCount`, `maybeCount`
   - `diagnostics`
   - `nextAction`

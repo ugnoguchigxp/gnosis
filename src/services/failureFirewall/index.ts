@@ -197,7 +197,10 @@ export async function runFailureFirewall(
   }
 
   const features = buildFailureDiffFeatures(rawDiff);
-  const knowledge = await loadFailureKnowledge({ database: options.database });
+  const knowledge = await loadFailureKnowledge({
+    database: options.database,
+    knowledgeSource: options.knowledgeSource,
+  });
   let candidates = scoreFailureCandidates(
     features,
     knowledge.goldenPaths,

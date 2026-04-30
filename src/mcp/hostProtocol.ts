@@ -1,6 +1,12 @@
 import { mkdirSync } from 'node:fs';
 import { Socket } from 'node:net';
 import { join, resolve } from 'node:path';
+import type {
+  FailureFirewallContext,
+  FailureFirewallLearningCandidatesOutput,
+  FailureFirewallOutput,
+  FailureKnowledgeSourceMode,
+} from '../services/failureFirewall/types.js';
 
 export const MCP_HOST_MESSAGE_DELIMITER = '\n';
 
@@ -38,17 +44,68 @@ export type McpHostServiceInfo = {
   version: string;
 };
 
+export type FailureFirewallRunHostInput = {
+  repoPath?: string;
+  rawDiff?: string;
+  mode?: 'fast' | 'with_llm';
+  diffMode?: 'git_diff' | 'worktree';
+  knowledgeSource?: FailureKnowledgeSourceMode;
+};
+
+export type LookupFailureFirewallContextHostInput = {
+  repoPath?: string;
+  rawDiff?: string;
+  taskGoal?: string;
+  files?: string[];
+  changeTypes?: string[];
+  technologies?: string[];
+  maxGoldenPaths?: number;
+  maxFailurePatterns?: number;
+  knowledgeSource?: FailureKnowledgeSourceMode;
+};
+
+export type SuggestFailureFirewallLearningCandidatesHostInput = {
+  repoPath?: string;
+  rawDiff: string;
+  verifyCommand: string;
+  verifyPassed: boolean;
+  commitApprovedByUser: boolean;
+  reviewFindings?: Array<{
+    title: string;
+    severity: string;
+    accepted?: boolean;
+    filePath?: string;
+    evidence?: string;
+  }>;
+  knowledgeSource?: FailureKnowledgeSourceMode;
+};
+
+export type FailureFirewallHostRequestInput =
+  | { type: 'failure_firewall/context'; input: LookupFailureFirewallContextHostInput }
+  | { type: 'failure_firewall/run'; input: FailureFirewallRunHostInput }
+  | {
+      type: 'failure_firewall/suggest_learning_candidates';
+      input: SuggestFailureFirewallLearningCandidatesHostInput;
+    };
+
+export type FailureFirewallHostResponse =
+  | FailureFirewallContext
+  | FailureFirewallOutput
+  | FailureFirewallLearningCandidatesOutput;
+
 export type McpHostRequest =
   | { id: string; type: 'listTools' }
   | { id: string; type: 'callTool'; name: string; arguments: unknown }
   | { id: string; type: 'health' }
-  | { id: string; type: 'shutdown' };
+  | { id: string; type: 'shutdown' }
+  | ({ id: string } & FailureFirewallHostRequestInput);
 
 export type McpHostRequestInput =
   | { type: 'listTools' }
   | { type: 'callTool'; name: string; arguments: unknown }
   | { type: 'health' }
-  | { type: 'shutdown' };
+  | { type: 'shutdown' }
+  | FailureFirewallHostRequestInput;
 
 export type McpHostHealth = {
   pid: number;
@@ -73,7 +130,12 @@ export type McpHostResponse =
   | {
       id: string;
       ok: true;
-      result: { tools: McpHostTool[] } | McpHostToolResult | McpHostHealth | null;
+      result:
+        | { tools: McpHostTool[] }
+        | McpHostToolResult
+        | McpHostHealth
+        | FailureFirewallHostResponse
+        | null;
     }
   | { id: string; ok: false; error: string };
 
