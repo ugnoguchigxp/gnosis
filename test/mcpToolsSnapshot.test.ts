@@ -38,11 +38,10 @@ describe('mcp tools snapshot', () => {
     };
 
     const targetNames = [
+      'initial_instructions',
+      'agentic_search',
       'search_knowledge',
-      'activate_project',
-      'start_task',
       'record_task_note',
-      'finish_task',
       'review_task',
       'doctor',
     ];
@@ -53,12 +52,11 @@ describe('mcp tools snapshot', () => {
     );
 
     expect(hashes).toEqual({
+      initial_instructions: 'f973399805c1c233633f5196cf8e2ad40ee100b94996d711dcd030813b671bc5',
+      agentic_search: 'f277200b3235d2ed582e50d6134098cbd49de8b9e89a776751b6826d6b71f5f9',
       search_knowledge: 'e65ab099e3ed7f1e5b8bf6a4e966c5865ee99354952755baa33e6981f7a059e6',
-      activate_project: 'ae3f5f02ed68d564e2aac89f8a542de81ecab9a42d765149a4fd5b07291e4033',
-      start_task: '9b919c81d0d7b099ee0db5d4c4be2dbcb74a0ca800507dd0663c68382e4ac1cd',
       record_task_note: 'e5a78739ce1f82ed63dbc1db90adc0febc856d4c7184bfe4bd501a68db4b4b76',
-      finish_task: '0237ef56da1e4e04d975522ca1e5d4f42d351bf0ebd1790efad302b3f9be5b86',
-      review_task: 'd797c3c09be913d672c38cd9cbb9dee95d43437431696c681234842995ae00e3',
+      review_task: 'e39bbbe4bcabb7b512162f27e9c167e82f211c84b8630b50948796a8420d8d92',
       doctor: '2c0394f3b8ad34fddbe4881a4db02aebcebdb4b3ab7931ca505cbc6c6b9dcc18',
     });
   });

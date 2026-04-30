@@ -185,6 +185,11 @@ export const config = {
   // 各種ログのディレクトリパス
   claudeLogDir: process.env.GNOSIS_CLAUDE_LOG_DIR || '',
   antigravityLogDir: process.env.GNOSIS_ANTIGRAVITY_LOG_DIR || '',
+  codexSessionDir:
+    process.env.GNOSIS_CODEX_SESSION_DIR || path.join(os.homedir(), '.codex', 'sessions'),
+  codexArchivedSessionDir:
+    process.env.GNOSIS_CODEX_ARCHIVED_SESSION_DIR ||
+    path.join(os.homedir(), '.codex', 'archived_sessions'),
 
   // 自己省察のバッチサイズ
   synthesisBatchSize: 10,

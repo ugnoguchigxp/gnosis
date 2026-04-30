@@ -58,13 +58,13 @@ export async function extractEntitiesFromText(
   const llmTimeoutMs = deps.llmTimeoutMs ?? config.llmTimeoutMs;
   const lockFn = deps.withLock ?? defaultLock;
   const prompt = `
-以下のテキストから、主要なエンティティ（実体）を抽出してください。
+以下のテキストから、将来の作業で再利用できる主要な知識を抽出してください。
 出力は必ず以下のJSON配列形式のみで返してください。余計な解説は不要です。
 
 [
   {
     "name": "実体名（公式名稱、日本語可）",
-    "type": "以下から1つ選択: task|goal|constraint|context|project|library|service|tool|concept|person|pattern|config",
+    "type": "以下から1つ選択: rule|procedure|skill|decision|lesson|observation|risk|command_recipe|reference|project_doc|task|goal|constraint|context|project|library|service|tool|concept|person|pattern|config",
     "description": "50文字以上の説明。何であるか、なぜ重要かを含む。短すぎる説明は不可"
   }
 ]
@@ -189,20 +189,28 @@ export async function distillKnowledgeFromTranscript(
   const lockFn = deps.withLock ?? defaultLock;
   const prompt = `
 以下のAIエージェントとの会話記録（JSONLパース済みテキスト）を分析し、
-将来の参照に役立つ「重要な事実」「技術的決定」「プロジェクト構造」などを抽出してください。
+将来の参照に役立つ再利用可能な知識だけを抽出してください。
 
 【厳守事項】
 1. パスワード、APIキー、認証トークン、個人情報（住所・電話番号等）は絶対に抽出しないでください。
 2. 雑談や一時的な挨拶、重要度の低い試行錯誤は無視してください。
-3. 出力は必ず以下のJSON形式のみで返してください。
+3. 単なるタスク開始・終了・進捗ログは抽出しないでください。
+4. ユーザーの明示的な方針、成功した手順、失敗から得た教訓、運用上の注意、プロジェクト固有ルールを優先してください。
+5. type は原則として rule|procedure|skill|decision|lesson|observation|risk|command_recipe|reference|project_doc から選択してください。旧来の task|goal|constraint|context|project|library|service|tool|concept|person|pattern|config は対象が再利用ナレッジでない場合の補助分類に限ります。
+6. 出力は必ず以下のJSON形式のみで返してください。
 
 {
   "memories": ["短い文章形式の記憶1", "記憶2"],
   "entities": [
     {
-      "type": "以下から1つ選択: task|goal|constraint|context|project|library|service|tool|concept|person|pattern|config",
+      "type": "以下から1つ選択: rule|procedure|skill|decision|lesson|observation|risk|command_recipe|reference|project_doc|task|goal|constraint|context|project|library|service|tool|concept|person|pattern|config",
       "name": "正規化された名前（公式名称、日本語可）",
-      "description": "50文字以上の説明。何であるか、なぜ重要かを含む。短すぎる説明は不可"
+      "description": "50文字以上の説明。何であるか、なぜ重要かを含む。短すぎる説明は不可",
+      "metadata": {
+        "category": "project_overview|architecture|mcp|hook|memory|workflow|testing|operation|debugging|coding_convention|security|performance|reference",
+        "purpose": "この知識を使うべき状況",
+        "tags": ["検索しやすい短いタグ"]
+      }
     }
   ],
   "relations": [

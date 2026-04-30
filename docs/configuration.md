@@ -55,6 +55,7 @@ Gnosis は環境変数を中心に構成されています。一部の機能（K
 | `LOCAL_LLM_ENABLE_CLI_FALLBACK` | `true` | API 失敗時にスクリプトを直接実行するか |
 | `GNOSIS_LLM_SCRIPT` | `services/local-llm/scripts/gemma4` | 直接実行時のスクリプトパス |
 | `LOCAL_LLM_ALLOW_MLX_IN_SEATBELT` | `false` | `CODEX_SANDBOX=seatbelt` で MLX (`gemma4`/`bonsai`) を強制有効化するか（既定は安全のため無効） |
+| `GNOSIS_CODEX_INITIAL_LOOKBACK_HOURS` | `0` | Codex 初回同期の対象期間。`0` は既存 JSONL を全件対象にする |
 
 ### Memory Loop (Local-first)
 

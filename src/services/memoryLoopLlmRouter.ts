@@ -11,6 +11,9 @@ export type MemoryLoopRouteInput = {
   retryCount: number;
   riskLevel?: MemoryLoopRiskLevel;
   qualityScore?: number;
+  preferredLocalAlias?: Extract<MemoryLoopAlias, 'gemma4' | 'bonsai'>;
+  fallbackLocalAlias?: Extract<MemoryLoopAlias, 'gemma4' | 'bonsai'> | null;
+  allowCloudFallback?: boolean;
 };
 
 export type MemoryLoopRoute = {
@@ -39,6 +42,9 @@ export type RunPromptOptions = {
   taskKind: MemoryLoopTaskKind;
   riskLevel?: MemoryLoopRiskLevel;
   qualityScore?: number;
+  preferredLocalAlias?: Extract<MemoryLoopAlias, 'gemma4' | 'bonsai'>;
+  fallbackLocalAlias?: Extract<MemoryLoopAlias, 'gemma4' | 'bonsai'> | null;
+  allowCloudFallback?: boolean;
   llmScript?: string;
   llmTimeoutMs?: number;
   maxTokens?: number;
@@ -158,16 +164,21 @@ export function routeMemoryLoopLlm(
   runtimeOverride?: MemoryLoopRuntimeConfigForTest,
 ): MemoryLoopRoute {
   const runtime = runtimeOverride ?? buildRuntimeConfig();
+  const allowCloud = runtime.allowCloud && input.allowCloudFallback !== false;
   const localPrimary =
-    input.taskKind === 'classification' || input.taskKind === 'repair-json'
+    input.preferredLocalAlias ??
+    (input.taskKind === 'classification' || input.taskKind === 'repair-json'
       ? runtime.lightAlias
-      : runtime.defaultAlias;
-  const localSecondary = localPrimary === 'gemma4' ? 'bonsai' : 'gemma4';
+      : runtime.defaultAlias);
+  const localSecondary =
+    input.fallbackLocalAlias === null
+      ? localPrimary
+      : input.fallbackLocalAlias ?? (localPrimary === 'gemma4' ? 'bonsai' : 'gemma4');
 
   const qualityGateTriggered =
     typeof input.qualityScore === 'number' && input.qualityScore < runtime.minQualityScore;
   const cloudEnabledForAttempt =
-    runtime.allowCloud &&
+    allowCloud &&
     (input.retryCount >= runtime.maxLocalRetries ||
       qualityGateTriggered ||
       input.riskLevel === 'high');
@@ -176,7 +187,7 @@ export function routeMemoryLoopLlm(
     return {
       alias: runtime.cloudProvider,
       script: runtime.scripts[runtime.cloudProvider],
-      allowCloud: runtime.allowCloud,
+      allowCloud,
       cloudEnabledForAttempt: true,
       reason: qualityGateTriggered
         ? 'quality-score-below-threshold'
@@ -190,7 +201,7 @@ export function routeMemoryLoopLlm(
   return {
     alias,
     script: runtime.scripts[alias],
-    allowCloud: runtime.allowCloud,
+    allowCloud,
     cloudEnabledForAttempt: false,
     reason: input.retryCount === 0 ? 'primary-local-route' : 'local-fallback-route',
   };
@@ -245,7 +256,8 @@ export async function runPromptWithMemoryLoopRouter(
     return { output: result.stdout?.trim() ?? '', route: fixedRoute, attempts: 1 };
   }
 
-  const maxAttempts = runtime.maxLocalRetries + (runtime.allowCloud ? 1 : 0);
+  const allowCloud = runtime.allowCloud && options.allowCloudFallback !== false;
+  const maxAttempts = runtime.maxLocalRetries + (allowCloud ? 1 : 0);
   let lastError: string | null = null;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -254,6 +266,9 @@ export async function runPromptWithMemoryLoopRouter(
       retryCount: attempt,
       riskLevel: options.riskLevel,
       qualityScore: options.qualityScore,
+      preferredLocalAlias: options.preferredLocalAlias,
+      fallbackLocalAlias: options.fallbackLocalAlias,
+      allowCloudFallback: options.allowCloudFallback,
     });
 
     const result = await spawnSync(

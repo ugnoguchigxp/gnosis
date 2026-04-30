@@ -7,13 +7,11 @@ import { envBoolean } from '../../config.js';
 import { GNOSIS_CONSTANTS } from '../../constants.js';
 import { dispatchHookEvent } from '../../hooks/service.js';
 import {
-  buildActivateProjectResult,
+  agenticSearch,
   buildDoctorRuntimeHealth,
-  finishTaskTrace,
   recordTaskNote,
   resolveStaleMetadataSignal,
   searchKnowledgeV2,
-  startTaskTrace,
 } from '../../services/agentFirst.js';
 import { ReviewError } from '../../services/review/errors.js';
 import { getReviewLLMService } from '../../services/review/llm/reviewer.js';
@@ -24,6 +22,7 @@ import {
   runReviewStageE,
 } from '../../services/review/orchestrator.js';
 import {
+  type GuidanceItem,
   KnowledgePolicySchema,
   type ReviewOutput,
   ReviewRequestSchema,
@@ -86,17 +85,6 @@ const MCP_REVIEW_LLM_TIMEOUT_MS = 180_000;
 
 const initialInstructionsSchema = z.object({});
 
-const activateProjectSchema = z.object({
-  projectRoot: z
-    .string()
-    .optional()
-    .describe('プロジェクトルート。未指定時は現在の作業ディレクトリを使用。'),
-  mode: z
-    .enum(['planning', 'editing', 'review', 'onboarding', 'no_memory'])
-    .optional()
-    .describe('現在の作業モード'),
-});
-
 const searchKnowledgeV2Schema = z.object({
   query: z.string().optional(),
   taskGoal: z
@@ -151,6 +139,25 @@ const searchKnowledgeV2Schema = z.object({
     .optional(),
 });
 
+const agenticSearchSchema = z.object({
+  userRequest: z.string().min(1).describe('ユーザー依頼または今回のタスク説明'),
+  repoPath: z.string().optional(),
+  files: z.array(z.string()).optional(),
+  changeTypes: z.array(z.enum(TASK_CHANGE_TYPES)).optional(),
+  technologies: z.array(z.string()).optional(),
+  intent: z.enum(['plan', 'edit', 'debug', 'review', 'finish']).optional(),
+  includeRawMemory: z.boolean().optional(),
+  maxCandidates: z.number().int().positive().optional(),
+  maxReturned: z.number().int().positive().optional(),
+  localLlm: z
+    .object({
+      enabled: z.boolean().optional(),
+      required: z.boolean().optional(),
+      timeoutMs: z.number().int().positive().optional(),
+    })
+    .optional(),
+});
+
 const doctorSchema = z.object({
   clientSnapshot: z
     .array(
@@ -164,14 +171,6 @@ const doctorSchema = z.object({
     )
     .optional()
     .describe('クライアントが保持する tools metadata snapshot'),
-});
-
-const startTaskSchema = z.object({
-  title: z.string().describe('開始するタスクのタイトル'),
-  intent: z.enum(['plan', 'edit', 'debug', 'review', 'finish']).optional(),
-  files: z.array(z.string()).optional(),
-  projectRoot: z.string().optional(),
-  taskId: z.string().optional(),
 });
 
 const recordTaskNoteSchema = z.object({
@@ -196,14 +195,6 @@ const recordTaskNoteSchema = z.object({
   source: z.enum(['manual', 'task', 'hook', 'review', 'onboarding', 'import']).optional(),
 });
 
-const finishTaskSchema = z.object({
-  taskId: z.string(),
-  outcome: z.string(),
-  checks: z.array(z.string()).optional(),
-  followUps: z.array(z.string()).optional(),
-  learnedItems: z.array(recordTaskNoteSchema.omit({ taskId: true })).optional(),
-});
-
 const reviewTaskSchema = z.object({
   targetType: z.enum(['code_diff', 'document', 'implementation_plan', 'spec', 'design']),
   target: z.object({
@@ -212,7 +203,7 @@ const reviewTaskSchema = z.object({
     content: z.string().optional(),
     documentPath: z.string().optional(),
   }),
-  provider: z.enum(['local', 'openai', 'bedrock']).optional(),
+  provider: z.enum(['local', 'openai', 'bedrock', 'azure-openai']).optional(),
   reviewMode: z.enum(['fast', 'standard', 'deep']).optional(),
   focus: z
     .array(
@@ -250,6 +241,75 @@ function mapReviewOutputFindings(review: ReviewOutput) {
     evidence: finding.evidence ? [finding.evidence] : [],
     relatedKnowledge: finding.knowledge_refs ?? [],
   }));
+}
+
+type AgenticReviewKnowledge = {
+  id: string;
+  kind?: string;
+  category?: string;
+  title: string;
+  summary?: string;
+  reason?: string;
+};
+
+function guidanceBucketForAgenticHit(
+  hit: AgenticReviewKnowledge,
+): 'principle' | 'heuristic' | 'pattern' | 'skill' {
+  if (hit.kind === 'rule') return 'principle';
+  if (hit.kind === 'procedure' || hit.kind === 'command_recipe' || hit.kind === 'skill') {
+    return 'skill';
+  }
+  if (hit.kind === 'risk' || hit.kind === 'lesson') return 'heuristic';
+  return 'pattern';
+}
+
+function toGuidanceItemFromAgenticHit(hit: AgenticReviewKnowledge): GuidanceItem {
+  const bucket = guidanceBucketForAgenticHit(hit);
+  const content = [hit.summary, hit.reason ? `Reason: ${hit.reason}` : undefined]
+    .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    .join('\n');
+  return {
+    id: hit.id,
+    title: hit.title,
+    content: content || hit.title,
+    guidanceType: bucket === 'skill' ? 'skill' : 'rule',
+    scope: 'on_demand',
+    priority: 0,
+    tags: [bucket, hit.kind, hit.category].filter(
+      (item): item is string => typeof item === 'string' && item.trim().length > 0,
+    ),
+  };
+}
+
+function buildGuidanceFromAgenticKnowledge(hits: AgenticReviewKnowledge[]) {
+  const result = {
+    principles: [] as GuidanceItem[],
+    heuristics: [] as GuidanceItem[],
+    patterns: [] as GuidanceItem[],
+    skills: [] as GuidanceItem[],
+    benchmarks: [] as string[],
+  };
+
+  for (const hit of hits) {
+    const item = toGuidanceItemFromAgenticHit(hit);
+    const bucket = guidanceBucketForAgenticHit(hit);
+    if (bucket === 'principle') result.principles.push(item);
+    if (bucket === 'heuristic') result.heuristics.push(item);
+    if (bucket === 'pattern') result.patterns.push(item);
+    if (bucket === 'skill') result.skills.push(item);
+  }
+
+  return result;
+}
+
+function formatAgenticKnowledgeContext(hits: AgenticReviewKnowledge[]): string | undefined {
+  if (hits.length === 0) return undefined;
+  const lines = hits.map((hit) => {
+    const label = [hit.kind, hit.category].filter(Boolean).join('/');
+    const body = hit.summary ?? hit.reason ?? hit.title;
+    return `- ${hit.id}${label ? ` (${label})` : ''}: ${hit.title}\n  ${body}`;
+  });
+  return `Agentic search selected knowledge:\n${lines.join('\n')}`;
 }
 
 function isWithin(base: string, target: string): boolean {
@@ -300,7 +360,8 @@ async function getMcpReviewLLMService(provider?: ReviewLLMPreference): Promise<R
 function getMcpReviewProviderLabel(explicitProvider?: ReviewLLMPreference): ReviewLLMPreference {
   if (explicitProvider) return explicitProvider;
   const reviewer = process.env.GNOSIS_REVIEWER?.trim().toLowerCase();
-  if (reviewer === 'bedrock' || reviewer === 'openai') return reviewer;
+  if (reviewer === 'bedrock' || reviewer === 'openai' || reviewer === 'azure-openai')
+    return reviewer;
   if (reviewer === 'gemma4' || reviewer === 'qwen' || reviewer === 'bonsai') return 'local';
   return 'openai';
 }
@@ -366,74 +427,59 @@ export const agentFirstTools: ToolEntry[] = [
   {
     name: 'initial_instructions',
     description: `WHEN TO USE:
-- セッション開始時に最初の実行手順を確認したいとき。
+- Gnosis の現在の知識取得・レビュー・保存ツール方針を確認したいとき。
 DO NOT USE WHEN:
-- すでに activate_project 済みで task 実行中のとき。
+- すでに agentic_search / review_task の使い分けが明確なとき。
 WHAT IT RETURNS:
-- firstCall と推奨ワークフローを含むガイド JSON。
+- agentic_search / search_knowledge / review_task / record_task_note / doctor の使い分けガイド。
 TYPICAL NEXT TOOL:
-- activate_project`,
+- agentic_search`,
     inputSchema: zodToJsonSchema(initialInstructionsSchema) as Record<string, unknown>,
     handler: async () => {
       const payload = {
-        firstCall: 'activate_project',
-        alwaysRules: [
-          'initial_instructions: once per session; again only before review flow.',
-          'review_task requires prior initial_instructions.',
+        defaultKnowledgeTool: 'agentic_search',
+        rawSearchTool: 'search_knowledge',
+        reviewTool: 'review_task',
+        saveKnowledgeTool: 'record_task_note',
+        diagnosticTool: 'doctor',
+        rules: [
+          'Use agentic_search before non-trivial implementation or review when project memory can affect the result.',
+          'Use search_knowledge only when inspecting raw lexical/vector candidates.',
+          'Use record_task_note only for reusable rules, lessons, decisions, risks, procedures, or command recipes.',
+          'Use doctor for runtime and tool visibility diagnostics.',
           'No git/auth/destructive DB actions without explicit user instruction.',
-        ],
-        knowledgeLookupDecision: {
-          defaultAction: 'skip_search_knowledge',
-          useWhen: 'non-trivial edit/review with project-specific uncertainty or repeated failure',
-          requiredContext: ['taskGoal', 'files/changeTypes'],
-        },
-        preImplementationRuleLookup: {
-          required: 'conditional',
-          tool: 'search_knowledge',
-          preset: 'task_context',
-        },
-        recommendedWorkflow: [
-          'activate_project',
-          'start_task when editing',
-          'finish_task when done',
-        ],
-        reviewWorkflow: [
-          'activate_project(mode=review)',
-          'search_knowledge(preset=review_context)',
-          'review_task',
         ],
       };
       return { content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }] };
     },
   },
   {
-    name: 'activate_project',
+    name: 'agentic_search',
     description: `WHEN TO USE:
-- 新規セッションの最初の 3 call 以内。必ず最初に近い段階で呼ぶ。
+- 非自明な実装・レビュー・調査の前に、今回の依頼に本当に必要なナレッジだけを取得したいとき。
 DO NOT USE WHEN:
-- project 状態を直前に取得済みで、同一ターンに再取得不要なとき。
+- raw候補やスコアを確認したいだけのとき（search_knowledgeを使用）。
 WHAT IT RETURNS:
-- project/health/onboarding/knowledgeIndex/recommendedNextCalls/instructions。
+- taskSummary、採用済みknowledge、skip/maybe件数、LLM filter診断、nextAction。
 TYPICAL NEXT TOOL:
-- search_knowledge`,
-    inputSchema: zodToJsonSchema(activateProjectSchema) as Record<string, unknown>,
+- review_task または通常の実装作業`,
+    inputSchema: zodToJsonSchema(agenticSearchSchema) as Record<string, unknown>,
     handler: async (args) => {
-      const { projectRoot, mode } = activateProjectSchema.parse(args);
-      const root = projectRoot ? path.resolve(projectRoot) : process.cwd();
-      const payload = await buildActivateProjectResult(root, mode);
-      return { content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }] };
+      const input = agenticSearchSchema.parse(args);
+      const result = await agenticSearch(input);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     },
   },
   {
     name: 'search_knowledge',
     description: `WHEN TO USE:
-- 非自明な実装・レビュー前に、再利用知識（rule/lesson/procedure/risk 等）が結果を変え得るとき。
+- 語句・ベクトル・metadataで近い raw 候補やスコアを確認したいとき。
 DO NOT USE WHEN:
-- 単純なTODO作成、状態確認、コマンド出力確認、ローカルファイル確認だけで足りる自己完結タスク。
+- 今回の依頼に本当に必要な知識だけを取得したいとき（agentic_searchを使用）。
 WHAT IT RETURNS:
 - category 別 grouped hits、flatTopHits、reason/snippet/matchSources を含む explainable 結果。
 TYPICAL NEXT TOOL:
-- start_task または review_task`,
+- agentic_search または review_task`,
     inputSchema: zodToJsonSchema(searchKnowledgeV2Schema) as Record<string, unknown>,
     handler: async (args) => {
       const input = searchKnowledgeV2Schema.parse(args);
@@ -442,53 +488,19 @@ TYPICAL NEXT TOOL:
     },
   },
   {
-    name: 'start_task',
-    description: `WHEN TO USE:
-- 編集・修正・レビュー作業を開始するときに task trace を作成したいとき。
-DO NOT USE WHEN:
-- 既存 taskId を継続中で、新規 trace を増やしたくないとき。
-WHAT IT RETURNS:
-- taskId、status、activationWarning、recommendedNextCalls。
-TYPICAL NEXT TOOL:
-- search_knowledge または record_task_note`,
-    inputSchema: zodToJsonSchema(startTaskSchema) as Record<string, unknown>,
-    handler: async (args) => {
-      const input = startTaskSchema.parse(args);
-      const result = await startTaskTrace(input);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  },
-  {
     name: 'record_task_note',
     description: `WHEN TO USE:
 - 作業中に再利用可能な知見を保存したいとき。
 DO NOT USE WHEN:
-- タスク完了の最終記録だけを残したいとき（finish_task を使用）。
+- 完了ログや一時的な進捗だけを保存したいとき。
 WHAT IT RETURNS:
 - 保存結果（entityId/slug/kind/category/enrichmentState）。
 TYPICAL NEXT TOOL:
-- finish_task`,
+- agentic_search`,
     inputSchema: zodToJsonSchema(recordTaskNoteSchema) as Record<string, unknown>,
     handler: async (args) => {
       const input = recordTaskNoteSchema.parse(args);
       const result = await recordTaskNote(input);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-  },
-  {
-    name: 'finish_task',
-    description: `WHEN TO USE:
-- task trace を完了し、成果と学習項目を確定したいとき。
-DO NOT USE WHEN:
-- 途中経過を保存したいだけのとき（record_task_note を使用）。
-WHAT IT RETURNS:
-- 完了状態、学習項目登録件数、learnedEntities、次アクション。
-TYPICAL NEXT TOOL:
-- search_knowledge`,
-    inputSchema: zodToJsonSchema(finishTaskSchema) as Record<string, unknown>,
-    handler: async (args) => {
-      const input = finishTaskSchema.parse(args);
-      const result = await finishTaskTrace(input);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     },
   },
@@ -564,7 +576,7 @@ TYPICAL NEXT TOOL:
           isError: true,
         };
       }
-      const useKnowledge = input.useKnowledge ?? true;
+      const useKnowledge = input.knowledgePolicy === 'off' ? false : input.useKnowledge ?? true;
       const seed = [
         input.target.diff,
         input.target.content,
@@ -574,27 +586,56 @@ TYPICAL NEXT TOOL:
         .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
         .join('\n');
       const retrieval = useKnowledge
-        ? await searchKnowledgeV2({
-            query: seed,
-            preset:
-              input.targetType === 'implementation_plan' || input.targetType === 'document'
-                ? 'review_context'
-                : undefined,
-            maxCategories: 3,
-            limitPerCategory: 2,
-            grouping: 'by_category',
+        ? await agenticSearch({
+            userRequest: (input.goal ?? seed) || 'Review current changes',
+            repoPath: input.repoPath,
+            files: input.target.filePaths,
+            changeTypes: ['review'],
+            intent: 'review',
+            includeRawMemory: false,
+            maxCandidates: Math.max(8, input.maxKnowledgeItems ?? 6),
+            maxReturned: input.maxKnowledgeItems ?? 6,
           })
-        : { groups: [], flatTopHits: [] };
-      const knowledgeUsed = (retrieval.groups ?? [])
-        .flatMap((group) => group.hits)
-        .slice(0, input.maxKnowledgeItems ?? 6)
-        .map((hit) => ({
-          slug: hit.slug,
-          kind: hit.kind,
-          category: hit.category,
-          title: hit.title,
-          reason: hit.reason,
-        }));
+        : { usedKnowledge: [] };
+      if (
+        useKnowledge &&
+        input.knowledgePolicy === 'required' &&
+        'decision' in retrieval &&
+        retrieval.decision === 'degraded'
+      ) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(
+                {
+                  providerUsed: getMcpReviewProviderLabel(input.provider),
+                  knowledgeUsed: [],
+                  findings: [],
+                  summary: 'Knowledge retrieval degraded before review.',
+                  diagnostics: retrieval.diagnostics,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+          isError: true,
+        };
+      }
+      const selectedKnowledge = (retrieval.usedKnowledge ?? []) as AgenticReviewKnowledge[];
+      const agenticGuidance = buildGuidanceFromAgenticKnowledge(selectedKnowledge);
+      const agenticKnowledgeContext = formatAgenticKnowledgeContext(selectedKnowledge);
+      const knowledgeUsed = selectedKnowledge.map((hit) => ({
+        slug: hit.id,
+        kind: hit.kind,
+        category: hit.category,
+        title: hit.title,
+        reason: hit.reason,
+      }));
+      const reviewGoal = [input.goal, agenticKnowledgeContext]
+        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        .join('\n\n');
 
       const providerUsed = getMcpReviewProviderLabel(input.provider);
       const llmPreference = input.provider === 'local' ? 'local' : input.provider;
@@ -618,18 +659,23 @@ TYPICAL NEXT TOOL:
           trigger: 'manual',
           sessionId: `review-task-${Date.now()}`,
           mode: 'worktree',
-          taskGoal: input.goal ?? input.target.content ?? 'Review current code changes',
+          taskGoal: reviewGoal || input.target.content || 'Review current code changes',
           changedFiles: input.target.filePaths,
-          knowledgePolicy: input.knowledgePolicy ?? 'required',
+          knowledgePolicy: useKnowledge ? input.knowledgePolicy ?? 'required' : 'off',
         });
         const llmService = await getMcpReviewLLMService(llmPreference);
+        const reviewDeps = {
+          llmService,
+          retrieveGuidanceFn: async () => agenticGuidance,
+          searchSimilarFindingsFn: async () => [],
+        };
         const stage = input.reviewMode ?? 'standard';
         const reviewResult =
           stage === 'fast'
-            ? await runReviewStageB(request, { llmService })
+            ? await runReviewStageB(request, reviewDeps)
             : stage === 'deep'
-              ? await runReviewStageE(request, { llmService })
-              : await runReviewStageD(request, { llmService });
+              ? await runReviewStageE(request, reviewDeps)
+              : await runReviewStageD(request, reviewDeps);
         findings = mapReviewOutputFindings(reviewResult);
         summary = reviewResult.summary;
       } else if (input.targetType === 'implementation_plan') {
@@ -643,6 +689,7 @@ TYPICAL NEXT TOOL:
           : null;
         const mergedContext = [
           input.goal,
+          agenticKnowledgeContext,
           input.target.content,
           referencePlan?.markdown
             ? `Reference plan generated from procedural memory:\n${referencePlan.markdown}`
@@ -690,6 +737,7 @@ TYPICAL NEXT TOOL:
           : null;
         const mergedContext = [
           input.goal,
+          agenticKnowledgeContext,
           input.target.content,
           referencePlan?.markdown
             ? `Reference plan generated from procedural memory:\n${referencePlan.markdown}`
@@ -737,6 +785,7 @@ TYPICAL NEXT TOOL:
             content: input.target.content,
             documentType,
             goal: input.goal,
+            context: agenticKnowledgeContext,
             llmPreference,
           },
           llmService,
@@ -793,7 +842,7 @@ DO NOT USE WHEN:
 WHAT IT RETURNS:
 - runtime/toolVisibility/db/knowledgeIndex/staleMetadata の診断結果と evidence。
 TYPICAL NEXT TOOL:
-- activate_project`,
+- agentic_search`,
     inputSchema: zodToJsonSchema(doctorSchema) as Record<string, unknown>,
     handler: async (args) => {
       const { clientSnapshot } = doctorSchema.parse(args);

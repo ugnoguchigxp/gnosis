@@ -1,7 +1,7 @@
 # Gnosis: Agent-First Memory and Review MCP
 
 Gnosis は、LLM エージェント向けの agent-first な知識・記憶・レビュー基盤です。  
-MCP サーバーとして動作し、一次導線は `activate_project -> search_knowledge -> start_task` を中心に設計されています。
+MCP サーバーとして動作し、一次導線は `agentic_search` と `review_task` を中心に設計されています。
 
 中核ワークフローは、再利用可能な knowledge（rule/lesson/procedure/skill/decision/risk/command recipe）に寄せています。
 
@@ -40,7 +40,8 @@ bun run onboarding:smoke
 ## MCP 公開面
 
 - MCP `tools/list` は Agent-First の一次導線のみを公開します。
-- 公開ツールは `initial_instructions / activate_project / start_task / search_knowledge / record_task_note / finish_task / review_task / doctor` に固定です。
+- 公開ツールは `initial_instructions / agentic_search / search_knowledge / record_task_note / review_task / doctor` に固定です。
+- `agentic_search` は通常の知識取得入口です。`search_knowledge` は raw 候補やスコアを確認する低レベル検索です。
 
 ## 品質チェック
 
@@ -71,7 +72,7 @@ bun run maintenance
 
 | 機能 | 説明 |
 | :--- | :--- |
-| Agent-First MCP | `initial_instructions`, `activate_project`, `search_knowledge`, `start_task` などの一次導線 |
+| Agent-First MCP | `initial_instructions`, `agentic_search`, `search_knowledge`, `review_task` などの一次導線 |
 | Vibe Memory | ベクトル + メタデータ検索による長期記憶 |
 | Knowledge Graph | 関係性を扱う Graph RAG |
 | Review | コード/ドキュメント/実装計画レビュー |

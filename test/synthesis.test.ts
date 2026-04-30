@@ -41,17 +41,18 @@ describe('synthesizeKnowledge', () => {
       entities: [
         // 新形式: id なし、制御語彙の type
         {
-          type: 'task',
-          name: 'TypeScript を使う',
+          type: 'rule',
+          name: 'TypeScript 型安全ルール',
           description:
-            'JavaScriptに静的型付けを追加したAltJS。Microsoft製。型安全なコードを書くためのツール',
+            'JavaScriptに静的型付けを追加したTypeScriptを使い、型安全なコードを書くためのプロジェクトルール',
+          metadata: { category: 'coding_convention', tags: ['typescript'] },
         },
       ],
       relations: [
         // 新形式: name ベース
         {
-          sourceType: 'task',
-          sourceName: 'TypeScript を使う',
+          sourceType: 'rule',
+          sourceName: 'TypeScript 型安全ルール',
           targetType: 'tool',
           targetName: 'Bun',
           relationType: 'depends_on',

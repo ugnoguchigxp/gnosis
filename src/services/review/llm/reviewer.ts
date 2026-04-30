@@ -145,7 +145,8 @@ export function resolveReviewerAlias(): ReviewerAlias {
     env === 'qwen' ||
     env === 'bonsai' ||
     env === 'bedrock' ||
-    env === 'openai'
+    env === 'openai' ||
+    env === 'azure-openai'
   ) {
     return env as ReviewerAlias;
   }
@@ -198,6 +199,11 @@ export async function getReviewLLMService(
         return createCloudReviewLLMService({ provider: 'bedrock', timeoutMs: runtime.timeoutMs });
       case 'openai':
         return createCloudReviewLLMService({ provider: 'openai', timeoutMs: runtime.timeoutMs });
+      case 'azure-openai':
+        return createCloudReviewLLMService({
+          provider: 'azure-openai',
+          timeoutMs: runtime.timeoutMs,
+        });
     }
   }
 
@@ -247,9 +253,12 @@ export async function getReviewLLMService(
     };
   }
 
-  if (pref === 'openai' || pref === 'bedrock') {
+  if (pref === 'openai' || pref === 'bedrock' || pref === 'azure-openai') {
     try {
-      const cloud = createCloudReviewLLMService({ provider: pref, timeoutMs: runtime.timeoutMs });
+      const cloud = createCloudReviewLLMService({
+        provider: pref,
+        timeoutMs: runtime.timeoutMs,
+      });
       return {
         provider: 'cloud',
         async generate(prompt: string, options?: { format?: 'json' | 'text' }): Promise<string> {

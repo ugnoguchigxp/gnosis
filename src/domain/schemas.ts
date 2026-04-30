@@ -4,6 +4,16 @@ import { z } from 'zod';
 // 制御語彙: エンティティ type の列挙
 // ---------------------------------------------------------------------------
 export const ENTITY_TYPES = [
+  'project_doc',
+  'rule',
+  'procedure',
+  'skill',
+  'decision',
+  'lesson',
+  'observation',
+  'risk',
+  'command_recipe',
+  'reference',
   'task',
   'goal',
   'constraint',

@@ -8,7 +8,8 @@ import { db } from '../db/index.js';
 import { entities, relations } from '../db/schema.js';
 import { dispatchHookEvent, getLoadedHookRuleCount } from '../hooks/service.js';
 import { generateEntityId } from '../utils/entityId.js';
-import { generateEmbedding } from './memory.js';
+import { generateEmbedding, searchMemoriesByType } from './memory.js';
+import { runPromptWithMemoryLoopRouter } from './memoryLoopLlmRouter.js';
 
 export type KnowledgeKind =
   | 'project_doc'
@@ -165,12 +166,11 @@ async function linkTaskTraceToKnowledge(input: {
 }
 export const REQUIRED_PRIMARY_TOOLS = [
   'initial_instructions',
-  'activate_project',
-  'start_task',
+  'agentic_search',
   'search_knowledge',
   'record_task_note',
-  'finish_task',
   'review_task',
+  'doctor',
 ] as const;
 
 export type DoctorRuntimeHealth = {
@@ -222,6 +222,42 @@ export type SearchKnowledgeV2Input = {
     maxDepth?: number;
     relationTypes?: string[];
   };
+};
+
+export type AgenticSearchInput = {
+  userRequest: string;
+  repoPath?: string;
+  files?: string[];
+  changeTypes?: TaskChangeType[];
+  technologies?: string[];
+  intent?: 'plan' | 'edit' | 'debug' | 'review' | 'finish';
+  includeRawMemory?: boolean;
+  maxCandidates?: number;
+  maxReturned?: number;
+  localLlm?: {
+    enabled?: boolean;
+    required?: boolean;
+    timeoutMs?: number;
+  };
+};
+
+type AgenticSearchCandidate = {
+  id: string;
+  source: 'entity' | 'vibe_memory';
+  kind?: string;
+  category?: string;
+  title: string;
+  summary: string;
+  reason: string;
+  score?: number;
+};
+
+type AgenticLlmDecision = {
+  id: string;
+  decision: 'use' | 'skip' | 'maybe';
+  confidence: number;
+  reason: string;
+  summary?: string;
 };
 
 type AppliesWhen = {
@@ -744,6 +780,110 @@ function scoreEntity(
   };
 }
 
+function truncateText(value: string, maxLength: number): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+function extractJsonObject(value: string): unknown {
+  const match = value.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error('No JSON object found in LLM output.');
+  return JSON.parse(match[0].replace(/,\s*([\}\]])/g, '$1'));
+}
+
+function normalizeAgenticLlmDecisions(
+  raw: unknown,
+  candidates: AgenticSearchCandidate[],
+): Map<string, AgenticLlmDecision> {
+  const candidateIds = new Set(candidates.map((candidate) => candidate.id));
+  const value = asRecord(raw);
+  const rawDecisions = Array.isArray(value.decisions) ? value.decisions : [];
+  const decisions = new Map<string, AgenticLlmDecision>();
+
+  for (const item of rawDecisions) {
+    const row = asRecord(item);
+    const id = typeof row.id === 'string' ? row.id : '';
+    if (!candidateIds.has(id)) continue;
+    const decision =
+      row.decision === 'use' || row.decision === 'skip' || row.decision === 'maybe'
+        ? row.decision
+        : 'maybe';
+    const confidenceRaw = typeof row.confidence === 'number' ? row.confidence : 0.5;
+    decisions.set(id, {
+      id,
+      decision,
+      confidence: Math.max(0, Math.min(1, confidenceRaw)),
+      reason:
+        typeof row.reason === 'string' && row.reason.trim().length > 0
+          ? truncateText(row.reason, 240)
+          : 'LLM relevance decision.',
+      summary:
+        typeof row.summary === 'string' && row.summary.trim().length > 0
+          ? truncateText(row.summary, 400)
+          : undefined,
+    });
+  }
+
+  return decisions;
+}
+
+async function classifyAgenticCandidatesWithLocalLlm(
+  taskSummary: string,
+  candidates: AgenticSearchCandidate[],
+  timeoutMs: number,
+): Promise<Map<string, AgenticLlmDecision>> {
+  const candidatePayload = candidates.map((candidate) => ({
+    id: candidate.id,
+    source: candidate.source,
+    kind: candidate.kind,
+    category: candidate.category,
+    title: candidate.title,
+    reason: candidate.reason,
+    summary: truncateText(candidate.summary, 700),
+  }));
+  const prompt = `
+You are filtering project memory for a coding agent.
+
+Task:
+${taskSummary}
+
+Candidates:
+${JSON.stringify(candidatePayload, null, 2)}
+
+Return strict JSON only:
+{
+  "decisions": [
+    {
+      "id": "candidate id",
+      "decision": "use|skip|maybe",
+      "confidence": 0.0,
+      "reason": "short reason",
+      "summary": "only the task-relevant part, omit unrelated details"
+    }
+  ]
+}
+
+Rules:
+- Mark "use" only when the candidate directly changes how the agent should plan, edit, test, or review this task.
+- Mark "skip" for generic, stale, unrelated, or merely lexical matches.
+- Use "maybe" when useful only as weak background context.
+- Keep summaries short and specific.
+`.trim();
+
+  const routed = await runPromptWithMemoryLoopRouter({
+    prompt,
+    taskKind: 'classification',
+    riskLevel: 'low',
+    preferredLocalAlias: 'gemma4',
+    fallbackLocalAlias: 'bonsai',
+    allowCloudFallback: false,
+    llmTimeoutMs: timeoutMs,
+    maxTokens: 1200,
+  });
+  return normalizeAgenticLlmDecisions(extractJsonObject(routed.output), candidates);
+}
+
 export async function resolveStaleMetadataSignal(
   clientSnapshot?: ToolSnapshot[],
 ): Promise<StaleMetadataSignal> {
@@ -918,7 +1058,12 @@ export async function buildActivateProjectResult(projectRoot: string, mode?: str
 
   const normalizedRows = rows
     .map(normalizeEntity)
-    .filter((item) => item.status !== 'deprecated' && item.status !== 'rejected');
+    .filter(
+      (item) =>
+        item.status !== 'deprecated' &&
+        item.status !== 'rejected' &&
+        item.entity.type !== 'task_trace',
+    );
   const contextualRows = normalizedRows.filter((item) => item.scope !== 'always');
   const byKind: Record<string, number> = {};
   const byCategory: Record<string, number> = {};
@@ -978,7 +1123,7 @@ export async function buildActivateProjectResult(projectRoot: string, mode?: str
   } else {
     recommendedNextCalls.push(
       { tool: 'search_knowledge', reason: 'Retrieve relevant rules, lessons, and procedures.' },
-      { tool: 'start_task', reason: 'Start a task trace before editing work.' },
+      { tool: 'agentic_search', reason: 'Filter retrieved knowledge for the current task.' },
     );
   }
   if (onboardingStatus !== 'complete') {
@@ -1033,7 +1178,7 @@ export async function buildActivateProjectResult(projectRoot: string, mode?: str
     },
     recommendedNextCalls,
     instructions:
-      'First call should be activate_project. Then use search_knowledge and start_task before edits.',
+      'Use agentic_search for task-aware knowledge retrieval. Use search_knowledge only for raw candidate inspection.',
   };
 }
 
@@ -1086,7 +1231,10 @@ export async function searchKnowledgeV2(input: SearchKnowledgeV2Input) {
     .map(normalizeEntity)
     .filter(
       (item) =>
-        item.status !== 'deprecated' && item.status !== 'rejected' && item.scope !== 'always',
+        item.status !== 'deprecated' &&
+        item.status !== 'rejected' &&
+        item.scope !== 'always' &&
+        item.entity.type !== 'task_trace',
     );
   const topLevelMode = input.filterMode ?? 'or';
   const explicitKinds = input.kinds ?? [];
@@ -1257,6 +1405,197 @@ export async function searchKnowledgeV2(input: SearchKnowledgeV2Input) {
   };
 }
 
+export async function agenticSearch(input: AgenticSearchInput) {
+  const taskSummary = truncateText(input.userRequest, 800);
+  const maxCandidates = Math.max(1, Math.min(30, input.maxCandidates ?? 16));
+  const maxReturned = Math.max(1, Math.min(10, input.maxReturned ?? 6));
+  const entitySearch = await searchKnowledgeV2({
+    preset: 'task_context',
+    taskGoal: input.userRequest,
+    intent: input.intent,
+    files: input.files,
+    changeTypes: input.changeTypes,
+    technologies: input.technologies,
+    maxCategories: 6,
+    limitPerCategory: Math.max(2, Math.ceil(maxCandidates / 4)),
+    includeContent: 'snippet',
+  });
+
+  const entityCandidates: AgenticSearchCandidate[] = (entitySearch.groups ?? [])
+    .flatMap((group) => group.hits)
+    .slice(0, maxCandidates)
+    .map((hit) => ({
+      id: hit.entityId,
+      source: 'entity' as const,
+      kind: hit.kind,
+      category: hit.category,
+      title: hit.title,
+      summary: hit.snippet,
+      reason: hit.applicabilityMatch ? `${hit.reason}; ${hit.applicabilityMatch}` : hit.reason,
+      score: hit.score,
+    }));
+
+  const shouldSearchRawMemory = input.includeRawMemory === true || entityCandidates.length === 0;
+  const rawMemoryCandidates: AgenticSearchCandidate[] = [];
+  const degradedReasons: string[] = [];
+  if (shouldSearchRawMemory) {
+    try {
+      const rawMemories = await searchMemoriesByType(
+        input.userRequest,
+        'raw',
+        Math.max(1, maxCandidates - entityCandidates.length),
+      );
+      rawMemoryCandidates.push(
+        ...rawMemories.map((memory) => ({
+          id: String(memory.id),
+          source: 'vibe_memory' as const,
+          kind:
+            typeof asRecord(memory.metadata).kind === 'string'
+              ? String(asRecord(memory.metadata).kind)
+              : 'raw',
+          category:
+            typeof asRecord(memory.metadata).category === 'string'
+              ? String(asRecord(memory.metadata).category)
+              : 'memory',
+          title:
+            typeof asRecord(memory.metadata).title === 'string'
+              ? String(asRecord(memory.metadata).title)
+              : `Vibe memory ${String(memory.id).slice(0, 8)}`,
+          summary: truncateText(memory.content, 700),
+          reason: `Raw memory semantic match similarity=${Number(memory.similarity ?? 0).toFixed(
+            4,
+          )}`,
+          score: Number(memory.similarity ?? 0),
+        })),
+      );
+    } catch (error) {
+      degradedReasons.push(
+        `raw memory search failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  const candidates = [...entityCandidates, ...rawMemoryCandidates].slice(0, maxCandidates);
+  let localLlmUsed = false;
+  let decisions = new Map<string, AgenticLlmDecision>();
+  const localLlmEnabled = input.localLlm?.enabled ?? candidates.length > 0;
+  if (localLlmEnabled && candidates.length > 0) {
+    try {
+      decisions = await classifyAgenticCandidatesWithLocalLlm(
+        taskSummary,
+        candidates,
+        input.localLlm?.timeoutMs ?? 30_000,
+      );
+      localLlmUsed = true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      degradedReasons.push(`local LLM filter failed: ${message}`);
+      return {
+        taskSummary,
+        decision: 'degraded' as const,
+        confidence: 0,
+        usedKnowledge: [],
+        skippedCount: candidates.length,
+        maybeCount: 0,
+        gaps: ['Gemma4 relevance filtering failed; unfiltered candidates were not injected.'],
+        diagnostics: {
+          entityCandidates: entityCandidates.length,
+          rawMemoryCandidates: rawMemoryCandidates.length,
+          localLlmUsed,
+          degradedReasons,
+        },
+        nextAction: 'retry_later' as const,
+      };
+    }
+  }
+
+  const scoredCandidates = candidates.map((candidate, index) => {
+    const decision = decisions.get(candidate.id);
+    const fallbackConfidence = Math.max(0.2, Math.min(0.85, Number(candidate.score ?? 0.5)));
+    const fallbackDecision: AgenticLlmDecision = {
+      id: candidate.id,
+      decision: index < maxReturned ? 'use' : 'maybe',
+      confidence: fallbackConfidence,
+      reason: candidate.reason,
+      summary: candidate.summary,
+    };
+    return {
+      candidate,
+      decision: decision ?? fallbackDecision,
+    };
+  });
+
+  const used = scoredCandidates
+    .filter(
+      (row) =>
+        row.decision.decision === 'use' ||
+        (row.decision.decision === 'maybe' && row.decision.confidence >= 0.72),
+    )
+    .sort((a, b) => b.decision.confidence - a.decision.confidence)
+    .slice(0, maxReturned);
+  const skippedCount = scoredCandidates.filter((row) => row.decision.decision === 'skip').length;
+  const maybeCount = scoredCandidates.filter((row) => row.decision.decision === 'maybe').length;
+
+  const usedEntityIds = used
+    .map((row) => row.candidate)
+    .filter((candidate) => candidate.source === 'entity')
+    .map((candidate) => candidate.id);
+  if (usedEntityIds.length > 0) {
+    await db
+      .update(entities)
+      .set({
+        referenceCount: sql`${entities.referenceCount} + 1`,
+        lastReferencedAt: new Date(),
+      })
+      .where(inArray(entities.id, usedEntityIds));
+  }
+
+  const decision =
+    degradedReasons.length > 0 && candidates.length === 0
+      ? ('degraded' as const)
+      : used.length > 0
+        ? ('use_knowledge' as const)
+        : ('no_relevant_knowledge' as const);
+  const confidence =
+    used.length > 0
+      ? Number(
+          (
+            used.reduce((sum, row) => sum + row.decision.confidence, 0) / Math.max(1, used.length)
+          ).toFixed(3),
+        )
+      : 0;
+
+  return {
+    taskSummary,
+    decision,
+    confidence,
+    usedKnowledge: used.map(({ candidate, decision: itemDecision }) => ({
+      id: candidate.id,
+      source: candidate.source,
+      kind: candidate.kind,
+      category: candidate.category,
+      title: candidate.title,
+      summary: itemDecision.summary ?? candidate.summary,
+      reason: itemDecision.reason,
+    })),
+    skippedCount,
+    maybeCount,
+    gaps: used.length === 0 ? ['No candidate was relevant enough for this task.'] : [],
+    diagnostics: {
+      entityCandidates: entityCandidates.length,
+      rawMemoryCandidates: rawMemoryCandidates.length,
+      localLlmUsed,
+      degradedReasons,
+    },
+    nextAction:
+      decision === 'use_knowledge'
+        ? ('proceed_with_context' as const)
+        : decision === 'no_relevant_knowledge'
+          ? ('proceed_without_context' as const)
+          : ('retry_later' as const),
+  };
+}
+
 export type RecordTaskNoteInput = {
   taskId?: string;
   content: string;
@@ -1330,7 +1669,8 @@ export async function startTaskTrace(input: {
   return {
     taskId,
     status: 'started',
-    activationWarning: 'If not already done, call activate_project first for project context.',
+    activationWarning:
+      'start_task is deprecated. Use agentic_search for task-aware knowledge retrieval.',
     recommendedNextCalls: [
       { tool: 'search_knowledge', reason: 'Collect rules/procedures before editing.' },
       { tool: 'record_task_note', reason: 'Capture reusable findings during work.' },

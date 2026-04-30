@@ -2,17 +2,14 @@ import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { syncState, vibeMemories } from '../db/schema.js';
-import { DistilledKnowledgeSchema } from '../domain/schemas.js';
-import type { DistilledKnowledge } from '../domain/schemas.js';
-import { saveEntities, saveRelations } from './graph.js';
 import {
   type ChatMessage,
   type IngestCursor,
   ingestAntigravityLogs,
   ingestClaudeLogs,
+  ingestCodexLogs,
   normalizeIngestCursor,
 } from './ingest.js';
-import { distillKnowledgeFromTranscript } from './llm.js';
 import { generateEmbedding } from './memory.js';
 
 const SYNC_SESSION_ID = 'sync-agent-logs';
@@ -55,61 +52,6 @@ function chunkMessages(
   return chunks;
 }
 
-function mergeDistilledKnowledge(chunks: DistilledKnowledge[]): DistilledKnowledge {
-  const merged: DistilledKnowledge = { memories: [], entities: [], relations: [] };
-  for (const chunk of chunks) {
-    merged.memories.push(...(Array.isArray(chunk.memories) ? chunk.memories : []));
-    merged.entities.push(...(Array.isArray(chunk.entities) ? chunk.entities : []));
-    merged.relations.push(...(Array.isArray(chunk.relations) ? chunk.relations : []));
-  }
-  return merged;
-}
-
-function dedupeEntities(entities: DistilledKnowledge['entities']) {
-  return Array.from(
-    new Map(
-      entities
-        .filter(
-          (entity: DistilledKnowledge['entities'][number]) =>
-            entity && typeof entity.type === 'string' && typeof entity.name === 'string',
-        )
-        .map((entity: DistilledKnowledge['entities'][number]) => [
-          `${entity.type}:${entity.name}`,
-          entity,
-        ]),
-    ).values(),
-  );
-}
-
-function dedupeRelations(relations: DistilledKnowledge['relations']) {
-  return Array.from(
-    new Map(
-      relations
-        .filter(
-          (relation: DistilledKnowledge['relations'][number]) =>
-            relation &&
-            typeof relation.relationType === 'string' &&
-            (('sourceId' in relation && typeof relation.sourceId === 'string') ||
-              ('sourceName' in relation && typeof relation.sourceName === 'string')),
-        )
-        .map((relation: DistilledKnowledge['relations'][number]) => {
-          const r = relation as Record<string, unknown>;
-          const key =
-            'sourceId' in relation
-              ? `${r.sourceId}::${r.targetId}::${relation.relationType}`
-              : `${r.sourceName}::${r.targetName}::${relation.relationType}`;
-          return [key, relation];
-        }),
-    ).values(),
-  );
-}
-
-function dedupeMemories(memories: string[]) {
-  return Array.from(
-    new Set(memories.filter((memory) => typeof memory === 'string' && memory.trim().length > 0)),
-  );
-}
-
 function getCheckpointDate(maxObservedMtimeMs: number, since?: Date): Date {
   if (Number.isFinite(maxObservedMtimeMs) && maxObservedMtimeMs > 0) {
     return new Date(maxObservedMtimeMs);
@@ -122,6 +64,33 @@ function buildTranscript(messages: ChatMessage[]): string {
   return messages
     .map((message) => `${message.role.toUpperCase()}: ${message.content}`)
     .join('\n\n');
+}
+
+function mergeMessageMetadata(messages: ChatMessage[]): Record<string, unknown> {
+  const firstMetadata = messages.find((message) => message.metadata)?.metadata ?? {};
+  const sources = Array.from(
+    new Set(
+      messages
+        .map((message) => message.metadata?.source)
+        .filter((source): source is string => typeof source === 'string'),
+    ),
+  );
+  const sessionFiles = Array.from(
+    new Set(
+      messages
+        .map((message) => message.metadata?.sessionFile)
+        .filter((file): file is string => typeof file === 'string'),
+    ),
+  );
+  return {
+    ...firstMetadata,
+    sources,
+    sessionFiles,
+    messageCount: messages.length,
+    roles: Array.from(new Set(messages.map((message) => message.role))),
+    kind: 'agent_log_chunk',
+    memoryPipeline: 'raw_for_synthesis',
+  };
 }
 
 async function upsertSyncState(
@@ -154,6 +123,7 @@ export async function syncAllAgentLogs() {
   const sources = [
     { id: 'claude_logs', label: 'Claude Code', ingest: ingestClaudeLogs },
     { id: 'antigravity_logs', label: 'Antigravity', ingest: ingestAntigravityLogs },
+    { id: 'codex_logs', label: 'Codex', ingest: ingestCodexLogs },
   ];
 
   const summary = { imported: 0, sources: [] as string[] };
@@ -200,30 +170,18 @@ export async function syncAllAgentLogs() {
       continue;
     }
 
-    // 3. 知識の蒸留 (LLM): 大きすぎる入力を避けるためチャンク処理
+    // 3. Raw conversation chunks are saved first. Scheduled reflection/background
+    // synthesis is responsible for promoting reusable knowledge into entities.
     const chunks = chunkMessages(messages, maxMessagesPerChunk, maxCharsPerChunk);
-    const distilledChunks: DistilledKnowledge[] = [];
-    for (const [index, chunk] of chunks.entries()) {
-      const transcript = buildTranscript(chunk);
-      console.log(
-        `Distilling chunk ${index + 1}/${chunks.length} from ${source.label} (${
-          transcript.length
-        } chars)...`,
-      );
-      const knowledge = await distillKnowledgeFromTranscript(transcript);
-      distilledChunks.push(knowledge);
-    }
-
-    const mergedKnowledge = mergeDistilledKnowledge(distilledChunks);
-    const dedupedMemories = dedupeMemories(mergedKnowledge.memories);
-    const dedupedEntities = dedupeEntities(mergedKnowledge.entities);
-    const dedupedRelations = dedupeRelations(mergedKnowledge.relations);
 
     // 4. Gnosis への登録 + 同期状態の更新
     const insertedMemories = { count: 0 };
     await db.transaction(async (tx) => {
-      for (const content of dedupedMemories) {
-        const dedupeKey = createHash('sha256').update(`${source.id}\n${content}`).digest('hex');
+      for (const [index, chunk] of chunks.entries()) {
+        const content = buildTranscript(chunk);
+        const dedupeKey = createHash('sha256')
+          .update(`${source.id}\n${index}\n${content}`)
+          .digest('hex');
         const embedding = await generateEmbedding(content);
         const inserted = await tx
           .insert(vibeMemories)
@@ -232,7 +190,13 @@ export async function syncAllAgentLogs() {
             content,
             embedding,
             dedupeKey,
-            metadata: { source: source.label, sourceId: source.id, dedupeKey },
+            metadata: {
+              ...mergeMessageMetadata(chunk),
+              source: source.label,
+              sourceId: source.id,
+              chunkIndex: index,
+              dedupeKey,
+            },
           })
           .onConflictDoNothing({
             target: [vibeMemories.sessionId, vibeMemories.dedupeKey],
@@ -242,14 +206,6 @@ export async function syncAllAgentLogs() {
         if (inserted.length > 0) {
           insertedMemories.count += 1;
         }
-      }
-
-      if (dedupedEntities.length > 0) {
-        await saveEntities(dedupedEntities, tx);
-      }
-
-      if (dedupedRelations.length > 0) {
-        await saveRelations(dedupedRelations, tx);
       }
 
       const now = new Date();
@@ -268,11 +224,9 @@ export async function syncAllAgentLogs() {
       }
     });
 
-    summary.imported += insertedMemories.count + dedupedEntities.length + dedupedRelations.length;
+    summary.imported += insertedMemories.count;
     summary.sources.push(source.label);
-    console.log(
-      `Successfully synced ${source.label}. (Memories: ${insertedMemories.count}, Entities: ${dedupedEntities.length}, Relations: ${dedupedRelations.length})`,
-    );
+    console.log(`Successfully synced ${source.label}. (Raw memories: ${insertedMemories.count})`);
   }
 
   return summary;

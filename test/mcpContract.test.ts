@@ -28,14 +28,15 @@ describe('mcp contract', () => {
     expect(toolNames).not.toContain('search_unified');
     expect(toolNames).not.toContain('register_guidance');
     expect(toolNames).toContain('initial_instructions');
-    expect(toolNames).toContain('activate_project');
-    expect(toolNames).toContain('start_task');
+    expect(toolNames).toContain('agentic_search');
     expect(toolNames).toContain('search_knowledge');
     expect(toolNames).toContain('record_task_note');
-    expect(toolNames).toContain('finish_task');
     expect(toolNames).toContain('review_task');
     expect(toolNames).toContain('doctor');
-    expect(toolNames.length).toBe(8);
+    expect(toolNames).not.toContain('activate_project');
+    expect(toolNames).not.toContain('start_task');
+    expect(toolNames).not.toContain('finish_task');
+    expect(toolNames.length).toBe(6);
   });
 
   it('returns isError=true for unknown tool and invalid arguments', async () => {
@@ -57,20 +58,18 @@ describe('mcp contract', () => {
 
     const invalid = (await callHandler({
       method: 'tools/call',
-      params: { name: 'start_task', arguments: {} },
+      params: { name: 'agentic_search', arguments: {} },
     })) as { isError?: boolean; content?: Array<{ text?: string }> };
     expect(invalid.isError).toBe(true);
-    expect(invalid.content?.[0]?.text).toContain('title');
+    expect(invalid.content?.[0]?.text).toContain('userRequest');
   });
 
   it('injects always context only into bootstrap instructions', () => {
     const matrix: Record<string, boolean> = {
       initial_instructions: true,
-      activate_project: false,
+      agentic_search: false,
       search_knowledge: false,
-      start_task: false,
       record_task_note: false,
-      finish_task: false,
       review_task: false,
       doctor: false,
     };

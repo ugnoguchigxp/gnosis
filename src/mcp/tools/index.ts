@@ -5,11 +5,9 @@ export const toolEntries: ToolEntry[] = [...agentFirstTools];
 
 const PRIMARY_TOOL_NAMES = new Set<string>([
   'initial_instructions',
-  'activate_project',
-  'start_task',
+  'agentic_search',
   'search_knowledge',
   'record_task_note',
-  'finish_task',
   'review_task',
   'doctor',
 ]);

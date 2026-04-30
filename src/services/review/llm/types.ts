@@ -37,6 +37,6 @@ export interface ReviewLLMService {
 }
 
 /** Named LLM aliases for code review */
-export type ReviewerAlias = 'gemma4' | 'qwen' | 'bonsai' | 'bedrock' | 'openai';
+export type ReviewerAlias = 'gemma4' | 'qwen' | 'bonsai' | 'bedrock' | 'openai' | 'azure-openai';
 
-export type ReviewLLMPreference = 'local' | 'cloud' | 'openai' | 'bedrock';
+export type ReviewLLMPreference = 'local' | 'cloud' | 'openai' | 'bedrock' | 'azure-openai';

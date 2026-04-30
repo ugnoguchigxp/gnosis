@@ -39,6 +39,52 @@ describe('routeMemoryLoopLlm', () => {
     expect(result.cloudEnabledForAttempt).toBe(false);
   });
 
+  it('honors a preferred local alias for classification task', () => {
+    const result = routeMemoryLoopLlm(
+      {
+        taskKind: 'classification',
+        retryCount: 0,
+        riskLevel: 'low',
+        preferredLocalAlias: 'gemma4',
+      },
+      runtime,
+    );
+    expect(result.alias).toBe('gemma4');
+    expect(result.cloudEnabledForAttempt).toBe(false);
+  });
+
+  it('can use a preferred local fallback alias for retry attempts', () => {
+    const result = routeMemoryLoopLlm(
+      {
+        taskKind: 'classification',
+        retryCount: 1,
+        riskLevel: 'low',
+        preferredLocalAlias: 'gemma4',
+        fallbackLocalAlias: 'bonsai',
+      },
+      runtime,
+    );
+    expect(result.alias).toBe('bonsai');
+    expect(result.cloudEnabledForAttempt).toBe(false);
+  });
+
+  it('can disable cloud fallback even when runtime allows cloud', () => {
+    const result = routeMemoryLoopLlm(
+      {
+        taskKind: 'classification',
+        retryCount: 3,
+        riskLevel: 'high',
+        preferredLocalAlias: 'gemma4',
+        fallbackLocalAlias: 'bonsai',
+        allowCloudFallback: false,
+      },
+      { ...runtime, allowCloud: true, cloudProvider: 'openai' },
+    );
+    expect(result.alias).toBe('bonsai');
+    expect(result.allowCloud).toBe(false);
+    expect(result.cloudEnabledForAttempt).toBe(false);
+  });
+
   it('falls back to secondary local alias on retry', () => {
     const result = routeMemoryLoopLlm(
       { taskKind: 'distillation', retryCount: 1, riskLevel: 'low' },

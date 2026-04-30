@@ -1,89 +1,112 @@
 # MCP Tools API Reference
 
 Gnosis は、エージェントが長期記憶、知識グラフ、自律調査能力、計画レビューを利用するための MCP ツール群を提供します。
-現在は **Agent-First** ワークフローを推奨しており、主要な 8 つのツールのみが公開されています。
 
-## 公開ツール一覧 (Agent-First)
+現在の一次導線は lifecycle event ではなく、`agentic_search` による task-aware retrieval と、`review_task` による knowledge-aware review です。
 
-推奨される一次導線（初期化・タスク開始・知識検索・レビュー・完了）を構成するツール群です。
+## 公開ツール一覧
 
-- [initial_instructions](#initial_instructions): 推奨ワークフローと first-call の確認
-- [activate_project](#activate_project): プロジェクト状態の初期化とヘルスチェック
-- [search_knowledge](#search_knowledge): 知識のセマンティック検索
-- [start_task](#start_task): タスク実行の記録開始
-- [record_task_note](#record_task_note): 作業中の知見や教訓の保存
-- [finish_task](#finish_task): タスク完了と学習項目の確定
-- [review_task](#review_task): 知識注入型レビューの実行
+- [initial_instructions](#initial_instructions): Gnosis の最小利用方針
+- [agentic_search](#agentic_search): タスク文脈に必要な知識だけを取得する agentic retrieval
+- [search_knowledge](#search_knowledge): raw 候補・スコア確認用の低レベル検索
+- [record_task_note](#record_task_note): 明示的な再利用知識の保存
+- [review_task](#review_task): 知識注入型レビュー
 - [doctor](#doctor): ランタイム診断とメタデータ整合性チェック
 
 ---
 
-## Agent-First Tools
+## Tools
 
 ### `initial_instructions`
-- **用途**: 新規セッションの最初に呼び、推奨ワークフローと first-call を確認します。
-- **出力**: `firstCall=activate_project` を含むガイド JSON。
-- **重要**: レビュー開始前にも再実行し、シナリオごとの手順を確認してください。
 
-### `activate_project`
-- **用途**: プロジェクト状態を初期化し、ヘルス、オンボーディング状態、知識インデックスの要約を取得します。
+- **用途**: Gnosis の現在の知識取得・レビュー・保存ツール方針を確認します。
+- **出力**: `agentic_search`, `search_knowledge`, `review_task`, `record_task_note`, `doctor` の使い分けガイド。
+- **注意**: `activate_project` first-call や `start_task` / `finish_task` は推奨しません。
+
+### `agentic_search`
+
+- **用途**: ユーザー依頼をタスク文脈として解釈し、今回の作業に本当に必要な知識だけを返します。
+- **処理**:
+  - `entities` から広めに候補を取得します。
+  - 必要に応じて raw `vibe_memories` も候補にします。
+  - Gemma4 が候補を `use` / `skip` / `maybe` に分類します。
+  - Gemma4 が失敗した場合は bonsai までの local fallback に留めます。cloud fallback は使いません。
+  - 採用した知識だけを短く要約して返します。
 - **入力**:
-  - `projectRoot` (string, 任意): プロジェクトのルートパス
-  - `mode` (`planning|editing|review|onboarding|no_memory`, 任意): 作業モード
+  - `userRequest` (string, 必須): ユーザー依頼または今回のタスク説明
+  - `repoPath` (string, 任意)
+  - `files` (string[], 任意)
+  - `changeTypes` (`frontend|backend|api|auth|db|docs|test|mcp|refactor|config|build|review`[], 任意)
+  - `technologies` (string[], 任意)
+  - `intent` (`plan|edit|debug|review|finish`, 任意)
+  - `includeRawMemory` (boolean, 任意): raw `vibe_memories` も検索対象にする
+  - `maxCandidates`, `maxReturned` (number, 任意)
+  - `localLlm.enabled`, `localLlm.required`, `localLlm.timeoutMs` (任意)
+- **出力**:
+  - `taskSummary`
+  - `decision`: `use_knowledge|no_relevant_knowledge|needs_clarification|degraded`
+  - `usedKnowledge`
+  - `skippedCount`, `maybeCount`
+  - `diagnostics`
+  - `nextAction`
 
 ### `search_knowledge`
-- **用途**: 知識（ルール、手順、教訓、リスク等）を検索します。
-- **入力**:
-  - `query` (string, 任意): 検索クエリ
-  - `preset` (`task_context|project_characteristics|review_context|procedures|risks`, 任意): 検索プリセット
-  - `kinds`, `categories`, `filters`, `grouping`, `traversal` 等（任意）
 
-### `start_task`
-- **用途**: タスクのトレースを開始し、`taskId` を取得します。
+- **用途**: 語句・ベクトル・metadata で近い raw 候補やスコアを確認します。
+- **位置づけ**: 通常の知識取得入口ではありません。通常は `agentic_search` を使ってください。
 - **入力**:
-  - `title` (string, 必須): タスクのタイトル
-  - `intent`, `files`, `projectRoot`, `taskId` (任意)
+  - `query` (string, 任意)
+  - `taskGoal` (string, 任意)
+  - `preset` (`task_context|project_characteristics|review_context|procedures|risks`, 任意)
+  - `kinds`, `categories`, `filters`, `files`, `changeTypes`, `technologies`, `grouping`, `traversal` 等（任意）
+- **出力**:
+  - category 別 `groups`
+  - `flatTopHits`
+  - `taskContext`
+  - `suggestedNextAction`
+  - `degraded`（必要時）
 
 ### `record_task_note`
-- **用途**: 作業中に得られた再利用可能な知見（教訓、観察、決定事項）を保存します。
+
+- **用途**: 作業中に明示的に得られた再利用可能な知見を保存します。
+- **保存対象**:
+  - rule
+  - lesson
+  - procedure
+  - skill
+  - decision
+  - risk
+  - command_recipe
 - **入力**:
   - `content` (string, 必須): 知見の内容
-  - `kind`, `category`, `title`, `purpose`, `tags`, `files`, `evidence` (任意)
-
-### `finish_task`
-- **用途**: タスクを完了し、成果、チェック項目、次のアクション、学習した項目を確定します。
-- **入力**:
-  - `taskId` (string, 必須): 完了するタスクの ID
-  - `outcome` (string, 必須): タスクの成果
-  - `checks`, `followUps`, `learnedItems` (任意)
+  - `kind`, `category`, `title`, `purpose`, `tags`, `files`, `evidence`, `confidence`, `source` (任意)
 
 ### `review_task`
-- **用途**: コード、ドキュメント、実装計画、仕様書等のレビューを実行します。ナレッジグラフからの知識注入を自動的に行います。
+
+- **用途**: コード、ドキュメント、実装計画、仕様書等のレビューを実行します。
+- **知識注入**: 内部で `agentic_search` を使い、実際に採用した知識だけを `knowledgeUsed` として扱います。
 - **入力**:
   - `targetType` (`code_diff|document|implementation_plan|spec|design`, 必須)
   - `target` (object, 必須): `diff`, `filePaths`, `content`, `documentPath` のいずれかを含む
-  - `provider` (`local|openai|bedrock`, 任意)
+  - `provider` (`local|openai|bedrock|azure-openai`, 任意)
   - `reviewMode` (`fast|standard|deep`, 任意)
-  - `goal` (string, 任意): レビューの目的
+  - `goal` (string, 任意)
+  - `knowledgePolicy` (`off|best_effort|required`, 任意)
 
 ### `doctor`
+
 - **用途**: MCP サーバーのランタイム状態、DB 接続、知識インデックスの鮮度、メタデータの整合性を診断します。
 - **入力**:
   - `clientSnapshot` (任意): クライアント側で保持しているツール情報のスナップショット
 
 ---
 
-## 内部・非推奨ツールについて
+## 非公開・廃止方針
 
-以下のカテゴリに含まれるツールは、現在 `search_knowledge` や `review_task` 等の主要ツールに統合されているか、内部的な処理で使用されています。Agent が直接呼び出すことは推奨されず、現在の MCP 公開面には含まれていません。
+以下は通常の MCP 公開面から外します。
 
-- **Memory**: `store_memory`, `search_memory`, `delete_memory`
-- **Graph**: `query_graph`, `digest_text`, `update_graph`, `find_path`, `build_communities`
-- **Knowledge (Legacy)**: `get_knowledge`, `search_unified`
-- **KnowFlow**: `enqueue_knowledge_task`, `run_knowledge_worker`
-- **Experience (Legacy)**: 旧 `record_experience` / `recall_lessons` 系の用途は `record_task_note`、`finish_task`、`search_knowledge` に統合済み
-- **Guidance**: `register_guidance`
-- **Hook (Legacy)**: 旧 `task_checkpoint` 系の用途は `start_task`、`finish_task`、`review_task` から発火する Hook イベントに統合済み
-- **Review (Legacy)**: `review`, `review_document`, `review_implementation_plan`, `review_spec_document` 等
+- `activate_project`: project activation 状態を持たず、診断は `doctor`、知識取得は `agentic_search` に寄せます。
+- `start_task`: 低情報量の `task_trace` は新規作成しません。ユーザー依頼の要約と検索は `agentic_search` が行います。
+- `finish_task`: 完了ログではなく、再利用可能な知識だけを `record_task_note` または scheduled synthesis で保存します。
 
-これらの機能の多くは、主要ツールのバックグラウンド処理や、より高レベルな抽象化（Agent-First）を通じて利用可能です。
+旧 memory / graph / experience / hook / review 系の細かいツールは、primary tool の内部実装または CLI / diagnostics 用として扱います。エージェントが通常直接呼ぶ必要はありません。

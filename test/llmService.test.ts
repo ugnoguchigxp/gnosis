@@ -123,7 +123,14 @@ describe('llm service (legacy local LLM)', () => {
     it('parses distilled knowledge from LLM output', async () => {
       const payload = {
         memories: ['Bun is fast'],
-        entities: [{ id: 'bun', type: 'tool', name: 'Bun', description: 'JS runtime' }],
+        entities: [
+          {
+            type: 'rule',
+            name: 'Bun runtime rule',
+            description: 'Use Bun as the runtime when running repository scripts in this project.',
+            metadata: { category: 'workflow', tags: ['bun'] },
+          },
+        ],
         relations: [],
       };
       const spawnSync = makeSpawnSync(JSON.stringify(payload));
@@ -133,6 +140,8 @@ describe('llm service (legacy local LLM)', () => {
       });
       expect(result.memories).toContain('Bun is fast');
       expect(result.entities).toHaveLength(1);
+      expect(result.entities[0]?.type).toBe('rule');
+      expect(result.entities[0]?.metadata?.category).toBe('workflow');
     });
 
     it('throws when LLM exits non-zero', async () => {

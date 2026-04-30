@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, mock } from 'bun:test';
 
 const now = new Date('2026-01-01T00:00:00.000Z');
 let selectCount = 0;
+let llmRouterShouldFail = false;
 
 const entityRows = [
   {
@@ -93,6 +94,11 @@ mock.module('../src/db/index.js', () => ({
         }),
       };
     },
+    update: () => ({
+      set: () => ({
+        where: async () => [],
+      }),
+    }),
   },
 }));
 
@@ -100,17 +106,51 @@ mock.module('../src/services/memory.js', () => ({
   generateEmbedding: async () => {
     throw new Error('embedding unavailable in unit test');
   },
+  searchMemoriesByType: async () => [],
+}));
+
+mock.module('../src/services/memoryLoopLlmRouter.js', () => ({
+  runPromptWithMemoryLoopRouter: async () => {
+    if (llmRouterShouldFail) throw new Error('Gemma4 failed');
+    return {
+      output: JSON.stringify({
+        decisions: [
+          {
+            id: 'rule/mcp',
+            decision: 'use',
+            confidence: 0.9,
+            reason: 'Directly relevant to MCP rule lookup.',
+            summary: 'Search task-specific rules before Agent-First MCP implementation.',
+          },
+          {
+            id: 'rule/frontend',
+            decision: 'skip',
+            confidence: 0.8,
+            reason: 'Frontend UI guidance is unrelated.',
+            summary: '',
+          },
+        ],
+      }),
+      route: { alias: 'gemma4', script: 'mock', allowCloud: false, cloudEnabledForAttempt: false },
+      attempts: 1,
+    };
+  },
 }));
 
 mock.module('../src/hooks/service.js', () => ({
   getLoadedHookRuleCount: () => 0,
 }));
 
-import { buildActivateProjectResult, searchKnowledgeV2 } from '../src/services/agentFirst';
+import {
+  agenticSearch,
+  buildActivateProjectResult,
+  searchKnowledgeV2,
+} from '../src/services/agentFirst';
 
 describe('searchKnowledgeV2 task-context applicability', () => {
   beforeEach(() => {
     selectCount = 0;
+    llmRouterShouldFail = false;
   });
 
   it('prioritizes rules whose applicability metadata matches the task context', async () => {
@@ -170,5 +210,35 @@ describe('searchKnowledgeV2 task-context applicability', () => {
     expect(result.knowledgeIndex.topItems.map((item) => item.entityId)).not.toContain(
       'rule/always',
     );
+  });
+
+  it('uses local LLM filtering in agentic_search to return only task-relevant knowledge', async () => {
+    const result = await agenticSearch({
+      userRequest: 'Refactor MCP rule lookup before implementation',
+      files: ['src/mcp/tools/agentFirst.ts', 'src/services/agentFirst.ts'],
+      changeTypes: ['mcp', 'refactor'],
+      technologies: ['typescript', 'mcp'],
+      localLlm: { enabled: true },
+    });
+
+    expect(result.decision).toBe('use_knowledge');
+    expect(result.diagnostics.localLlmUsed).toBe(true);
+    expect(result.usedKnowledge.map((item) => item.id)).toContain('rule/mcp');
+    expect(result.usedKnowledge.map((item) => item.id)).not.toContain('rule/frontend');
+  });
+
+  it('does not inject unfiltered candidates when Gemma4 filtering fails', async () => {
+    llmRouterShouldFail = true;
+    const result = await agenticSearch({
+      userRequest: 'Refactor MCP rule lookup before implementation',
+      files: ['src/mcp/tools/agentFirst.ts', 'src/services/agentFirst.ts'],
+      changeTypes: ['mcp', 'refactor'],
+      technologies: ['typescript', 'mcp'],
+    });
+
+    expect(result.decision).toBe('degraded');
+    expect(result.usedKnowledge).toHaveLength(0);
+    expect(result.skippedCount).toBeGreaterThan(0);
+    expect(result.diagnostics.degradedReasons.join('\n')).toContain('Gemma4 failed');
   });
 });

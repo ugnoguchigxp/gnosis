@@ -125,7 +125,7 @@ describe('MCP stdio integration', () => {
     expect(result.content.length).toBeGreaterThanOrEqual(1);
     expect(
       result.content.some(
-        (item) => item.type === 'text' && String(item.text).includes('activate_project'),
+        (item) => item.type === 'text' && String(item.text).includes('agentic_search'),
       ),
     ).toBe(true);
   });

@@ -8,6 +8,7 @@ import { filterSensitiveData } from '../utils/secretFilter.js';
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface IngestFileCursor {
@@ -31,6 +32,11 @@ interface ClaudeTextPart {
   text: string;
 }
 
+interface CodexTextPart {
+  type?: string;
+  text?: string;
+}
+
 function extractClaudeTextContent(raw: unknown): string {
   if (!Array.isArray(raw)) return '';
 
@@ -43,6 +49,24 @@ function extractClaudeTextContent(raw: unknown): string {
         typeof (part as { text?: unknown }).text === 'string',
     )
     .map((part) => part.text)
+    .join('\n');
+}
+
+function extractCodexTextContent(raw: unknown): string {
+  if (typeof raw === 'string') return raw;
+  if (!Array.isArray(raw)) return '';
+
+  return raw
+    .filter(
+      (part): part is CodexTextPart =>
+        part !== null &&
+        typeof part === 'object' &&
+        typeof (part as { text?: unknown }).text === 'string' &&
+        ['input_text', 'output_text', 'text', 'summary_text'].includes(
+          String((part as { type?: unknown }).type ?? 'text'),
+        ),
+    )
+    .map((part) => part.text ?? '')
     .join('\n');
 }
 
@@ -77,6 +101,42 @@ function parseClaudeJsonLine(line: string): ChatMessage | null {
     return {
       role: data.type,
       content: filterSensitiveData(textContent),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseCodexJsonLine(line: string, filePath: string): ChatMessage | null {
+  try {
+    const data = JSON.parse(line) as {
+      timestamp?: unknown;
+      type?: unknown;
+      payload?: {
+        type?: unknown;
+        role?: unknown;
+        content?: unknown;
+        cwd?: unknown;
+        id?: unknown;
+      };
+    };
+    if (data.type !== 'response_item') return null;
+    const payload = data.payload;
+    if (!payload || payload.type !== 'message') return null;
+    if (payload.role !== 'user' && payload.role !== 'assistant') return null;
+
+    const textContent = extractCodexTextContent(payload.content);
+    if (!textContent.trim()) return null;
+
+    return {
+      role: payload.role,
+      content: filterSensitiveData(textContent),
+      metadata: {
+        source: 'Codex',
+        sourceId: 'codex_logs',
+        sessionFile: filePath,
+        timestamp: typeof data.timestamp === 'string' ? data.timestamp : undefined,
+      },
     };
   } catch {
     return null;
@@ -120,6 +180,53 @@ function processClaudeJsonlDelta(
       consumedBytes += Buffer.byteLength(trailingSegment, 'utf8');
     } else {
       const parsedTrailing = parseClaudeJsonLine(trailingSegment);
+      if (parsedTrailing) {
+        messages.push(parsedTrailing);
+        consumedBytes += Buffer.byteLength(trailingSegment, 'utf8');
+      }
+    }
+  }
+
+  return { messages, nextOffset: startOffset + consumedBytes };
+}
+
+function processCodexJsonlDelta(
+  filePath: string,
+  content: string,
+  startOffset: number,
+): { messages: ChatMessage[]; nextOffset: number } {
+  if (!content) return { messages: [], nextOffset: startOffset };
+
+  const messages: ChatMessage[] = [];
+  const endsWithNewline = content.endsWith('\n');
+  let completeSegment = content;
+  let trailingSegment = '';
+  if (!endsWithNewline) {
+    const lastNewlineIndex = content.lastIndexOf('\n');
+    if (lastNewlineIndex >= 0) {
+      completeSegment = content.slice(0, lastNewlineIndex + 1);
+      trailingSegment = content.slice(lastNewlineIndex + 1);
+    } else {
+      completeSegment = '';
+      trailingSegment = content;
+    }
+  }
+
+  if (completeSegment) {
+    const lines = completeSegment.split('\n').filter((line) => line.trim());
+    for (const line of lines) {
+      const parsed = parseCodexJsonLine(line, filePath);
+      if (parsed) messages.push(parsed);
+    }
+  }
+
+  let consumedBytes = Buffer.byteLength(completeSegment, 'utf8');
+  if (!endsWithNewline) {
+    const trailingTrimmed = trailingSegment.trim();
+    if (!trailingTrimmed) {
+      consumedBytes += Buffer.byteLength(trailingSegment, 'utf8');
+    } else {
+      const parsedTrailing = parseCodexJsonLine(trailingSegment, filePath);
       if (parsedTrailing) {
         messages.push(parsedTrailing);
         consumedBytes += Buffer.byteLength(trailingSegment, 'utf8');
@@ -182,8 +289,7 @@ export async function ingestClaudeLogs(
 
   try {
     const projects = await fs.readdir(claudeProjectsDir);
-    const now = Date.now();
-    const threshold = since ? since.getTime() : now - defaultLookbackHours * 60 * 60 * 1000;
+    const threshold = since ? since.getTime() : Date.now() - defaultLookbackHours * 60 * 60 * 1000;
 
     for (const project of projects) {
       const projectPath = path.join(claudeProjectsDir, project);
@@ -269,8 +375,7 @@ export async function ingestAntigravityLogs(
 
   try {
     const sessions = await fs.readdir(antigravityDir);
-    const now = Date.now();
-    const threshold = since ? since.getTime() : now - defaultLookbackHours * 60 * 60 * 1000;
+    const threshold = since ? since.getTime() : Date.now() - defaultLookbackHours * 60 * 60 * 1000;
 
     for (const session of sessions) {
       const logPath = path.join(
@@ -315,6 +420,101 @@ export async function ingestAntigravityLogs(
   } catch (err) {
     console.error('Antigravity logs ingestion failed:', err);
     fatalErrors.push(`Antigravity logs root ingest failed: ${toErrorMessage(err)}`);
+  }
+
+  return {
+    ok: fatalErrors.length === 0,
+    errors: fatalErrors,
+    warnings,
+    messages,
+    cursor: nextCursor,
+    maxObservedMtimeMs,
+  };
+}
+
+async function listJsonlFilesRecursively(root: string): Promise<string[]> {
+  const files: string[] = [];
+  async function visit(dir: string): Promise<void> {
+    let entries: Array<{ name: string; isDirectory: () => boolean; isFile: () => boolean }> = [];
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch (error) {
+      if (isIgnorableOptionalFileError(error)) return;
+      throw error;
+    }
+
+    for (const entry of entries) {
+      const entryPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await visit(entryPath);
+      } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+        files.push(entryPath);
+      }
+    }
+  }
+  await visit(root);
+  return files;
+}
+
+/**
+ * Codex Desktop / CLI の JSONL セッションログを解析します。
+ */
+export async function ingestCodexLogs(
+  since?: Date,
+  cursor: IngestCursor = {},
+): Promise<IngestResult> {
+  const roots = [config.codexSessionDir, config.codexArchivedSessionDir].filter(
+    (dir): dir is string => typeof dir === 'string' && dir.trim().length > 0,
+  );
+  const messages: ChatMessage[] = [];
+  const fatalErrors: string[] = [];
+  const warnings: string[] = [];
+  const initialLookbackHours = Number(process.env.GNOSIS_CODEX_INITIAL_LOOKBACK_HOURS ?? '0');
+  const nextCursor = { ...normalizeIngestCursor(cursor) };
+  let maxObservedMtimeMs = since ? since.getTime() : 0;
+
+  for (const root of roots) {
+    let files: string[] = [];
+    try {
+      files = await listJsonlFilesRecursively(root);
+    } catch (error) {
+      warnings.push(`Codex root ingest failed (${root}): ${toErrorMessage(error)}`);
+      continue;
+    }
+
+    const threshold = since
+      ? since.getTime()
+      : Number.isFinite(initialLookbackHours) && initialLookbackHours > 0
+        ? Date.now() - initialLookbackHours * 60 * 60 * 1000
+        : 0;
+    for (const filePath of files) {
+      try {
+        const fStat = await fs.stat(filePath);
+        maxObservedMtimeMs = Math.max(maxObservedMtimeMs, fStat.mtimeMs);
+        const prev = nextCursor[filePath];
+
+        if (!prev && fStat.mtimeMs < threshold) {
+          nextCursor[filePath] = { offset: fStat.size, mtimeMs: fStat.mtimeMs };
+          continue;
+        }
+
+        let startOffset = prev?.offset ?? 0;
+        if (startOffset > fStat.size) {
+          startOffset = 0;
+        }
+        if (startOffset === fStat.size) {
+          nextCursor[filePath] = { offset: fStat.size, mtimeMs: fStat.mtimeMs };
+          continue;
+        }
+
+        const content = await readTextDelta(filePath, startOffset);
+        const deltaResult = processCodexJsonlDelta(filePath, content, startOffset);
+        messages.push(...deltaResult.messages);
+        nextCursor[filePath] = { offset: deltaResult.nextOffset, mtimeMs: fStat.mtimeMs };
+      } catch (error) {
+        warnings.push(`Codex file ingest failed (${filePath}): ${toErrorMessage(error)}`);
+      }
+    }
   }
 
   return {

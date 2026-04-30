@@ -1,12 +1,10 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 
-const mockBuildActivateProjectResult = mock();
 const mockSearchKnowledgeV2 = mock();
+const mockAgenticSearch = mock();
 const mockResolveStaleMetadataSignal = mock();
 const mockBuildDoctorRuntimeHealth = mock();
-const mockStartTaskTrace = mock();
 const mockRecordTaskNote = mock();
-const mockFinishTaskTrace = mock();
 const mockGetReviewLLMService = mock();
 const mockRunReviewStageB = mock();
 const mockRunReviewStageD = mock();
@@ -18,13 +16,11 @@ const mockAnalyzePlanAlignment = mock();
 const mockAnalyzeSpecAlignment = mock();
 
 mock.module('../../../src/services/agentFirst.js', () => ({
-  buildActivateProjectResult: mockBuildActivateProjectResult,
   searchKnowledgeV2: mockSearchKnowledgeV2,
+  agenticSearch: mockAgenticSearch,
   resolveStaleMetadataSignal: mockResolveStaleMetadataSignal,
   buildDoctorRuntimeHealth: mockBuildDoctorRuntimeHealth,
-  startTaskTrace: mockStartTaskTrace,
   recordTaskNote: mockRecordTaskNote,
-  finishTaskTrace: mockFinishTaskTrace,
 }));
 mock.module('../../../src/services/review/llm/reviewer.js', () => ({
   getReviewLLMService: mockGetReviewLLMService,
@@ -63,13 +59,11 @@ const getHandler = (name: string) => {
 
 describe('agent-first MCP tools', () => {
   beforeEach(() => {
-    mockBuildActivateProjectResult.mockReset();
     mockSearchKnowledgeV2.mockReset();
+    mockAgenticSearch.mockReset();
     mockResolveStaleMetadataSignal.mockReset();
     mockBuildDoctorRuntimeHealth.mockReset();
-    mockStartTaskTrace.mockReset();
     mockRecordTaskNote.mockReset();
-    mockFinishTaskTrace.mockReset();
     mockGetReviewLLMService.mockReset();
     mockRunReviewStageB.mockReset();
     mockRunReviewStageD.mockReset();
@@ -94,39 +88,38 @@ describe('agent-first MCP tools', () => {
     });
   });
 
-  it('initial_instructions returns first-call guidance', async () => {
+  it('initial_instructions returns lightweight agentic search guidance', async () => {
     const handler = getHandler('initial_instructions');
     const result = await handler({});
     const text = result.content[0]?.text ?? '';
     const payload = JSON.parse(text) as {
-      firstCall?: string;
-      alwaysRules?: string[];
-      knowledgeLookupDecision?: {
-        defaultAction?: string;
-        useWhen?: string;
-        requiredContext?: string[];
-      };
-      preImplementationRuleLookup?: { required?: string; tool?: string; preset?: string };
+      defaultKnowledgeTool?: string;
+      rawSearchTool?: string;
+      reviewTool?: string;
+      saveKnowledgeTool?: string;
+      rules?: string[];
     };
-    expect(payload.firstCall).toBe('activate_project');
-    expect(payload.alwaysRules).toContain(
-      'initial_instructions: once per session; again only before review flow.',
-    );
-    expect(payload.knowledgeLookupDecision?.defaultAction).toBe('skip_search_knowledge');
-    expect(payload.knowledgeLookupDecision?.useWhen).toContain('non-trivial edit/review');
-    expect(payload.knowledgeLookupDecision?.requiredContext).toContain('taskGoal');
-    expect(payload.preImplementationRuleLookup?.required).toBe('conditional');
-    expect(payload.preImplementationRuleLookup?.tool).toBe('search_knowledge');
-    expect(payload.preImplementationRuleLookup?.preset).toBe('task_context');
+    expect(payload.defaultKnowledgeTool).toBe('agentic_search');
+    expect(payload.rawSearchTool).toBe('search_knowledge');
+    expect(payload.reviewTool).toBe('review_task');
+    expect(payload.saveKnowledgeTool).toBe('record_task_note');
+    expect(payload.rules?.join('\n')).toContain('Use agentic_search');
   });
 
-  it('activate_project delegates to buildActivateProjectResult', async () => {
-    mockBuildActivateProjectResult.mockResolvedValue({ project: { name: 'gnosis' } });
-    const handler = getHandler('activate_project');
-    const result = await handler({ projectRoot: '/tmp/gnosis', mode: 'planning' });
-    expect(mockBuildActivateProjectResult).toHaveBeenCalledWith('/tmp/gnosis', 'planning');
-    const payload = JSON.parse(result.content[0]?.text ?? '{}') as { project?: { name?: string } };
-    expect(payload.project?.name).toBe('gnosis');
+  it('agentic_search delegates to agenticSearch', async () => {
+    mockAgenticSearch.mockResolvedValue({
+      taskSummary: 'Refactor lifecycle tools',
+      decision: 'use_knowledge',
+      usedKnowledge: [],
+      diagnostics: {},
+    });
+    const handler = getHandler('agentic_search');
+    const result = await handler({ userRequest: 'Refactor lifecycle tools' });
+    expect(mockAgenticSearch).toHaveBeenCalledWith(
+      expect.objectContaining({ userRequest: 'Refactor lifecycle tools' }),
+    );
+    const payload = JSON.parse(result.content[0]?.text ?? '{}') as { decision?: string };
+    expect(payload.decision).toBe('use_knowledge');
   });
 
   it('search_knowledge delegates to service with validated args', async () => {
@@ -176,15 +169,6 @@ describe('agent-first MCP tools', () => {
     expect((payload as { toolVisibility?: { status?: string } }).toolVisibility?.status).toBe('ok');
   });
 
-  it('start_task delegates to startTaskTrace', async () => {
-    mockStartTaskTrace.mockResolvedValue({ taskId: 'task/1', status: 'started' });
-    const handler = getHandler('start_task');
-    const result = await handler({ title: 'Implement search' });
-    expect(mockStartTaskTrace).toHaveBeenCalled();
-    const payload = JSON.parse(result.content[0]?.text ?? '{}') as { taskId?: string };
-    expect(payload.taskId).toBe('task/1');
-  });
-
   it('record_task_note delegates to recordTaskNote', async () => {
     mockRecordTaskNote.mockResolvedValue({ saved: true, entityId: 'rule/r1' });
     const handler = getHandler('record_task_note');
@@ -194,29 +178,16 @@ describe('agent-first MCP tools', () => {
     expect(payload.saved).toBe(true);
   });
 
-  it('finish_task delegates to finishTaskTrace', async () => {
-    mockFinishTaskTrace.mockResolvedValue({ taskId: 'task/1', status: 'completed' });
-    const handler = getHandler('finish_task');
-    const result = await handler({ taskId: 'task/1', outcome: 'done' });
-    expect(mockFinishTaskTrace).toHaveBeenCalled();
-    const payload = JSON.parse(result.content[0]?.text ?? '{}') as { status?: string };
-    expect(payload.status).toBe('completed');
-  });
-
   it('review_task returns wrapper response with knowledgeUsed', async () => {
-    mockSearchKnowledgeV2.mockResolvedValue({
-      groups: [
+    mockAgenticSearch.mockResolvedValue({
+      usedKnowledge: [
         {
+          id: 'rule/auth-rule',
+          kind: 'rule',
           category: 'architecture',
-          hits: [
-            {
-              slug: 'auth-rule',
-              kind: 'rule',
-              category: 'architecture',
-              title: 'Auth rule',
-              reason: 'Matched terms',
-            },
-          ],
+          title: 'Auth rule',
+          summary: 'Require auth boundaries in reviewed changes.',
+          reason: 'Matched terms',
         },
       ],
     });
@@ -276,6 +247,15 @@ describe('agent-first MCP tools', () => {
       expect.objectContaining({ knowledgePolicy: 'required' }),
       expect.anything(),
     );
+    const reviewDeps = mockRunReviewStageD.mock.calls[0]?.[1] as {
+      retrieveGuidanceFn?: () => Promise<{
+        principles: Array<{ id: string; content: string; tags: string[] }>;
+      }>;
+    };
+    const injectedGuidance = await reviewDeps.retrieveGuidanceFn?.();
+    expect(injectedGuidance?.principles[0]?.id).toBe('rule/auth-rule');
+    expect(injectedGuidance?.principles[0]?.content).toContain('Require auth boundaries');
+    expect(injectedGuidance?.principles[0]?.tags).toContain('principle');
     expect(mockDispatchHookEvent).toHaveBeenCalledWith(
       expect.objectContaining({ event: 'task.ready_for_review' }),
     );
@@ -286,8 +266,33 @@ describe('agent-first MCP tools', () => {
     expect((payload as { findings?: unknown[] }).findings?.length).toBe(1);
   });
 
+  it('review_task stops before review when required agentic knowledge retrieval degrades', async () => {
+    mockAgenticSearch.mockResolvedValue({
+      decision: 'degraded',
+      usedKnowledge: [],
+      diagnostics: { degradedReasons: ['Gemma4 failed'] },
+    });
+
+    const handler = getHandler('review_task');
+    const result = await handler({
+      targetType: 'code_diff',
+      target: { diff: 'diff --git a b' },
+      provider: 'local',
+      knowledgePolicy: 'required',
+    });
+    const payload = JSON.parse(result.content[0]?.text ?? '{}') as {
+      summary?: string;
+      diagnostics?: { degradedReasons?: string[] };
+    };
+
+    expect(result.isError).toBe(true);
+    expect(payload.summary).toContain('Knowledge retrieval degraded');
+    expect(payload.diagnostics?.degradedReasons).toContain('Gemma4 failed');
+    expect(mockRunReviewStageD).not.toHaveBeenCalled();
+  });
+
   it('review_task returns degraded implementation_plan result before MCP host timeout', async () => {
-    mockSearchKnowledgeV2.mockResolvedValue({ groups: [] });
+    mockAgenticSearch.mockResolvedValue({ usedKnowledge: [] });
     mockGetReviewLLMService.mockResolvedValue({ provider: 'local' });
     mockReviewDocument.mockRejectedValue(
       new ReviewError('E016', 'Document review timed out after 180000ms'),
@@ -320,7 +325,7 @@ describe('agent-first MCP tools', () => {
   });
 
   it('review_task uses OpenAI as the default MCP reviewer', async () => {
-    mockSearchKnowledgeV2.mockResolvedValue({ groups: [] });
+    mockAgenticSearch.mockResolvedValue({ usedKnowledge: [] });
     mockGetReviewLLMService.mockResolvedValue({ provider: 'cloud' });
     mockRunReviewStageD.mockResolvedValue({
       review_id: 'r-openai',
@@ -362,7 +367,7 @@ describe('agent-first MCP tools', () => {
   });
 
   it('review_task forwards explicit cloud provider selection', async () => {
-    mockSearchKnowledgeV2.mockResolvedValue({ groups: [] });
+    mockAgenticSearch.mockResolvedValue({ usedKnowledge: [] });
     mockGetReviewLLMService.mockResolvedValue({});
     mockRunReviewStageD.mockResolvedValue({
       review_id: 'r2',
