@@ -17,14 +17,16 @@ import type { QueueRepository } from '../queue/repository';
 import {
   EXHAUSTED_RETRY_MS,
   EXPLORED_COOLDOWN_MS,
+  FAILED_RETRY_MS,
   generateTopicStateEntityId,
   hashSearchAttempt,
   isKnowflowTopicSuppressed,
   isoAfter,
 } from '../state/topicState.js';
 import type { EvidenceClaim, EvidenceSource } from '../verifier';
+import { verifyEvidence } from '../verifier';
 import type { TaskExecutionResult, TaskHandler } from './loop';
-import { PipelineOrchestrator } from './pipeline.js';
+import { PipelineOrchestrator, type PipelineResult } from './pipeline.js';
 
 const MAX_INITIAL_QUERIES = 3;
 const MAX_FETCHED_PAGES_PER_TASK = 5;
@@ -49,6 +51,8 @@ export type CreateKnowFlowTaskHandlerOptions = {
   logger?: StructuredLogger;
   metrics?: MetricsCollector;
   now?: () => number;
+  database?: typeof defaultDb;
+  recordTopicState?: boolean;
 
   // For GapPlanner
   queueRepository?: QueueRepository;
@@ -297,6 +301,14 @@ export const createMcpEvidenceProvider = (
         normalizedSources: [],
         relations: [],
         queryCountUsed: 0,
+        usefulPageFound: false,
+        usefulPageCount: 0,
+        requiredUsefulPageCount: requiredUsefulPageCount(task),
+        fetchedPageCount: 0,
+        diagnostics: {
+          outcome: 'llm_degraded',
+          messages: ['LLM degraded during query generation; MCP search was skipped.'],
+        },
       };
     }
 
@@ -310,6 +322,11 @@ export const createMcpEvidenceProvider = (
     const fetchedPageUrls = new Set<string>();
     const searchQueries: string[] = [];
     const usefulDomains = new Set<string>();
+    const diagnosticMessages: string[] = [];
+    let searchErrorCount = 0;
+    let noSearchResultCount = 0;
+    let fetchErrorCount = 0;
+    let notUsefulCount = 0;
     const requiredUsefulPages = requiredUsefulPageCount(task);
     let queryCountUsed = 0;
 
@@ -329,6 +346,12 @@ export const createMcpEvidenceProvider = (
           message: searchError instanceof Error ? searchError.message : String(searchError),
           level: 'warn',
         });
+        searchErrorCount += 1;
+        diagnosticMessages.push(
+          `Search failed for "${query}": ${
+            searchError instanceof Error ? searchError.message : String(searchError)
+          }`,
+        );
         continue; // 検索失敗は次のクエリへ
       }
       queryCountUsed += 1;
@@ -342,6 +365,8 @@ export const createMcpEvidenceProvider = (
           query,
           level: 'warn',
         });
+        noSearchResultCount += 1;
+        diagnosticMessages.push(`No search results for "${query}".`);
         continue;
       }
 
@@ -427,6 +452,7 @@ export const createMcpEvidenceProvider = (
               reason: usefulness.output.reason,
               level: 'info',
             });
+            notUsefulCount += 1;
             continue;
           }
 
@@ -468,9 +494,28 @@ export const createMcpEvidenceProvider = (
             message: error instanceof Error ? error.message : String(error),
             level: 'warn',
           });
+          fetchErrorCount += 1;
+          diagnosticMessages.push(
+            `Fetch/extract failed for ${url}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
         }
       }
     }
+
+    const diagnostics: FlowEvidence['diagnostics'] =
+      usefulDomains.size > 0 || allClaims.length > 0
+        ? { outcome: 'ok', messages: diagnosticMessages.slice(0, 5) }
+        : fetchedPageUrls.size > 0 && notUsefulCount > 0
+          ? { outcome: 'no_useful_pages', messages: diagnosticMessages.slice(0, 5) }
+          : fetchErrorCount > 0
+            ? { outcome: 'fetch_failed', messages: diagnosticMessages.slice(0, 5) }
+            : searchErrorCount > 0 && queryCountUsed === 0
+              ? { outcome: 'search_failed', messages: diagnosticMessages.slice(0, 5) }
+              : noSearchResultCount > 0
+                ? { outcome: 'no_search_results', messages: diagnosticMessages.slice(0, 5) }
+                : { outcome: 'no_evidence_collected', messages: diagnosticMessages.slice(0, 5) };
 
     return {
       claims: allClaims,
@@ -484,32 +529,165 @@ export const createMcpEvidenceProvider = (
       usefulPageCount: usefulDomains.size,
       requiredUsefulPageCount: requiredUsefulPages,
       fetchedPageCount: fetchedPageUrls.size,
+      diagnostics,
     };
   };
 };
 
-const markTopicExplorationResult = async (input: {
+const EMPTY_EVIDENCE: FlowEvidence = {
+  claims: [],
+  sources: [],
+  relations: [],
+  normalizedSources: [],
+  queryCountUsed: 0,
+  usefulPageFound: false,
+  usefulPageCount: 0,
+  fetchedPageCount: 0,
+};
+
+type TopicExplorationOutcome = {
+  stateId: string;
+  status: 'explored' | 'exhausted' | 'failed';
+  outcome: string;
+  description: string;
+  metadata: Record<string, unknown>;
+  confidence: number;
+  relationWeight: number;
+};
+
+const uniqueStrings = (values: Array<string | undefined>, limit: number): string[] => {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const value of values) {
+    const normalized = value?.trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    output.push(normalized);
+    if (output.length >= limit) break;
+  }
+  return output;
+};
+
+const truncateForState = (value: string, maxChars = 300): string => {
+  const trimmed = value.trim().replace(/\s+/g, ' ');
+  return trimmed.length > maxChars ? `${trimmed.slice(0, maxChars - 3)}...` : trimmed;
+};
+
+const sourceLabel = (source: SourceRef | EvidenceSource): string | undefined => {
+  const url = 'url' in source ? source.url : undefined;
+  const domain = source.domain ?? (url ? hostnameForUrl(url) : undefined);
+  const title = 'title' in source ? source.title : undefined;
+  const label = [title, domain].filter(Boolean).join(' - ');
+  if (url && label) return `${label}: ${url}`;
+  return url ?? (label || undefined);
+};
+
+export const buildTopicExplorationOutcome = (input: {
   task: TopicTask;
   evidence: FlowEvidence;
-  logger: StructuredLogger;
-}): Promise<void> => {
+  result?: PipelineResult;
+  now?: Date;
+}): TopicExplorationOutcome => {
+  const now = input.now ?? new Date();
+  const nowIso = now.toISOString();
   const fetchedPageCount = input.evidence.fetchedPageCount ?? 0;
   const usefulPageCount =
     input.evidence.usefulPageCount ?? (input.evidence.usefulPageFound ? 1 : 0);
   const requiredUsefulPageCount = input.evidence.requiredUsefulPageCount ?? 1;
+  const verification = verifyEvidence({
+    topic: input.task.topic,
+    claims: input.evidence.claims,
+    sources: input.evidence.sources,
+    now: now.getTime(),
+  });
+  const flowResult = input.result?.phases.flowExecution.data;
   const status =
-    usefulPageCount >= requiredUsefulPageCount
-      ? 'explored'
-      : fetchedPageCount > 0
-        ? 'exhausted'
-        : undefined;
-  if (!status) {
-    return;
-  }
+    input.result && !input.result.ok
+      ? 'failed'
+      : usefulPageCount >= requiredUsefulPageCount
+        ? 'explored'
+        : 'exhausted';
+  const outcome =
+    status === 'failed'
+      ? 'pipeline_failed'
+      : usefulPageCount >= requiredUsefulPageCount && verification.acceptedClaims.length > 0
+        ? 'claims_recorded'
+        : usefulPageCount >= requiredUsefulPageCount
+          ? 'useful_pages_without_accepted_claims'
+          : fetchedPageCount === 0
+            ? input.evidence.diagnostics?.outcome ?? 'no_evidence_collected'
+            : usefulPageCount === 0
+              ? 'no_useful_pages'
+              : 'insufficient_independent_sources';
 
   const stateId = generateTopicStateEntityId(input.task.topic);
-  const now = new Date();
-  const nowIso = now.toISOString();
+  const acceptedClaimSamples = uniqueStrings(
+    verification.acceptedClaims.map((claim) => truncateForState(claim.text, 500)),
+    5,
+  );
+  const rejectedClaimSamples = uniqueStrings(
+    verification.rejectedClaims.map((item) =>
+      truncateForState(`${item.claim.text} [${item.reasons.join(', ')}]`, 500),
+    ),
+    5,
+  );
+  const conflictSamples = uniqueStrings(
+    verification.conflicts.map((conflict) =>
+      truncateForState(`${conflict.leftClaim} <> ${conflict.rightClaim}`, 500),
+    ),
+    3,
+  );
+  const sourceSamples = uniqueStrings(
+    [
+      ...(input.evidence.normalizedSources ?? []).map(sourceLabel),
+      ...input.evidence.sources.map(sourceLabel),
+    ],
+    5,
+  );
+  const searchQueries = uniqueStrings(input.evidence.searchQueries ?? [], 5);
+  const diagnosticMessages = uniqueStrings(input.evidence.diagnostics?.messages ?? [], 5);
+  const resultSummary = input.result?.summary || flowResult?.summary;
+  const countLine = [
+    `accepted=${verification.acceptedClaims.length}`,
+    `rejected=${verification.rejectedClaims.length}`,
+    `conflicts=${verification.conflicts.length}`,
+    `gaps=${flowResult?.gaps.length ?? 0}`,
+    `fetched=${fetchedPageCount}`,
+    `useful=${usefulPageCount}/${requiredUsefulPageCount}`,
+  ].join(', ');
+  const heading =
+    status === 'explored'
+      ? 'KnowFlow explored this frontier topic and recorded the attempt.'
+      : status === 'failed'
+        ? 'KnowFlow attempted this frontier topic but the pipeline failed before useful knowledge was recorded.'
+        : 'KnowFlow attempted this frontier topic but did not record enough useful knowledge.';
+  const descriptionParts = [
+    heading,
+    `Outcome: ${outcome}; ${countLine}.`,
+    resultSummary ? `Summary: ${truncateForState(resultSummary, 500)}` : undefined,
+    acceptedClaimSamples.length > 0
+      ? `Accepted findings:\n${acceptedClaimSamples.map((claim) => `- ${claim}`).join('\n')}`
+      : undefined,
+    rejectedClaimSamples.length > 0
+      ? `Rejected findings:\n${rejectedClaimSamples.map((claim) => `- ${claim}`).join('\n')}`
+      : undefined,
+    conflictSamples.length > 0
+      ? `Conflicts:\n${conflictSamples.map((claim) => `- ${claim}`).join('\n')}`
+      : undefined,
+    sourceSamples.length > 0
+      ? `Sources:\n${sourceSamples.map((source) => `- ${source}`).join('\n')}`
+      : undefined,
+    searchQueries.length > 0 ? `Search queries: ${searchQueries.join(' | ')}` : undefined,
+    diagnosticMessages.length > 0
+      ? `Diagnostics: ${diagnosticMessages
+          .map((message) => truncateForState(message, 240))
+          .join(' | ')}`
+      : undefined,
+    input.task.expansion?.whyResearch
+      ? `Original selection reason: ${truncateForState(input.task.expansion.whyResearch, 500)}`
+      : undefined,
+  ].filter((part): part is string => Boolean(part));
+
   const metadata = {
     kind: 'knowflow_topic_state',
     source: 'knowflow',
@@ -519,49 +697,99 @@ const markTopicExplorationResult = async (input: {
     whyResearch: input.task.expansion?.whyResearch,
     status,
     knowflowStatus: status,
+    outcome,
     lastKnowflowTaskId: input.task.id,
     lastKnowflowUpdatedAt: nowIso,
+    lastKnowflowAttemptedAt: nowIso,
+    ...(input.result?.ok ? { lastKnowflowCompletedAt: nowIso } : {}),
     usefulPageFound: input.evidence.usefulPageFound ?? false,
     usefulPageCount,
     requiredUsefulPageCount,
     fetchedPageCount,
-    searchQueries: input.evidence.searchQueries ?? [],
+    queryCountUsed: input.evidence.queryCountUsed ?? 0,
+    searchQueries,
+    resultSummary,
+    acceptedClaimCount: verification.acceptedClaims.length,
+    rejectedClaimCount: verification.rejectedClaims.length,
+    conflictCount: verification.conflicts.length,
+    gapCount: flowResult?.gaps.length ?? 0,
+    acceptedClaimSamples,
+    rejectedClaimSamples,
+    conflictSamples,
+    sourceSamples,
+    diagnostics: input.evidence.diagnostics,
+    pipelineOk: input.result?.ok,
+    pipelineError: input.result && !input.result.ok ? input.result.summary : undefined,
+    evidenceCollectionOk: input.result?.phases.evidenceCollection.ok,
+    evidenceCollectionError: input.result?.phases.evidenceCollection.error,
+    flowExecutionOk: input.result?.phases.flowExecution.ok,
+    flowExecutionError: input.result?.phases.flowExecution.error,
     ...(status === 'exhausted'
       ? {
           exhaustedAt: nowIso,
           exhaustedReason:
-            usefulPageCount > 0
+            outcome === 'insufficient_independent_sources'
               ? 'Useful evidence was found, but the required independent source count was not met within fetch budget.'
-              : 'No useful page found within fetch budget.',
+              : outcome === 'no_useful_pages'
+                ? 'Fetched pages were not useful enough for this topic.'
+                : 'No evidence was collected for this topic.',
           exhaustedQueryHash: hashSearchAttempt({
             topic: input.task.topic,
-            queries: input.evidence.searchQueries,
+            queries: searchQueries,
           }),
           retryAfter: isoAfter(now, EXHAUSTED_RETRY_MS),
         }
-      : {
-          exploredAt: nowIso,
-          lastExploredAt: nowIso,
-          cooldownUntil: isoAfter(now, EXPLORED_COOLDOWN_MS),
-        }),
+      : status === 'failed'
+        ? {
+            failedAt: nowIso,
+            failureReason: input.result?.summary ?? 'KnowFlow pipeline failed.',
+            retryAfter: isoAfter(now, FAILED_RETRY_MS),
+          }
+        : {
+            exploredAt: nowIso,
+            lastExploredAt: nowIso,
+            cooldownUntil: isoAfter(now, EXPLORED_COOLDOWN_MS),
+          }),
   };
 
-  await defaultDb
+  return {
+    stateId,
+    status,
+    outcome,
+    description: descriptionParts.join('\n\n'),
+    metadata,
+    confidence: status === 'explored' ? 0.8 : status === 'failed' ? 0.25 : 0.4,
+    relationWeight: status === 'explored' ? 0.8 : status === 'failed' ? 0.25 : 0.4,
+  };
+};
+
+const recordTopicExplorationOutcome = async (input: {
+  task: TopicTask;
+  evidence: FlowEvidence;
+  result?: PipelineResult;
+  logger: StructuredLogger;
+  database?: typeof defaultDb;
+}): Promise<void> => {
+  const outcome = buildTopicExplorationOutcome({
+    task: input.task,
+    evidence: input.evidence,
+    result: input.result,
+  });
+  const database = input.database ?? defaultDb;
+
+  await database
     .insert(entities)
     .values({
-      id: stateId,
+      id: outcome.stateId,
       type: 'knowflow_topic_state',
       name: input.task.topic,
-      description:
-        status === 'exhausted'
-          ? 'KnowFlow tried to deepen this topic but did not find a sufficiently useful page.'
-          : 'KnowFlow has already explored this topic.',
+      description: outcome.description,
       communityId: input.task.expansion?.seedCommunityId,
-      metadata,
-      confidence: status === 'explored' ? 0.8 : 0.4,
+      metadata: outcome.metadata,
+      confidence: outcome.confidence,
       provenance: 'knowflow',
       scope: 'on_demand',
-      freshness: now,
+      freshness: new Date(),
     })
     .onConflictDoUpdate({
       target: entities.id,
@@ -576,15 +804,15 @@ const markTopicExplorationResult = async (input: {
     })
     .returning({ id: entities.id });
 
-  if (input.task.expansion?.seedEntityId && input.task.expansion.seedEntityId !== stateId) {
-    await defaultDb
+  if (input.task.expansion?.seedEntityId && input.task.expansion.seedEntityId !== outcome.stateId) {
+    await database
       .insert(relations)
       .values({
         sourceId: input.task.expansion.seedEntityId,
-        targetId: stateId,
+        targetId: outcome.stateId,
         relationType: input.task.expansion.relationType ?? 'expands',
-        weight: status === 'explored' ? 0.8 : 0.4,
-        confidence: status === 'explored' ? 0.8 : 0.4,
+        weight: outcome.relationWeight,
+        confidence: outcome.confidence,
         sourceTask: input.task.id,
         provenance: 'knowflow',
       })
@@ -595,11 +823,12 @@ const markTopicExplorationResult = async (input: {
     event: 'knowflow.topic.status_updated',
     taskId: input.task.id,
     topic: input.task.topic,
-    stateId,
-    status,
-    fetchedPageCount,
-    usefulPageCount,
-    requiredUsefulPageCount,
+    stateId: outcome.stateId,
+    status: outcome.status,
+    outcome: outcome.outcome,
+    fetchedPageCount: input.evidence.fetchedPageCount ?? 0,
+    usefulPageCount: input.evidence.usefulPageCount ?? (input.evidence.usefulPageFound ? 1 : 0),
+    requiredUsefulPageCount: input.evidence.requiredUsefulPageCount ?? 1,
     level: 'info',
   });
 };
@@ -609,15 +838,17 @@ const enqueueEmergentTopics = async (input: {
   evidence: FlowEvidence;
   queueRepository?: QueueRepository;
   logger: StructuredLogger;
+  database?: typeof defaultDb;
 }): Promise<number> => {
   const topics = input.evidence.emergentTopics ?? [];
   if (!input.queueRepository || topics.length === 0) {
     return 0;
   }
+  const database = input.database ?? defaultDb;
 
   let seedEntity: typeof entities.$inferSelect | undefined;
   if (input.task.expansion?.seedEntityId) {
-    [seedEntity] = await defaultDb
+    [seedEntity] = await database
       .select()
       .from(entities)
       .where(eq(entities.id, input.task.expansion.seedEntityId))
@@ -630,12 +861,12 @@ const enqueueEmergentTopics = async (input: {
     const conceptId = generateEntityId('concept', topic.topic);
     const stateId = generateTopicStateEntityId(topic.topic);
     const communityId = seedEntity?.communityId ?? input.task.expansion?.seedCommunityId;
-    const [existingConcept] = await defaultDb
+    const [existingConcept] = await database
       .select({ id: entities.id, metadata: entities.metadata })
       .from(entities)
       .where(eq(entities.id, conceptId))
       .limit(1);
-    const [existingState] = await defaultDb
+    const [existingState] = await database
       .select({ id: entities.id, metadata: entities.metadata })
       .from(entities)
       .where(eq(entities.id, stateId))
@@ -644,7 +875,7 @@ const enqueueEmergentTopics = async (input: {
       isKnowflowTopicSuppressed(existingState?.metadata) ||
       isKnowflowTopicSuppressed(existingConcept?.metadata);
 
-    await defaultDb
+    await database
       .insert(entities)
       .values({
         id: conceptId,
@@ -683,7 +914,7 @@ const enqueueEmergentTopics = async (input: {
       });
 
     if (seedEntity) {
-      await defaultDb
+      await database
         .insert(relations)
         .values({
           sourceId: seedEntity.id,
@@ -719,7 +950,7 @@ const enqueueEmergentTopics = async (input: {
         relationType,
       },
     });
-    await defaultDb
+    await database
       .insert(entities)
       .values({
         id: stateId,
@@ -759,7 +990,7 @@ const enqueueEmergentTopics = async (input: {
       });
 
     if (seedEntity) {
-      await defaultDb
+      await database
         .insert(relations)
         .values({
           sourceId: seedEntity.id,
@@ -887,30 +1118,16 @@ export const createKnowFlowTaskHandler = (
 
     const result = await orchestrator.run();
 
+    const evidence = result.phases.evidenceCollection.data ?? EMPTY_EVIDENCE;
+
     if (result.ok) {
       try {
         const planned = await enqueueEmergentTopics({
           task,
-          evidence: result.phases.evidenceCollection.data ?? {
-            claims: [],
-            sources: [],
-            relations: [],
-            normalizedSources: [],
-            queryCountUsed: 0,
-          },
+          evidence,
           queueRepository: options.queueRepository,
           logger,
-        });
-        await markTopicExplorationResult({
-          task,
-          evidence: result.phases.evidenceCollection.data ?? {
-            claims: [],
-            sources: [],
-            relations: [],
-            normalizedSources: [],
-            queryCountUsed: 0,
-          },
-          logger,
+          database: options.database,
         });
         if (planned > 0 && result.summary.length > 0) {
           result.summary = `${result.summary}; emergent_followups=${planned}`;
@@ -918,6 +1135,27 @@ export const createKnowFlowTaskHandler = (
       } catch (error) {
         logger({
           event: 'knowflow.emergent_topics.error',
+          taskId: task.id,
+          topic: task.topic,
+          message: error instanceof Error ? error.message : String(error),
+          level: 'warn',
+        });
+      }
+    }
+
+    const shouldRecordTopicState = options.recordTopicState ?? Boolean(task.expansion);
+    if (shouldRecordTopicState) {
+      try {
+        await recordTopicExplorationOutcome({
+          task,
+          evidence,
+          result,
+          logger,
+          database: options.database,
+        });
+      } catch (error) {
+        logger({
+          event: 'knowflow.topic.status_update_error',
           taskId: task.id,
           topic: task.topic,
           message: error instanceof Error ? error.message : String(error),

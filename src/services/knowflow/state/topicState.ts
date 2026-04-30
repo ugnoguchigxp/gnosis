@@ -5,8 +5,9 @@ export const KNOWFLOW_TOPIC_STATE_ENTITY_TYPE = 'knowflow_topic_state';
 
 export const EXPLORED_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000;
 export const EXHAUSTED_RETRY_MS = 30 * 24 * 60 * 60 * 1000;
+export const FAILED_RETRY_MS = 24 * 60 * 60 * 1000;
 
-export type KnowflowTopicStatus = 'queued' | 'running' | 'explored' | 'exhausted';
+export type KnowflowTopicStatus = 'queued' | 'running' | 'explored' | 'exhausted' | 'failed';
 
 export const metadataRecord = (value: unknown): Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -30,6 +31,7 @@ export const readKnowflowStatus = (metadataValue: unknown): KnowflowTopicStatus 
     case 'running':
     case 'explored':
     case 'exhausted':
+    case 'failed':
       return status;
     default:
       return undefined;
@@ -55,7 +57,7 @@ export const isKnowflowTopicSuppressed = (
     const cooldownUntil = parseDateMs(metadata.cooldownUntil);
     return cooldownUntil !== undefined && cooldownUntil > nowMs;
   }
-  if (status === 'exhausted') {
+  if (status === 'exhausted' || status === 'failed') {
     const retryAfter = parseDateMs(metadata.retryAfter);
     return retryAfter !== undefined && retryAfter > nowMs;
   }

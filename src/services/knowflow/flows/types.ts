@@ -12,6 +12,17 @@ export type FlowEvidence = {
   usefulPageCount?: number;
   requiredUsefulPageCount?: number;
   fetchedPageCount?: number;
+  diagnostics?: {
+    outcome?:
+      | 'ok'
+      | 'llm_degraded'
+      | 'search_failed'
+      | 'no_search_results'
+      | 'fetch_failed'
+      | 'no_useful_pages'
+      | 'no_evidence_collected';
+    messages?: string[];
+  };
   emergentTopics?: Array<{
     topic: string;
     whyResearch: string;

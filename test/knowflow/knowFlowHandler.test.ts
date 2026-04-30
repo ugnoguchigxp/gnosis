@@ -15,6 +15,7 @@ mock.module('../../src/config.js', () => ({
 import { config } from '../../src/config.js';
 import type { TopicTask } from '../../src/services/knowflow/domain/task.js';
 import {
+  buildTopicExplorationOutcome,
   createKnowFlowTaskHandler,
   createMcpEvidenceProvider,
 } from '../../src/services/knowflow/worker/knowFlowHandler.js';
@@ -71,6 +72,8 @@ describe('createMcpEvidenceProvider', () => {
     expect(evidence.claims).toHaveLength(0);
     expect(evidence.sources).toHaveLength(0);
     expect(evidence.queryCountUsed).toBe(0);
+    expect(evidence.fetchedPageCount).toBe(0);
+    expect(evidence.diagnostics?.outcome).toBe('llm_degraded');
     expect(retriever.search).not.toHaveBeenCalled();
   });
 
@@ -320,6 +323,143 @@ describe('createMcpEvidenceProvider', () => {
     expect(evidence.requiredUsefulPageCount).toBe(2);
     expect(evidence.usefulPageFound).toBe(true);
     expect(evidence.claims).toHaveLength(2);
+  });
+});
+
+describe('buildTopicExplorationOutcome', () => {
+  it('records accepted findings, sources, and original frontier reason', () => {
+    const now = new Date('2026-04-30T00:00:00.000Z');
+    const outcome = buildTopicExplorationOutcome({
+      task: makeTask({
+        topic: 'TypeScript magic number rule',
+        expansion: {
+          seedEntityId: 'rule/magic-number',
+          seedCommunityId: '00000000-0000-0000-0000-000000000001',
+          whyResearch: 'high-value rule, sparse graph neighborhood',
+        },
+      }),
+      evidence: {
+        claims: [
+          {
+            text: 'Magic numbers should be replaced with named constants unless the value is a conventional sentinel.',
+            confidence: 0.95,
+            sourceIds: ['src-1'],
+          },
+        ],
+        sources: [
+          {
+            id: 'src-1',
+            domain: 'docs.example.com',
+            fetchedAt: now.getTime(),
+            qualityScore: 0.9,
+          },
+        ],
+        normalizedSources: [
+          {
+            id: 'src-1',
+            url: 'https://docs.example.com/style/magic-numbers',
+            domain: 'docs.example.com',
+            title: 'Style guide',
+            fetchedAt: now.getTime(),
+          },
+        ],
+        relations: [],
+        queryCountUsed: 1,
+        searchQueries: ['typescript magic number constants'],
+        usefulPageFound: true,
+        usefulPageCount: 1,
+        requiredUsefulPageCount: 1,
+        fetchedPageCount: 1,
+      },
+      now,
+    });
+
+    expect(outcome.status).toBe('explored');
+    expect(outcome.outcome).toBe('claims_recorded');
+    expect(outcome.description).toContain('Accepted findings');
+    expect(outcome.description).toContain('Magic numbers should be replaced');
+    expect(outcome.description).toContain('Style guide - docs.example.com');
+    expect(outcome.description).toContain('Original selection reason');
+    expect(outcome.metadata.acceptedClaimCount).toBe(1);
+    expect(outcome.metadata.sourceSamples).toContain(
+      'Style guide - docs.example.com: https://docs.example.com/style/magic-numbers',
+    );
+  });
+
+  it('marks no-evidence attempts as exhausted instead of leaving the topic queued', () => {
+    const outcome = buildTopicExplorationOutcome({
+      task: makeTask({
+        topic: 'Sparse frontier',
+        expansion: {
+          seedEntityId: 'rule/sparse-frontier',
+          whyResearch: 'sparse graph neighborhood',
+        },
+      }),
+      evidence: {
+        claims: [],
+        sources: [],
+        normalizedSources: [],
+        relations: [],
+        queryCountUsed: 0,
+        usefulPageFound: false,
+        usefulPageCount: 0,
+        requiredUsefulPageCount: 1,
+        fetchedPageCount: 0,
+        diagnostics: {
+          outcome: 'llm_degraded',
+          messages: ['LLM degraded during query generation; MCP search was skipped.'],
+        },
+      },
+      now: new Date('2026-04-30T00:00:00.000Z'),
+    });
+
+    expect(outcome.status).toBe('exhausted');
+    expect(outcome.outcome).toBe('llm_degraded');
+    expect(outcome.description).toContain('did not record enough useful knowledge');
+    expect(outcome.description).toContain('LLM degraded during query generation');
+    expect(outcome.metadata.retryAfter).toBeDefined();
+    expect(outcome.metadata.knowflowStatus).toBe('exhausted');
+  });
+
+  it('records pipeline failures with a short retry window', () => {
+    const outcome = buildTopicExplorationOutcome({
+      task: makeTask({
+        topic: 'Failing frontier',
+        expansion: {
+          seedEntityId: 'rule/failing-frontier',
+          whyResearch: 'high-value rule',
+        },
+      }),
+      evidence: {
+        claims: [],
+        sources: [],
+        normalizedSources: [],
+        relations: [],
+        queryCountUsed: 0,
+      },
+      result: {
+        taskId: 'task-1',
+        topic: 'Failing frontier',
+        ok: false,
+        summary: 'Evidence collection failed: network error',
+        phases: {
+          evidenceCollection: {
+            ok: false,
+            error: 'network error',
+            durationMs: 10,
+          },
+          flowExecution: { ok: false, durationMs: 0 },
+          followupPlanning: { ok: false, durationMs: 0 },
+        },
+      },
+      now: new Date('2026-04-30T00:00:00.000Z'),
+    });
+
+    expect(outcome.status).toBe('failed');
+    expect(outcome.outcome).toBe('pipeline_failed');
+    expect(outcome.description).toContain('pipeline failed');
+    expect(outcome.metadata.failureReason).toBe('Evidence collection failed: network error');
+    expect(outcome.metadata.knowflowStatus).toBe('failed');
   });
 });
 

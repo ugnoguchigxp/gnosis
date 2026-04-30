@@ -8,6 +8,7 @@ import {
   type Tool,
 } from '@modelcontextprotocol/sdk/types.js';
 import { envBoolean, envNumber } from '../config.js';
+import { RuntimeLifecycle } from '../runtime/lifecycle.js';
 import { registerProcess } from '../runtime/processRegistry.js';
 import {
   type McpHostHealth,
@@ -80,17 +81,22 @@ export async function runStdioAdapter(rootDir = process.cwd()): Promise<void> {
     title: process.title,
     cwd: rootDir,
   });
-  const heartbeatTimer = setInterval(() => {
-    registration.heartbeat();
-  }, 5000);
-  heartbeatTimer.unref?.();
-  let cleanedUp = false;
-  const cleanupRegistration = () => {
-    if (cleanedUp) return;
-    cleanedUp = true;
-    clearInterval(heartbeatTimer);
+  let unregistered = false;
+  const unregister = () => {
+    if (unregistered) return;
+    unregistered = true;
     registration.unregister();
   };
+  const lifecycle = new RuntimeLifecycle({
+    name: 'McpAdapter',
+    registration,
+    originalPpid: process.ppid,
+    cleanupTimeoutMs: envNumber(process.env.GNOSIS_MCP_ADAPTER_CLEANUP_TIMEOUT_MS, 5000),
+    parentPollMs: envNumber(process.env.GNOSIS_MCP_ADAPTER_PARENT_POLL_MS, 2000),
+  });
+  lifecycle.addCleanupStep(() => {
+    unregister();
+  });
 
   const server = new Server(
     {
@@ -141,33 +147,32 @@ export async function runStdioAdapter(rootDir = process.cwd()): Promise<void> {
   });
 
   const transport = new StdioServerTransport();
-  let shuttingDown = false;
-  const shutdown = () => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    cleanupRegistration();
-    process.exit(0);
-  };
-
   process.on('exit', () => {
-    cleanupRegistration();
+    unregister();
   });
-  (transport as unknown as { onclose?: () => void }).onclose = shutdown;
-  process.stdin.on('close', shutdown);
-  process.stdin.on('end', shutdown);
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  (transport as unknown as { onclose?: () => void }).onclose = () => {
+    void lifecycle.requestShutdown('transport_close');
+  };
+  lifecycle.bindProcessEvents(process.stdin);
+  lifecycle.startHeartbeat();
+  lifecycle.startParentWatch();
 
   const idleMs = envNumber(process.env.GNOSIS_MCP_ADAPTER_IDLE_MS, 0);
   if (idleMs > 0) {
     const idleTimer = setInterval(
       () => {
-        if (activeRequests === 0 && Date.now() - lastActivityAt >= idleMs) shutdown();
+        if (activeRequests === 0 && Date.now() - lastActivityAt >= idleMs) {
+          void lifecycle.requestShutdown('transport_close');
+        }
       },
       Math.min(idleMs, 1000),
     );
     idleTimer.unref?.();
+    lifecycle.addCleanupStep(() => {
+      clearInterval(idleTimer);
+    });
   }
 
   await server.connect(transport);
+  lifecycle.markRunning();
 }
