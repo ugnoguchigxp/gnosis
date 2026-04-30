@@ -1,4 +1,9 @@
-import type { McpHostService, McpHostTool, McpHostToolResult } from '../hostProtocol.js';
+import type {
+  McpHostCallOptions,
+  McpHostService,
+  McpHostTool,
+  McpHostToolResult,
+} from '../hostProtocol.js';
 import { createGnosisMcpService } from '../server.js';
 import { createAstmendHostService } from './astmend.js';
 import { createDiffGuardHostService } from './diffguard.js';
@@ -6,7 +11,11 @@ import { createDiffGuardHostService } from './diffguard.js';
 export type McpHostRouter = {
   serviceNames: () => string[];
   listTools: () => McpHostTool[];
-  callTool: (name: string, args: unknown) => Promise<McpHostToolResult>;
+  callTool: (
+    name: string,
+    args: unknown,
+    options?: McpHostCallOptions,
+  ) => Promise<McpHostToolResult>;
 };
 
 function toErrorResult(message: string): McpHostToolResult {
@@ -62,11 +71,11 @@ export function createMcpHostRouter(services: McpHostService[]): McpHostRouter {
   return {
     serviceNames: () => services.map((service) => service.name),
     listTools: () => tools,
-    callTool: async (name, args) => {
+    callTool: async (name, args, options) => {
       const service = toolOwner.get(name);
       if (!service) return toErrorResult(`Unknown tool: ${name}`);
       try {
-        return await service.callTool(name, args);
+        return await service.callTool(name, args, options);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return toErrorResult(`[${service.name}] ${message}`);

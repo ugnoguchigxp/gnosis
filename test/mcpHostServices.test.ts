@@ -2,6 +2,26 @@ import { describe, expect, it } from 'bun:test';
 import { createMcpHostRouter, createMcpHostServices } from '../src/mcp/services/index.js';
 
 describe('MCP host services', () => {
+  it('exposes OpenAI-compatible top-level tool schemas', async () => {
+    const router = createMcpHostRouter(await createMcpHostServices(process.cwd()));
+    const prohibitedTopLevelKeys = ['oneOf', 'anyOf', 'allOf', 'enum', 'not'];
+
+    for (const tool of router.listTools()) {
+      expect(tool.inputSchema.type).toBe('object');
+      for (const key of prohibitedTopLevelKeys) {
+        expect(tool.inputSchema).not.toHaveProperty(key);
+      }
+    }
+
+    const batchAnalyze = router
+      .listTools()
+      .find((tool) => tool.name === 'batch_analyze_references');
+    expect(batchAnalyze?.inputSchema.properties).toMatchObject({
+      mode: { type: 'string', enum: ['text', 'file', 'project'] },
+      targets: { type: 'array' },
+    });
+  });
+
   it('loads Gnosis, Astmend, and diffGuard tools into one router', async () => {
     const router = createMcpHostRouter(await createMcpHostServices(process.cwd()));
     const serviceNames = router.serviceNames();

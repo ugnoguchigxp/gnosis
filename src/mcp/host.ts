@@ -11,7 +11,9 @@ import {
   MCP_HOST_MESSAGE_DELIMITER,
   type McpHostRequest,
   type McpHostResponse,
+  type McpHostService,
   ensureMcpHostSocketDir,
+  getMcpHostLockPath,
   getMcpHostSocketPath,
   sendMcpHostRequest,
 } from './hostProtocol.js';
@@ -20,10 +22,14 @@ import { createMcpHostRouter, createMcpHostServices } from './services/index.js'
 type HostOptions = {
   rootDir?: string;
   socketPath?: string;
+  services?: McpHostService[];
+  bindProcessEvents?: boolean;
+  exit?: (code: number) => void;
 };
 
-function writeResponse(socket: Socket, response: McpHostResponse): void {
-  socket.write(`${JSON.stringify(response)}${MCP_HOST_MESSAGE_DELIMITER}`);
+function writeResponse(socket: Socket, response: McpHostResponse): boolean {
+  if (socket.destroyed || !socket.writable) return false;
+  return socket.write(`${JSON.stringify(response)}${MCP_HOST_MESSAGE_DELIMITER}`);
 }
 
 function toErrorMessage(error: unknown): string {
@@ -31,40 +37,44 @@ function toErrorMessage(error: unknown): string {
 }
 
 function hostLockPath(rootDir: string): string {
-  return join(resolve(rootDir), '.gnosis', 'mcp-host.lock');
+  return getMcpHostLockPath(rootDir);
 }
 
-async function existingHostIsHealthy(rootDir: string): Promise<boolean> {
+async function existingHostIsHealthy(rootDir: string, socketPath?: string): Promise<boolean> {
   try {
-    await sendMcpHostRequest({ type: 'health' }, { rootDir, timeoutMs: 500 });
+    await sendMcpHostRequest({ type: 'health' }, { rootDir, socketPath, timeoutMs: 500 });
     return true;
   } catch {
     return false;
   }
 }
 
-async function waitForExistingHostExit(rootDir: string, timeoutMs = 5000): Promise<void> {
+async function waitForExistingHostExit(
+  rootDir: string,
+  socketPath: string | undefined,
+  timeoutMs = 5000,
+): Promise<void> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    if (!(await existingHostIsHealthy(rootDir))) return;
+    if (!(await existingHostIsHealthy(rootDir, socketPath))) return;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(`Existing MCP host did not exit within ${timeoutMs}ms`);
 }
 
-async function replaceExistingHost(rootDir: string): Promise<void> {
+async function replaceExistingHost(rootDir: string, socketPath?: string): Promise<void> {
   try {
-    await sendMcpHostRequest({ type: 'shutdown' }, { rootDir, timeoutMs: 1000 });
+    await sendMcpHostRequest({ type: 'shutdown' }, { rootDir, socketPath, timeoutMs: 1000 });
   } catch (error) {
-    if (!(await existingHostIsHealthy(rootDir))) return;
+    if (!(await existingHostIsHealthy(rootDir, socketPath))) return;
     throw error;
   }
-  await waitForExistingHostExit(rootDir);
+  await waitForExistingHostExit(rootDir, socketPath);
 }
 
 async function acquireHostLock(
   rootDir: string,
-  options: { replaceExisting: boolean },
+  options: { replaceExisting: boolean; socketPath?: string },
 ): Promise<() => void> {
   const lockPath = hostLockPath(rootDir);
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -81,9 +91,9 @@ async function acquireHostLock(
     } catch {
       const startedAt = Date.now();
       while (Date.now() - startedAt < 5000) {
-        if (await existingHostIsHealthy(rootDir)) {
+        if (await existingHostIsHealthy(rootDir, options.socketPath)) {
           if (options.replaceExisting) {
-            await replaceExistingHost(rootDir);
+            await replaceExistingHost(rootDir, options.socketPath);
             break;
           }
           process.exit(0);
@@ -100,24 +110,27 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
   const rootDir = options.rootDir ?? process.cwd();
   const socketPath = options.socketPath ?? getMcpHostSocketPath(rootDir);
   const startedAt = Date.now();
+  const activeSockets = new Set<Socket>();
   let activeRequests = 0;
   let lastActivityAt = Date.now();
+  let totalConnections = 0;
+  let timedOutRequests = 0;
 
   process.title = 'gnosis-mcp-host';
   ensureMcpHostSocketDir(rootDir);
   const replaceExisting = envBoolean(process.env.GNOSIS_MCP_HOST_REPLACE_EXISTING, false);
-  if (await existingHostIsHealthy(rootDir)) {
+  if (await existingHostIsHealthy(rootDir, socketPath)) {
     if (!replaceExisting) process.exit(0);
-    await replaceExistingHost(rootDir);
+    await replaceExistingHost(rootDir, socketPath);
   }
-  const releaseHostLock = await acquireHostLock(rootDir, { replaceExisting });
+  const releaseHostLock = await acquireHostLock(rootDir, { replaceExisting, socketPath });
 
   const automationEnabled = envBoolean(
     process.env.GNOSIS_ENABLE_AUTOMATION,
     GNOSIS_CONSTANTS.AUTOMATION_ENABLED_DEFAULT,
   );
   const workersEnabled = automationEnabled && process.env.GNOSIS_NO_WORKERS !== 'true';
-  const services = await createMcpHostServices(rootDir);
+  const services = options.services ?? (await createMcpHostServices(rootDir));
   const router = createMcpHostRouter(services);
   const registration = registerProcess({
     role: 'mcp-host',
@@ -127,11 +140,27 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
   const lifecycle = new RuntimeLifecycle({
     name: 'McpHost',
     registration,
+    exit: options.exit,
   });
   const server = createServer();
+  const maxConnections = Math.max(1, envNumber(process.env.GNOSIS_MCP_HOST_MAX_CONNECTIONS, 128));
+  const socketIdleTimeoutMs = Math.max(
+    0,
+    envNumber(process.env.GNOSIS_MCP_HOST_SOCKET_IDLE_MS, 60_000),
+  );
+  const requestTimeoutMs = Math.max(
+    0,
+    envNumber(process.env.GNOSIS_MCP_HOST_REQUEST_TIMEOUT_MS, 30_000),
+  );
 
   lifecycle.addCleanupStep(async () => {
     server.close();
+  });
+  lifecycle.addCleanupStep(() => {
+    for (const socket of activeSockets) {
+      socket.destroy();
+    }
+    activeSockets.clear();
   });
   lifecycle.addCleanupStep(() => {
     stopBackgroundWorkers();
@@ -146,7 +175,7 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
     if (existsSync(socketPath)) unlinkSync(socketPath);
     releaseHostLock();
   });
-  lifecycle.bindProcessEvents();
+  if (options.bindProcessEvents !== false) lifecycle.bindProcessEvents();
   lifecycle.markRunning();
   lifecycle.startHeartbeat();
 
@@ -158,6 +187,39 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
 
   server.on('connection', (socket) => {
     let buffer = '';
+    let socketActiveRequests = 0;
+    totalConnections += 1;
+
+    if (activeSockets.size >= maxConnections) {
+      writeResponse(socket, {
+        id: 'connection',
+        ok: false,
+        error: `MCP host connection limit exceeded: active=${activeSockets.size}, max=${maxConnections}`,
+      });
+      socket.destroy();
+      return;
+    }
+
+    activeSockets.add(socket);
+    lastActivityAt = Date.now();
+
+    if (socketIdleTimeoutMs > 0) {
+      socket.setTimeout(socketIdleTimeoutMs, () => {
+        if (socketActiveRequests > 0) {
+          socket.setTimeout(socketIdleTimeoutMs);
+          return;
+        }
+        console.error(
+          `[McpHost] Closing idle socket after ${socketIdleTimeoutMs}ms (activeConnections=${activeSockets.size})`,
+        );
+        socket.destroy();
+      });
+    }
+
+    socket.on('close', () => {
+      activeSockets.delete(socket);
+      lastActivityAt = Date.now();
+    });
 
     socket.on('error', (error) => {
       console.error(`[McpHost] Socket error: ${toErrorMessage(error)}`);
@@ -170,12 +232,23 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
 
       for (const part of parts) {
         if (!part.trim()) continue;
-        void handleRawMessage(socket, part);
+        void handleRawMessage(socket, part, {
+          begin: () => {
+            socketActiveRequests += 1;
+          },
+          end: () => {
+            socketActiveRequests = Math.max(0, socketActiveRequests - 1);
+          },
+        });
       }
     });
   });
 
-  async function handleRawMessage(socket: Socket, raw: string): Promise<void> {
+  async function handleRawMessage(
+    socket: Socket,
+    raw: string,
+    hooks: { begin: () => void; end: () => void },
+  ): Promise<void> {
     let request: McpHostRequest;
     try {
       request = JSON.parse(raw) as McpHostRequest;
@@ -188,20 +261,51 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
       return;
     }
 
+    hooks.begin();
     activeRequests += 1;
     lastActivityAt = Date.now();
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      hooks.end();
+      activeRequests -= 1;
+      lastActivityAt = Date.now();
+    };
+    const respond = (response: McpHostResponse) => {
+      if (finished) return;
+      writeResponse(socket, response);
+    };
+    const abortController = new AbortController();
+    const requestTimer =
+      requestTimeoutMs > 0
+        ? setTimeout(() => {
+            timedOutRequests += 1;
+            abortController.abort();
+            respond({
+              id: request.id,
+              ok: false,
+              error: `MCP host request timed out after ${requestTimeoutMs}ms`,
+            });
+            finish();
+          }, requestTimeoutMs)
+        : null;
+    requestTimer?.unref?.();
+
     try {
       if (request.type === 'listTools') {
-        writeResponse(socket, { id: request.id, ok: true, result: { tools: router.listTools() } });
+        respond({ id: request.id, ok: true, result: { tools: router.listTools() } });
         return;
       }
       if (request.type === 'callTool') {
-        const result = await router.callTool(request.name, request.arguments);
-        writeResponse(socket, { id: request.id, ok: true, result });
+        const result = await router.callTool(request.name, request.arguments, {
+          signal: abortController.signal,
+        });
+        respond({ id: request.id, ok: true, result });
         return;
       }
       if (request.type === 'health') {
-        writeResponse(socket, {
+        respond({
           id: request.id,
           ok: true,
           result: {
@@ -210,25 +314,32 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
             socketPath,
             services: router.serviceNames(),
             backgroundWorkers: workersEnabled ? 'enabled' : 'disabled',
+            activeConnections: activeSockets.size,
+            totalConnections,
+            maxConnections,
+            activeRequests: Math.max(0, activeRequests - 1),
+            timedOutRequests,
+            socketIdleTimeoutMs,
+            requestTimeoutMs,
           },
         });
         return;
       }
       if (request.type === 'shutdown') {
-        writeResponse(socket, { id: request.id, ok: true, result: null });
+        respond({ id: request.id, ok: true, result: null });
         void lifecycle.requestShutdown('manual');
         return;
       }
-      writeResponse(socket, {
+      respond({
         id: (request as { id: string }).id,
         ok: false,
         error: 'Unknown host request type',
       });
     } catch (error) {
-      writeResponse(socket, { id: request.id, ok: false, error: toErrorMessage(error) });
+      respond({ id: request.id, ok: false, error: toErrorMessage(error) });
     } finally {
-      activeRequests -= 1;
-      lastActivityAt = Date.now();
+      if (requestTimer) clearTimeout(requestTimer);
+      finish();
     }
   }
 
@@ -247,6 +358,9 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
       Math.min(idleExitMs, 1000),
     );
     idleTimer.unref?.();
+    lifecycle.addCleanupStep(() => {
+      clearInterval(idleTimer);
+    });
   }
 
   await new Promise<void>((resolve, reject) => {

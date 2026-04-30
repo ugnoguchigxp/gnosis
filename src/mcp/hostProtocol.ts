@@ -18,11 +18,19 @@ export type McpHostToolResult = {
   isError?: boolean;
 };
 
+export type McpHostCallOptions = {
+  signal?: AbortSignal;
+};
+
 export type McpHostService = {
   name: string;
   version: string;
   listTools: () => McpHostTool[];
-  callTool: (name: string, args: unknown) => Promise<McpHostToolResult>;
+  callTool: (
+    name: string,
+    args: unknown,
+    options?: McpHostCallOptions,
+  ) => Promise<McpHostToolResult>;
 };
 
 export type McpHostRequest =
@@ -43,6 +51,13 @@ export type McpHostHealth = {
   socketPath: string;
   services: string[];
   backgroundWorkers: 'enabled' | 'disabled';
+  activeConnections?: number;
+  totalConnections?: number;
+  maxConnections?: number;
+  activeRequests?: number;
+  timedOutRequests?: number;
+  socketIdleTimeoutMs?: number;
+  requestTimeoutMs?: number;
 };
 
 export type McpHostResponse =
@@ -54,11 +69,23 @@ export type McpHostResponse =
   | { id: string; ok: false; error: string };
 
 export function getMcpHostSocketPath(rootDir = process.cwd()): string {
+  if (process.env.GNOSIS_MCP_HOST_SOCKET_PATH) return process.env.GNOSIS_MCP_HOST_SOCKET_PATH;
   return join(resolve(rootDir), '.gnosis', 'mcp-host.sock');
+}
+
+export function getMcpHostLockPath(rootDir = process.cwd()): string {
+  if (process.env.GNOSIS_MCP_HOST_LOCK_PATH) return process.env.GNOSIS_MCP_HOST_LOCK_PATH;
+  if (process.env.GNOSIS_MCP_HOST_SOCKET_PATH) {
+    return `${process.env.GNOSIS_MCP_HOST_SOCKET_PATH}.lock`;
+  }
+  return join(resolve(rootDir), '.gnosis', 'mcp-host.lock');
 }
 
 export function ensureMcpHostSocketDir(rootDir = process.cwd()): void {
   mkdirSync(join(resolve(rootDir), '.gnosis'), { recursive: true });
+  if (process.env.GNOSIS_MCP_HOST_SOCKET_PATH) {
+    mkdirSync(resolve(process.env.GNOSIS_MCP_HOST_SOCKET_PATH, '..'), { recursive: true });
+  }
 }
 
 let requestSeq = 0;
@@ -123,6 +150,10 @@ export function sendMcpHostRequest<T>(
 
     socket.on('error', (error) => {
       settle(() => rejectPromise(error));
+    });
+
+    socket.on('close', () => {
+      settle(() => rejectPromise(new Error('MCP host connection closed before response')));
     });
 
     socket.setTimeout(timeoutMs, () => {
