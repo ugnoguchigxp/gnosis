@@ -10,6 +10,7 @@ import {
 import { envBoolean, envNumber } from '../config.js';
 import { RuntimeLifecycle } from '../runtime/lifecycle.js';
 import { registerProcess } from '../runtime/processRegistry.js';
+import { MCP_HOST_SOURCE_FINGERPRINT } from './hostFingerprint.js';
 import {
   type McpHostHealth,
   type McpHostToolResult,
@@ -49,12 +50,59 @@ async function waitForHost(rootDir: string, timeoutMs: number): Promise<McpHostH
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
+function hostMatchesCurrentSource(health: McpHostHealth): boolean {
+  return health.sourceFingerprint === MCP_HOST_SOURCE_FINGERPRINT;
+}
+
+async function waitForHostExit(rootDir: string, timeoutMs: number): Promise<void> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      await sendMcpHostRequest<McpHostHealth>({ type: 'health' }, { rootDir, timeoutMs: 500 });
+    } catch {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Stale MCP host did not exit within ${timeoutMs}ms`);
+}
+
+async function shutdownStaleHost(rootDir: string): Promise<void> {
+  await sendMcpHostRequest({ type: 'shutdown' }, { rootDir, timeoutMs: 1_000 }).catch(
+    async (error) => {
+      try {
+        await sendMcpHostRequest<McpHostHealth>({ type: 'health' }, { rootDir, timeoutMs: 500 });
+      } catch {
+        return;
+      }
+      throw error;
+    },
+  );
+  await waitForHostExit(rootDir, envNumber(process.env.GNOSIS_MCP_HOST_REPLACE_TIMEOUT_MS, 5000));
+}
+
 async function ensureHostRunning(rootDir: string): Promise<void> {
+  let health: McpHostHealth | null = null;
   try {
-    await sendMcpHostRequest<McpHostHealth>({ type: 'health' }, { rootDir, timeoutMs: 500 });
-    return;
+    health = await sendMcpHostRequest<McpHostHealth>(
+      { type: 'health' },
+      { rootDir, timeoutMs: 500 },
+    );
   } catch {
-    // Fall through to optional autostart.
+    health = null;
+  }
+
+  if (health) {
+    if (hostMatchesCurrentSource(health)) return;
+    const replaceStale = envBoolean(process.env.GNOSIS_MCP_HOST_REPLACE_STALE, true);
+    if (!replaceStale) {
+      throw new Error(
+        `MCP host source fingerprint mismatch: running=${
+          health.sourceFingerprint ?? 'unknown'
+        }, current=${MCP_HOST_SOURCE_FINGERPRINT}`,
+      );
+    }
+    await shutdownStaleHost(rootDir);
   }
 
   const autostart = envBoolean(process.env.GNOSIS_MCP_HOST_AUTOSTART, true);

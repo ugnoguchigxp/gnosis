@@ -12,6 +12,10 @@ const mockRunReviewStageB = mock();
 const mockRunReviewStageD = mock();
 const mockRunReviewStageE = mock();
 const mockDispatchHookEvent = mock();
+const mockReviewDocument = mock();
+const mockGenerateImplementationPlan = mock();
+const mockAnalyzePlanAlignment = mock();
+const mockAnalyzeSpecAlignment = mock();
 
 mock.module('../../../src/services/agentFirst.js', () => ({
   buildActivateProjectResult: mockBuildActivateProjectResult,
@@ -33,8 +37,23 @@ mock.module('../../../src/services/review/orchestrator.js', () => ({
 mock.module('../../../src/hooks/service.js', () => ({
   dispatchHookEvent: mockDispatchHookEvent,
 }));
+mock.module('../../../src/services/reviewAgent/documentReviewer.js', () => ({
+  reviewDocument: mockReviewDocument,
+}));
+mock.module('../../../src/services/specAgent/implementationPlanner.js', () => ({
+  generateImplementationPlan: mockGenerateImplementationPlan,
+}));
+mock.module('../../../src/services/specAgent/planAlignment.js', () => ({
+  analyzePlanAlignment: mockAnalyzePlanAlignment,
+}));
+mock.module('../../../src/services/specAgent/specAlignment.js', () => ({
+  analyzeSpecAlignment: mockAnalyzeSpecAlignment,
+}));
 
 import { agentFirstTools } from '../../../src/mcp/tools/agentFirst.js';
+import { ReviewError } from '../../../src/services/review/errors.js';
+
+const originalReviewer = process.env.GNOSIS_REVIEWER;
 
 const getHandler = (name: string) => {
   const tool = agentFirstTools.find((entry) => entry.name === name);
@@ -56,6 +75,15 @@ describe('agent-first MCP tools', () => {
     mockRunReviewStageD.mockReset();
     mockRunReviewStageE.mockReset();
     mockDispatchHookEvent.mockReset();
+    mockReviewDocument.mockReset();
+    mockGenerateImplementationPlan.mockReset();
+    mockAnalyzePlanAlignment.mockReset();
+    mockAnalyzeSpecAlignment.mockReset();
+    if (originalReviewer === undefined) {
+      process.env.GNOSIS_REVIEWER = undefined;
+    } else {
+      process.env.GNOSIS_REVIEWER = originalReviewer;
+    }
     mockDispatchHookEvent.mockResolvedValue({
       blocked: false,
       guidance: [],
@@ -256,6 +284,81 @@ describe('agent-first MCP tools', () => {
     );
     expect(payload.knowledgeUsed?.length).toBe(1);
     expect((payload as { findings?: unknown[] }).findings?.length).toBe(1);
+  });
+
+  it('review_task returns degraded implementation_plan result before MCP host timeout', async () => {
+    mockSearchKnowledgeV2.mockResolvedValue({ groups: [] });
+    mockGetReviewLLMService.mockResolvedValue({ provider: 'local' });
+    mockReviewDocument.mockRejectedValue(
+      new ReviewError('E016', 'Document review timed out after 180000ms'),
+    );
+
+    const handler = getHandler('review_task');
+    const result = await handler({
+      targetType: 'implementation_plan',
+      target: { content: '# Plan\n- Run initial_instructions' },
+      provider: 'local',
+      knowledgePolicy: 'off',
+      useKnowledge: false,
+    });
+    const payload = JSON.parse(result.content[0]?.text ?? '{}') as {
+      summary?: string;
+      findings?: unknown[];
+    };
+
+    expect(mockGetReviewLLMService).toHaveBeenCalledWith(
+      'local',
+      expect.objectContaining({
+        invoker: 'mcp',
+        timeoutMs: 180000,
+        disableFallback: true,
+      }),
+    );
+    expect(payload.summary).toContain('LLM document review degraded');
+    expect(payload.findings?.length).toBe(0);
+    expect(mockGenerateImplementationPlan).not.toHaveBeenCalled();
+  });
+
+  it('review_task uses OpenAI as the default MCP reviewer', async () => {
+    mockSearchKnowledgeV2.mockResolvedValue({ groups: [] });
+    mockGetReviewLLMService.mockResolvedValue({ provider: 'cloud' });
+    mockRunReviewStageD.mockResolvedValue({
+      review_id: 'r-openai',
+      review_status: 'ok',
+      findings: [],
+      summary: 'ok',
+      next_actions: [],
+      rerun_review: false,
+      metadata: {
+        reviewed_files: 0,
+        risk_level: 'low',
+        static_analysis_used: false,
+        knowledge_applied: [],
+        degraded_mode: false,
+        degraded_reasons: [],
+        local_llm_used: false,
+        heavy_llm_used: true,
+        review_duration_ms: 1,
+      },
+      markdown: '',
+    });
+
+    const handler = getHandler('review_task');
+    const result = await handler({
+      targetType: 'code_diff',
+      target: { diff: 'diff --git a b' },
+    });
+    const payload = JSON.parse(result.content[0]?.text ?? '{}') as { providerUsed?: string };
+
+    expect(payload.providerUsed).toBe('openai');
+    expect(mockGetReviewLLMService).toHaveBeenCalledWith(
+      undefined,
+      expect.objectContaining({
+        invoker: 'mcp',
+        timeoutMs: 180000,
+        disableFallback: true,
+      }),
+    );
   });
 
   it('review_task forwards explicit cloud provider selection', async () => {

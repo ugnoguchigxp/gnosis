@@ -16,6 +16,8 @@ import type { ReviewLLMPreference, ReviewLLMService, ReviewerAlias } from './typ
 type ReviewLlmRuntimeOptions = {
   invoker?: 'mcp' | 'cli' | 'service' | 'unknown';
   requestId?: string;
+  timeoutMs?: number;
+  disableFallback?: boolean;
 };
 
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
@@ -147,7 +149,7 @@ export function resolveReviewerAlias(): ReviewerAlias {
   ) {
     return env as ReviewerAlias;
   }
-  return 'bedrock'; // Default fallback
+  return 'openai';
 }
 
 /**
@@ -166,31 +168,52 @@ export async function getReviewLLMService(
   const requestId = runtime.requestId;
 
   // If the caller explicitly asks local/cloud, that intent should win.
-  // GNOSIS_REVIEWER is treated as a default only when no explicit preference is passed.
-  const useEnv = !!process.env.GNOSIS_REVIEWER && preference === undefined;
+  // Otherwise resolve through GNOSIS_REVIEWER, falling back to OpenAI.
+  const useAlias = preference === undefined;
 
-  if (useEnv) {
+  if (useAlias) {
     switch (alias) {
       case 'gemma4':
-        return createLocalReviewLLMService({ alias: 'gemma4', invoker, requestId });
+        return createLocalReviewLLMService({
+          alias: 'gemma4',
+          invoker,
+          requestId,
+          timeoutMs: runtime.timeoutMs,
+        });
       case 'qwen':
-        return createLocalReviewLLMService({ alias: 'qwen', invoker, requestId });
+        return createLocalReviewLLMService({
+          alias: 'qwen',
+          invoker,
+          requestId,
+          timeoutMs: runtime.timeoutMs,
+        });
       case 'bonsai':
-        return createLocalReviewLLMService({ alias: 'bonsai', invoker, requestId });
+        return createLocalReviewLLMService({
+          alias: 'bonsai',
+          invoker,
+          requestId,
+          timeoutMs: runtime.timeoutMs,
+        });
       case 'bedrock':
-        return createCloudReviewLLMService({ provider: 'bedrock' });
+        return createCloudReviewLLMService({ provider: 'bedrock', timeoutMs: runtime.timeoutMs });
       case 'openai':
-        return createCloudReviewLLMService({ provider: 'openai' });
+        return createCloudReviewLLMService({ provider: 'openai', timeoutMs: runtime.timeoutMs });
     }
   }
 
   // Legacy fallback logic
   const pref =
     preference ?? (process.env.GNOSIS_REVIEW_LLM_PREFERENCE === 'local' ? 'local' : 'cloud');
-  const local = createLocalReviewLLMService({ alias: 'gemma4', invoker, requestId });
+  const local = createLocalReviewLLMService({
+    alias: 'gemma4',
+    invoker,
+    requestId,
+    timeoutMs: runtime.timeoutMs,
+  });
   const cloudFallback = () =>
     createCloudReviewLLMService({
       provider: pref === 'openai' || pref === 'bedrock' ? pref : undefined,
+      timeoutMs: runtime.timeoutMs,
     });
 
   if (pref === 'local') {
@@ -200,6 +223,7 @@ export async function getReviewLLMService(
         try {
           return await local.generate(prompt, options);
         } catch (error) {
+          if (runtime.disableFallback) throw error;
           if (error instanceof ReviewError && (error.code === 'E006' || error.code === 'E007')) {
             return cloudFallback().generate(prompt, options);
           }
@@ -225,7 +249,7 @@ export async function getReviewLLMService(
 
   if (pref === 'openai' || pref === 'bedrock') {
     try {
-      const cloud = createCloudReviewLLMService({ provider: pref });
+      const cloud = createCloudReviewLLMService({ provider: pref, timeoutMs: runtime.timeoutMs });
       return {
         provider: 'cloud',
         async generate(prompt: string, options?: { format?: 'json' | 'text' }): Promise<string> {
@@ -253,13 +277,14 @@ export async function getReviewLLMService(
   }
 
   try {
-    const cloud = createCloudReviewLLMService();
+    const cloud = createCloudReviewLLMService({ timeoutMs: runtime.timeoutMs });
     return {
       provider: 'cloud',
       async generate(prompt: string, options?: { format?: 'json' | 'text' }): Promise<string> {
         try {
           return await cloud.generate(prompt, options);
         } catch (error) {
+          if (runtime.disableFallback) throw error;
           if (error instanceof ReviewError && (error.code === 'E007' || error.code === 'E006')) {
             return local.generate(prompt, options);
           }

@@ -4,6 +4,7 @@ import { Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startMcpHost } from '../src/mcp/host.js';
+import { MCP_HOST_SOURCE_FINGERPRINT } from '../src/mcp/hostFingerprint.js';
 import {
   type McpHostHealth,
   type McpHostService,
@@ -100,6 +101,9 @@ describe('MCP host runtime', () => {
     ]);
 
     expect(first.services).toContain('test-service');
+    expect(first.serviceVersions).toContainEqual({ name: 'test-service', version: '0.0.0' });
+    expect(first.sourceFingerprint).toBe(MCP_HOST_SOURCE_FINGERPRINT);
+    expect(first.cwd).toBe(rootDir);
     expect(second.services).toContain('test-service');
     expect((second.totalConnections ?? 0) + (first.totalConnections ?? 0)).toBeGreaterThanOrEqual(
       2,

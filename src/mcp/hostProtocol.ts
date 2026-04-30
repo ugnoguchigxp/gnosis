@@ -33,6 +33,11 @@ export type McpHostService = {
   ) => Promise<McpHostToolResult>;
 };
 
+export type McpHostServiceInfo = {
+  name: string;
+  version: string;
+};
+
 export type McpHostRequest =
   | { id: string; type: 'listTools' }
   | { id: string; type: 'callTool'; name: string; arguments: unknown }
@@ -50,6 +55,10 @@ export type McpHostHealth = {
   uptimeMs: number;
   socketPath: string;
   services: string[];
+  serviceVersions?: McpHostServiceInfo[];
+  sourceFingerprint?: string;
+  cwd?: string;
+  argv?: string[];
   backgroundWorkers: 'enabled' | 'disabled';
   activeConnections?: number;
   totalConnections?: number;
@@ -104,7 +113,7 @@ export function sendMcpHostRequest<T>(
   } = {},
 ): Promise<T> {
   const socketPath = options.socketPath ?? getMcpHostSocketPath(options.rootDir);
-  const timeoutMs = options.timeoutMs ?? 30_000;
+  const timeoutMs = options.timeoutMs ?? 180_000;
   const id = nextMcpHostRequestId();
   const payload = { ...request, id } as McpHostRequest;
 

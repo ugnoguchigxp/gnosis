@@ -14,7 +14,7 @@ import type { ReviewLLMPreference, ReviewLLMService } from '../review/llm/types.
 const MAX_DOCUMENT_BYTES = 200 * 1024;
 const MAX_DOCUMENT_CHUNKS = 24;
 const MAX_INPUT_TOKENS_PER_CHUNK = 3_000;
-const DOCUMENT_REVIEW_TIMEOUT_MS = 120_000;
+const DOCUMENT_REVIEW_TIMEOUT_MS = 180_000;
 const LESSON_LIMIT = 5;
 const MEMORY_LIMIT = 5;
 const GUIDANCE_LIMIT = 8;

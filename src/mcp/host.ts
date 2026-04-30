@@ -7,8 +7,10 @@ import { closeDbPool } from '../db/index.js';
 import { RuntimeLifecycle } from '../runtime/lifecycle.js';
 import { registerProcess } from '../runtime/processRegistry.js';
 import { startBackgroundWorkers, stopBackgroundWorkers } from '../services/background/manager.js';
+import { MCP_HOST_SOURCE_FINGERPRINT } from './hostFingerprint.js';
 import {
   MCP_HOST_MESSAGE_DELIMITER,
+  type McpHostHealth,
   type McpHostRequest,
   type McpHostResponse,
   type McpHostService,
@@ -40,13 +42,26 @@ function hostLockPath(rootDir: string): string {
   return getMcpHostLockPath(rootDir);
 }
 
-async function existingHostIsHealthy(rootDir: string, socketPath?: string): Promise<boolean> {
+async function getExistingHostHealth(
+  rootDir: string,
+  socketPath?: string,
+): Promise<McpHostHealth | null> {
   try {
-    await sendMcpHostRequest({ type: 'health' }, { rootDir, socketPath, timeoutMs: 500 });
-    return true;
+    return await sendMcpHostRequest<McpHostHealth>(
+      { type: 'health' },
+      { rootDir, socketPath, timeoutMs: 500 },
+    );
   } catch {
-    return false;
+    return null;
   }
+}
+
+async function existingHostIsHealthy(rootDir: string, socketPath?: string): Promise<boolean> {
+  return (await getExistingHostHealth(rootDir, socketPath)) !== null;
+}
+
+function existingHostMatchesCurrentSource(health: McpHostHealth | null): boolean {
+  return health?.sourceFingerprint === MCP_HOST_SOURCE_FINGERPRINT;
 }
 
 async function waitForExistingHostExit(
@@ -91,8 +106,9 @@ async function acquireHostLock(
     } catch {
       const startedAt = Date.now();
       while (Date.now() - startedAt < 5000) {
-        if (await existingHostIsHealthy(rootDir, options.socketPath)) {
-          if (options.replaceExisting) {
+        const existingHealth = await getExistingHostHealth(rootDir, options.socketPath);
+        if (existingHealth) {
+          if (options.replaceExisting || !existingHostMatchesCurrentSource(existingHealth)) {
             await replaceExistingHost(rootDir, options.socketPath);
             break;
           }
@@ -119,8 +135,9 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
   process.title = 'gnosis-mcp-host';
   ensureMcpHostSocketDir(rootDir);
   const replaceExisting = envBoolean(process.env.GNOSIS_MCP_HOST_REPLACE_EXISTING, false);
-  if (await existingHostIsHealthy(rootDir, socketPath)) {
-    if (!replaceExisting) process.exit(0);
+  const existingHealth = await getExistingHostHealth(rootDir, socketPath);
+  if (existingHealth) {
+    if (!replaceExisting && existingHostMatchesCurrentSource(existingHealth)) process.exit(0);
     await replaceExistingHost(rootDir, socketPath);
   }
   const releaseHostLock = await acquireHostLock(rootDir, { replaceExisting, socketPath });
@@ -150,7 +167,7 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
   );
   const requestTimeoutMs = Math.max(
     0,
-    envNumber(process.env.GNOSIS_MCP_HOST_REQUEST_TIMEOUT_MS, 30_000),
+    envNumber(process.env.GNOSIS_MCP_HOST_REQUEST_TIMEOUT_MS, 180_000),
   );
 
   lifecycle.addCleanupStep(async () => {
@@ -313,6 +330,10 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
             uptimeMs: Date.now() - startedAt,
             socketPath,
             services: router.serviceNames(),
+            serviceVersions: router.serviceInfo(),
+            sourceFingerprint: MCP_HOST_SOURCE_FINGERPRINT,
+            cwd: rootDir,
+            argv: process.argv.slice(0, 4),
             backgroundWorkers: workersEnabled ? 'enabled' : 'disabled',
             activeConnections: activeSockets.size,
             totalConnections,

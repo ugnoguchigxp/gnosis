@@ -1,6 +1,7 @@
 import type {
   McpHostCallOptions,
   McpHostService,
+  McpHostServiceInfo,
   McpHostTool,
   McpHostToolResult,
 } from '../hostProtocol.js';
@@ -10,6 +11,7 @@ import { createDiffGuardHostService } from './diffguard.js';
 
 export type McpHostRouter = {
   serviceNames: () => string[];
+  serviceInfo: () => McpHostServiceInfo[];
   listTools: () => McpHostTool[];
   callTool: (
     name: string,
@@ -70,6 +72,8 @@ export function createMcpHostRouter(services: McpHostService[]): McpHostRouter {
 
   return {
     serviceNames: () => services.map((service) => service.name),
+    serviceInfo: () =>
+      services.map((service) => ({ name: service.name, version: service.version })),
     listTools: () => tools,
     callTool: async (name, args, options) => {
       const service = toolOwner.get(name);
