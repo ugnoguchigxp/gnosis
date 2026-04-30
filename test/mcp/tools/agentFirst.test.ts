@@ -93,6 +93,7 @@ describe('agent-first MCP tools', () => {
     expect(payload.rules?.join('\n')).toContain('Use agentic_search');
     expect(payload.rules?.join('\n')).toContain('Failure Firewall or Golden Path context only');
     expect(payload.rules?.join('\n')).toContain('Before registering implementation learnings');
+    expect(payload.rules?.join('\n')).toContain('After verify passes and the user approves commit');
     expect(payload.rules?.join('\n')).toContain('Before final completion reporting');
   });
 

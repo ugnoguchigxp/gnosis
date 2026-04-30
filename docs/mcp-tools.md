@@ -53,6 +53,7 @@ bun test test/mcpHostServices.test.ts test/mcpStdioIntegration.test.ts
 - **運用ルール**:
   - Failure Firewall / Golden Path context は常時実行ではなく、`agentic_search` または review 判断で必要な場合だけ参照します。
   - 実装から得た知見を `record_task_note` で登録する前に、関連する verify gate を合格させます。
+  - verify 合格後かつユーザーが commit を承認した場合、再利用可能な教訓・ルール・手続き・成功/失敗 pattern 候補の登録を検討します。
   - 完了報告前に変更内容をセルフレビューし、改善点を潰してから関連する verify gate を実行します。
 
 ### `agentic_search`

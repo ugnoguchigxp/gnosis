@@ -571,6 +571,7 @@ async function buildFailureFirewallHint(
     changeTypes: input.changeTypes,
     technologies: input.technologies,
   });
+  if (!context.shouldUse) return undefined;
   return {
     shouldUse: context.shouldUse,
     reason: context.reason,

@@ -475,6 +475,7 @@ TYPICAL NEXT TOOL:
           'Use Failure Firewall or Golden Path context only when agentic_search or review judgment indicates it is relevant.',
           'Use record_task_note only for reusable rules, lessons, decisions, risks, procedures, or command recipes.',
           'Before registering implementation learnings with record_task_note, make sure the relevant verify gate has passed.',
+          'After verify passes and the user approves commit, consider recording reusable lessons, rules, procedures, and success/failure pattern candidates.',
           'Before final completion reporting, self-review changed code/docs, fix remaining improvements, then run the relevant verify gate.',
           'Use doctor for runtime and tool visibility diagnostics.',
           'No git/auth/destructive DB actions without explicit user instruction.',
