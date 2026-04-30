@@ -6,7 +6,6 @@ import { envBoolean } from '../config.js';
 import { GNOSIS_CONSTANTS } from '../constants.js';
 import { db } from '../db/index.js';
 import { entities, relations } from '../db/schema.js';
-import { dispatchHookEvent, getLoadedHookRuleCount } from '../hooks/service.js';
 import { generateEntityId } from '../utils/entityId.js';
 import { generateEmbedding, searchMemoriesByType } from './memory.js';
 import { runPromptWithMemoryLoopRouter } from './memoryLoopLlmRouter.js';
@@ -27,7 +26,6 @@ export type KnowledgeCategory =
   | 'project_overview'
   | 'architecture'
   | 'mcp'
-  | 'hook'
   | 'memory'
   | 'workflow'
   | 'testing'
@@ -75,7 +73,6 @@ const KNOWLEDGE_CATEGORY_SET = new Set<KnowledgeCategory>([
   'project_overview',
   'architecture',
   'mcp',
-  'hook',
   'memory',
   'workflow',
   'testing',
@@ -87,28 +84,6 @@ const KNOWLEDGE_CATEGORY_SET = new Set<KnowledgeCategory>([
   'reference',
 ]);
 
-async function dispatchAgentFirstHookEvent(input: {
-  event: string;
-  taskId: string;
-  projectRoot?: string;
-  payload?: Record<string, unknown>;
-  changedFiles?: string[];
-  taskMode?: string;
-  reviewRequested?: boolean;
-}): Promise<void> {
-  await dispatchHookEvent({
-    event: input.event,
-    traceId: input.taskId,
-    taskId: input.taskId,
-    payload: input.payload,
-    context: {
-      cwd: input.projectRoot,
-      changedFiles: input.changedFiles,
-      taskMode: input.taskMode,
-      reviewRequested: input.reviewRequested,
-    },
-  }).catch(() => undefined);
-}
 const TASK_CHANGE_TYPE_SET = new Set<TaskChangeType>([
   'frontend',
   'backend',
@@ -1141,7 +1116,6 @@ export async function buildActivateProjectResult(projectRoot: string, mode?: str
     },
     health: {
       db: dbStatus,
-      hooks: getLoadedHookRuleCount() > 0 ? 'enabled' : 'disabled',
       toolVersion: process.env.GNOSIS_TOOL_VERSION ?? process.env.npm_package_version ?? '0.2.0',
       warnings,
       automation: envBoolean(
@@ -1607,7 +1581,7 @@ export type RecordTaskNoteInput = {
   evidence?: Array<{ type?: string; value?: string; uri?: string }>;
   files?: string[];
   confidence?: number;
-  source?: 'manual' | 'task' | 'hook' | 'review' | 'onboarding' | 'import';
+  source?: 'manual' | 'task' | 'review' | 'onboarding' | 'import';
 };
 
 export async function startTaskTrace(input: {
@@ -1652,19 +1626,6 @@ export async function startTaskTrace(input: {
         freshness: sql`excluded.freshness`,
       },
     });
-
-  await dispatchAgentFirstHookEvent({
-    event: 'task.started',
-    taskId,
-    projectRoot: metadata.projectRoot,
-    changedFiles: metadata.files,
-    taskMode: metadata.intent,
-    payload: {
-      title: input.title,
-      intent: metadata.intent,
-      files: metadata.files,
-    },
-  });
 
   return {
     taskId,
@@ -1810,18 +1771,6 @@ export async function finishTaskTrace(input: {
   const changedFiles = Array.isArray(taskMetadata.files)
     ? taskMetadata.files.filter((file): file is string => typeof file === 'string')
     : [];
-  await dispatchAgentFirstHookEvent({
-    event: 'task.completed',
-    taskId: input.taskId,
-    projectRoot,
-    changedFiles,
-    payload: {
-      outcome: input.outcome,
-      checks: input.checks ?? [],
-      followUps: input.followUps ?? [],
-      learnedCount: learnedEntities.length,
-    },
-  });
 
   return {
     taskId: input.taskId,

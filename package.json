@@ -71,7 +71,6 @@
     "verify:strict": "bun run scripts/verify.ts strict",
     "observe:worker": "bun run scripts/observe-worker.ts",
     "observe:review": "bun run scripts/observe-review.ts",
-    "hooks:setup": "bun run scripts/setup-hooks.ts --apply-project-rules",
     "maintenance": "bun run src/scripts/maintenance.ts",
     "task:knowflow:once": "bun run src/services/knowflow/cli.ts run-once --strict-complete --verbose",
     "task:verify:operation": "bun run scripts/verify-task-operation.ts",

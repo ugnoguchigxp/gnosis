@@ -4,7 +4,6 @@ import { createLocalLlmRetriever } from '../../adapters/retriever/mcpRetriever.j
 // KnowFlow 関連のインポート (Port from scripts/worker.ts)
 import { config } from '../../config.js';
 import { db as defaultDb } from '../../db/index.js';
-import { promotePendingHookCandidates } from '../../hooks/service.js';
 import { withGlobalSemaphore } from '../../utils/lock.js';
 import { runKeywordSeederOnce } from '../knowflow/cron/keywordSeeder.js';
 import type { KeywordSeederRunResult } from '../knowflow/cron/types.js';
@@ -160,21 +159,6 @@ export async function runTask(
         processed: result.enqueued > 0 || result.deduped > 0 || result.candidates.length > 0,
         summary: `candidates=${result.candidates.length} enqueued=${result.enqueued} deduped=${result.deduped}`,
         partialFailures: 0,
-        stats: result,
-      };
-    }
-
-    case 'hook_candidate_promotion': {
-      const result = await promotePendingHookCandidates();
-      return {
-        ok: result.rejected === 0,
-        processed: result.processed > 0,
-        summary: `processed=${result.processed} promoted=${result.promoted} rejected=${result.rejected}`,
-        partialFailures: result.rejected,
-        error:
-          result.rejected > 0
-            ? `${result.rejected} hook candidate(s) were rejected during promotion`
-            : undefined,
         stats: result,
       };
     }

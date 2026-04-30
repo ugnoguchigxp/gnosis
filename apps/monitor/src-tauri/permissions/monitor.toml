@@ -1,0 +1,26 @@
+[[permission]]
+identifier = "allow-monitor-commands"
+description = "Allows all monitor commands"
+commands.allow = [
+    "monitor_config",
+    "monitor_browse_project",
+    "monitor_list_tasks",
+    "monitor_task_detail",
+    "monitor_graph_snapshot",
+    "monitor_enqueue_task",
+    "monitor_list_lessons",
+    "monitor_create_lesson",
+    "monitor_update_lesson",
+    "monitor_delete_lesson",
+    "monitor_list_guidance",
+    "monitor_create_guidance",
+    "monitor_update_guidance",
+    "monitor_delete_guidance",
+    "monitor_list_entities",
+    "monitor_create_entity",
+    "monitor_update_entity",
+    "monitor_delete_entity",
+    "monitor_list_relations",
+    "monitor_create_relation",
+    "monitor_delete_relation"
+]

@@ -56,6 +56,7 @@ let svgContainer: SVGSVGElement;
 
 let selectedNodeId = $state<string | null>(null);
 const selectedNode = $derived(graphData?.entities.find((e) => e.id === selectedNodeId) || null);
+let showDeleteConfirm = $state(false);
 let formLoading = $state(false);
 let formError = $state<string | null>(null);
 let editForm = $state({
@@ -232,9 +233,8 @@ const toEditForm = (entity: Entity) => ({
 });
 
 const closeNodeModal = () => {
-  if (formLoading) return;
   selectedNodeId = null;
-  formError = null;
+  showDeleteConfirm = false;
 };
 
 const graphNodeStroke = (node: Pick<Entity, 'id'>) => {
@@ -433,14 +433,23 @@ const handleSave = async () => {
   }
 };
 
-const handleDelete = async () => {
-  if (!selectedNodeId || !confirm('Are you sure you want to delete this entity?')) return;
+const handleDelete = () => {
+  showDeleteConfirm = true;
+};
+
+const cancelDelete = () => {
+  showDeleteConfirm = false;
+};
+
+const confirmDelete = async () => {
+  if (!selectedNodeId) return;
   const id = selectedNodeId;
   formLoading = true;
   formError = null;
   try {
     await invoke('monitor_delete_entity', { id });
     selectedNodeId = null;
+    showDeleteConfirm = false;
     await loadGraph();
   } catch (err) {
     formError = `Delete failed: ${err instanceof Error ? err.message : String(err)}`;
@@ -804,13 +813,23 @@ onMount(() => {
         </label>
         {#if formError}<p class="error-text">{formError}</p>{/if}
         <div class="form-actions split">
-          <button type="button" class="danger" onclick={handleDelete} disabled={formLoading}>
-            {formLoading ? '処理中...' : '削除'}
-          </button>
-          <div class="right-actions">
-            <button type="button" onclick={closeNodeModal} disabled={formLoading}>キャンセル</button>
-            <button type="submit" disabled={formLoading}>{formLoading ? '保存中...' : '保存'}</button>
-          </div>
+          {#if !showDeleteConfirm}
+            <button type="button" class="danger" onclick={handleDelete} disabled={formLoading}>
+              {formLoading ? '処理中...' : '削除'}
+            </button>
+            <div class="right-actions">
+              <button type="button" onclick={closeNodeModal} disabled={formLoading}>キャンセル</button>
+              <button type="submit" disabled={formLoading}>{formLoading ? '保存中...' : '保存'}</button>
+            </div>
+          {:else}
+            <div class="confirm-box">
+              <span class="warning-text">本当に削除しますか？</span>
+              <div class="confirm-actions">
+                <button type="button" class="danger small" onclick={confirmDelete} disabled={formLoading}>はい</button>
+                <button type="button" class="ghost small" onclick={cancelDelete} disabled={formLoading}>いいえ</button>
+              </div>
+            </div>
+          {/if}
         </div>
       </form>
     </div>
@@ -1160,6 +1179,34 @@ onMount(() => {
   button.danger:hover { background: #3b141a; }
 
   .error-text { color: #fca5a5; margin: 0; }
+
+  .confirm-box {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 8px 12px;
+    background: rgba(127, 29, 29, 0.2);
+    border: 1px solid rgba(127, 29, 29, 0.4);
+    border-radius: 8px;
+    gap: 12px;
+  }
+
+  .warning-text {
+    font-size: 0.85rem;
+    color: #fda4af;
+    font-weight: 500;
+  }
+
+  .confirm-actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  button.small {
+    padding: 0.3rem 0.6rem;
+    font-size: 0.8rem;
+  }
 
   .result-text {
     color: #bbf7d0;

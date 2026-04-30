@@ -202,27 +202,6 @@ function checkRuntimeProcesses(): CheckResult {
   };
 }
 
-function checkHooks(): CheckResult {
-  const enabled = envBoolean(
-    process.env.GNOSIS_HOOKS_ENABLED,
-    GNOSIS_CONSTANTS.HOOKS_ENABLED_DEFAULT,
-  );
-  if (enabled) {
-    return {
-      name: 'hooks',
-      status: 'OK',
-      message: 'enabled by default (GNOSIS_HOOKS_ENABLED can override)',
-    };
-  }
-
-  return {
-    name: 'hooks',
-    status: 'WARN',
-    message: 'GNOSIS_HOOKS_ENABLED is false; hook events will no-op.',
-    fix: 'Unset GNOSIS_HOOKS_ENABLED or set it to true to execute hook rules.',
-  };
-}
-
 function checkAutomationGate(): CheckResult {
   if (
     envBoolean(process.env.GNOSIS_ENABLE_AUTOMATION, GNOSIS_CONSTANTS.AUTOMATION_ENABLED_DEFAULT)
@@ -551,7 +530,7 @@ async function main(): Promise<void> {
 
   results.push(checkMcpToolExposure());
   results.push(checkRuntimeProcesses());
-  results.push(checkHooks());
+
   results.push(checkAutomationGate());
   results.push(checkBackgroundWorkerGate());
   results.push(await checkLaunchAgents());

@@ -9,7 +9,6 @@ const mockGetReviewLLMService = mock();
 const mockRunReviewStageB = mock();
 const mockRunReviewStageD = mock();
 const mockRunReviewStageE = mock();
-const mockDispatchHookEvent = mock();
 const mockReviewDocument = mock();
 const mockGenerateImplementationPlan = mock();
 const mockAnalyzePlanAlignment = mock();
@@ -29,9 +28,6 @@ mock.module('../../../src/services/review/orchestrator.js', () => ({
   runReviewStageB: mockRunReviewStageB,
   runReviewStageD: mockRunReviewStageD,
   runReviewStageE: mockRunReviewStageE,
-}));
-mock.module('../../../src/hooks/service.js', () => ({
-  dispatchHookEvent: mockDispatchHookEvent,
 }));
 mock.module('../../../src/services/reviewAgent/documentReviewer.js', () => ({
   reviewDocument: mockReviewDocument,
@@ -68,7 +64,6 @@ describe('agent-first MCP tools', () => {
     mockRunReviewStageB.mockReset();
     mockRunReviewStageD.mockReset();
     mockRunReviewStageE.mockReset();
-    mockDispatchHookEvent.mockReset();
     mockReviewDocument.mockReset();
     mockGenerateImplementationPlan.mockReset();
     mockAnalyzePlanAlignment.mockReset();
@@ -78,14 +73,6 @@ describe('agent-first MCP tools', () => {
     } else {
       process.env.GNOSIS_REVIEWER = originalReviewer;
     }
-    mockDispatchHookEvent.mockResolvedValue({
-      blocked: false,
-      guidance: [],
-      warnings: [],
-      riskTags: [],
-      candidateIds: [],
-      ruleResults: [],
-    });
   });
 
   it('initial_instructions returns lightweight agentic search guidance', async () => {
@@ -104,6 +91,9 @@ describe('agent-first MCP tools', () => {
     expect(payload.reviewTool).toBe('review_task');
     expect(payload.saveKnowledgeTool).toBe('record_task_note');
     expect(payload.rules?.join('\n')).toContain('Use agentic_search');
+    expect(payload.rules?.join('\n')).toContain('Failure Firewall or Golden Path context only');
+    expect(payload.rules?.join('\n')).toContain('Before registering implementation learnings');
+    expect(payload.rules?.join('\n')).toContain('Before final completion reporting');
   });
 
   it('agentic_search delegates to agenticSearch', async () => {
@@ -256,12 +246,6 @@ describe('agent-first MCP tools', () => {
     expect(injectedGuidance?.principles[0]?.id).toBe('rule/auth-rule');
     expect(injectedGuidance?.principles[0]?.content).toContain('Require auth boundaries');
     expect(injectedGuidance?.principles[0]?.tags).toContain('principle');
-    expect(mockDispatchHookEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ event: 'task.ready_for_review' }),
-    );
-    expect(mockDispatchHookEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ event: 'review.completed' }),
-    );
     expect(payload.knowledgeUsed?.length).toBe(1);
     expect((payload as { findings?: unknown[] }).findings?.length).toBe(1);
   });

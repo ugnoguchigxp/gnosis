@@ -50,6 +50,10 @@ bun test test/mcpHostServices.test.ts test/mcpStdioIntegration.test.ts
 - **用途**: Gnosis の現在の知識取得・レビュー・保存ツール方針を確認します。
 - **出力**: `agentic_search`, `search_knowledge`, `review_task`, `record_task_note`, `doctor` の使い分けガイド。
 - **注意**: `activate_project` first-call や `start_task` / `finish_task` は推奨しません。
+- **運用ルール**:
+  - Failure Firewall / Golden Path context は常時実行ではなく、`agentic_search` または review 判断で必要な場合だけ参照します。
+  - 実装から得た知見を `record_task_note` で登録する前に、関連する verify gate を合格させます。
+  - 完了報告前に変更内容をセルフレビューし、改善点を潰してから関連する verify gate を実行します。
 
 ### `agentic_search`
 
@@ -137,4 +141,4 @@ bun test test/mcpHostServices.test.ts test/mcpStdioIntegration.test.ts
 - `start_task`: 低情報量の `task_trace` は新規作成しません。ユーザー依頼の要約と検索は `agentic_search` が行います。
 - `finish_task`: 完了ログではなく、再利用可能な知識だけを `record_task_note` または scheduled synthesis で保存します。
 
-旧 memory / graph / experience / hook / review 系の細かいツールは、primary tool の内部実装または CLI / diagnostics 用として扱います。エージェントが通常直接呼ぶ必要はありません。
+旧 memory / graph / experience / review 系の細かいツールは、primary tool の内部実装または CLI / diagnostics 用として扱います。エージェントが通常直接呼ぶ必要はありません。

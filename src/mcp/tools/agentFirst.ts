@@ -5,7 +5,6 @@ import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { envBoolean } from '../../config.js';
 import { GNOSIS_CONSTANTS } from '../../constants.js';
-import { dispatchHookEvent } from '../../hooks/service.js';
 import {
   agenticSearch,
   buildDoctorRuntimeHealth,
@@ -54,7 +53,6 @@ const KNOWLEDGE_CATEGORIES = [
   'project_overview',
   'architecture',
   'mcp',
-  'hook',
   'memory',
   'workflow',
   'testing',
@@ -193,7 +191,7 @@ const recordTaskNoteSchema = z.object({
     .optional(),
   files: z.array(z.string()).optional(),
   confidence: z.number().min(0).max(1).optional(),
-  source: z.enum(['manual', 'task', 'hook', 'review', 'onboarding', 'import']).optional(),
+  source: z.enum(['manual', 'task', 'review', 'onboarding', 'import']).optional(),
 });
 
 const reviewTaskSchema = z.object({
@@ -433,7 +431,10 @@ TYPICAL NEXT TOOL:
         rules: [
           'Use agentic_search before non-trivial implementation or review when project memory can affect the result.',
           'Use search_knowledge only when inspecting raw lexical/vector candidates.',
+          'Use Failure Firewall or Golden Path context only when agentic_search or review judgment indicates it is relevant.',
           'Use record_task_note only for reusable rules, lessons, decisions, risks, procedures, or command recipes.',
+          'Before registering implementation learnings with record_task_note, make sure the relevant verify gate has passed.',
+          'Before final completion reporting, self-review changed code/docs, fix remaining improvements, then run the relevant verify gate.',
           'Use doctor for runtime and tool visibility diagnostics.',
           'No git/auth/destructive DB actions without explicit user instruction.',
         ],
@@ -526,39 +527,6 @@ TYPICAL NEXT TOOL:
             {
               type: 'text',
               text: 'review_task(document/spec/design/implementation_plan) requires target.content or target.documentPath.',
-            },
-          ],
-          isError: true,
-        };
-      }
-      const preReviewHookResult = await dispatchHookEvent({
-        event: 'task.ready_for_review',
-        traceId: randomUUID(),
-        payload: {
-          targetType: input.targetType,
-          goal: input.goal,
-        },
-        context: {
-          cwd: input.repoPath ?? process.cwd(),
-          changedFiles: input.target.filePaths,
-          reviewRequested: true,
-        },
-      }).catch(() => null);
-      if (preReviewHookResult?.blocked) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(
-                {
-                  blocked: true,
-                  event: 'task.ready_for_review',
-                  guidance: preReviewHookResult.guidance,
-                  warnings: preReviewHookResult.warnings,
-                },
-                null,
-                2,
-              ),
             },
           ],
           isError: true,
@@ -817,21 +785,6 @@ TYPICAL NEXT TOOL:
         suggestedNotes,
         ...(diagnostics ? { diagnostics } : {}),
       };
-      await dispatchHookEvent({
-        event: 'review.completed',
-        traceId: randomUUID(),
-        payload: {
-          targetType: input.targetType,
-          providerUsed,
-          findingCount: findings.length,
-          summary,
-        },
-        context: {
-          cwd: input.repoPath ?? process.cwd(),
-          changedFiles: input.target.filePaths,
-          reviewRequested: true,
-        },
-      }).catch(() => undefined);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     },
   },

@@ -118,19 +118,6 @@ function memoryLoopAlias(
   return defaultAlias;
 }
 
-export const HookConfigSchema = z
-  .object({
-    enabled: z.boolean(),
-    rulesDir: z.string().min(1),
-    fileChangedDebounceMs: z.number().int().positive(),
-    actionTimeoutSecDefault: z.number().int().positive(),
-    actionTimeoutSecMax: z.number().int().positive(),
-    executionCacheSize: z.number().int().positive(),
-  })
-  .strict();
-
-export type HookConfig = z.infer<typeof HookConfigSchema>;
-
 /**
  * プロジェクト全体の設定管理
  */
@@ -400,39 +387,6 @@ export const config = {
     defaultApiKeyEnv: process.env.LOCAL_LLM_API_KEY_ENV || 'LOCAL_LLM_API_KEY',
     defaultModel: process.env.LOCAL_LLM_MODEL || 'gemma4-default',
   },
-
-  hooks: HookConfigSchema.parse({
-    enabled: envBoolean(process.env.GNOSIS_HOOKS_ENABLED, GNOSIS_CONSTANTS.HOOKS_ENABLED_DEFAULT),
-    rulesDir: process.env.GNOSIS_HOOKS_RULES_DIR || path.resolve(process.cwd(), 'src/hooks/rules'),
-    fileChangedDebounceMs: Math.max(
-      1,
-      envNumber(
-        process.env.GNOSIS_HOOK_FILE_CHANGED_DEBOUNCE_MS,
-        GNOSIS_CONSTANTS.HOOK_FILE_CHANGED_DEBOUNCE_MS_DEFAULT,
-      ),
-    ),
-    actionTimeoutSecDefault: Math.max(
-      1,
-      envNumber(
-        process.env.GNOSIS_HOOK_ACTION_TIMEOUT_SEC_DEFAULT,
-        GNOSIS_CONSTANTS.HOOK_ACTION_TIMEOUT_SEC_DEFAULT_DEFAULT,
-      ),
-    ),
-    actionTimeoutSecMax: Math.max(
-      1,
-      envNumber(
-        process.env.GNOSIS_HOOK_ACTION_TIMEOUT_SEC_MAX,
-        GNOSIS_CONSTANTS.HOOK_ACTION_TIMEOUT_SEC_MAX_DEFAULT,
-      ),
-    ),
-    executionCacheSize: Math.max(
-      1,
-      envNumber(
-        process.env.GNOSIS_HOOK_EXECUTION_CACHE_SIZE,
-        GNOSIS_CONSTANTS.HOOK_EXECUTION_CACHE_SIZE_DEFAULT,
-      ),
-    ),
-  }),
 
   guidance: {
     sessionId: process.env.GUIDANCE_SESSION_ID || 'guidance-registry',

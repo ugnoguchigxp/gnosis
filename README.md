@@ -106,7 +106,7 @@ bun run maintenance
 - [Configuration](docs/configuration.md)
 - [MCP Tools](docs/mcp-tools.md)
 - [Data Layers](docs/data-layers.md)
-- [Hooks Guide](docs/hooks-guide.md)
+
 - [KnowFlow Guide](docs/knowflow-guide.md)
 - [Active-Use Improvement Plan](docs/active-use-improvement-plan.md)
 - [Agent-First Refactoring Plan](docs/agent-first-gnosis-refactoring-plan.md)
