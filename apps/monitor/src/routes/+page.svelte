@@ -4,6 +4,7 @@ import { createDetailRequestGuard } from '$lib/monitor/detailRequestGuard';
 import type {
   ConnectionStatus,
   MonitorConfigResponse,
+  MonitorDataInventory,
   MonitorSnapshotData,
   TaskDetailPayload,
   TaskHistoryEntry,
@@ -100,6 +101,9 @@ let enqueuePriority = $state(50);
 let enqueueLoading = $state(false);
 let enqueueError = $state<string | null>(null);
 let enqueueSuccess = $state<string | null>(null);
+let inventory = $state<MonitorDataInventory | null>(null);
+let inventoryLoading = $state(false);
+let inventoryError = $state<string | null>(null);
 
 const detailCache = new Map<string, TaskDetailPayload>();
 const detailCacheOrder: string[] = [];
@@ -337,6 +341,19 @@ const initialize = async (): Promise<void> => {
     const config = await invoke<MonitorConfigResponse>('monitor_config');
     wsUrl = config.wsUrl;
     errorMessage = null;
+    inventoryLoading = true;
+    inventoryError = null;
+
+    void invoke<MonitorDataInventory>('monitor_data_inventory')
+      .then((result) => {
+        inventory = result;
+      })
+      .catch((err) => {
+        inventoryError = err instanceof Error ? err.message : String(err);
+      })
+      .finally(() => {
+        inventoryLoading = false;
+      });
 
     // 初期タスク履歴の読み込み (非ブロッキング)
     void invoke<TaskHistoryEntry[]>('monitor_list_tasks')
@@ -532,6 +549,52 @@ onMount(() => {
 			</div>
 		</section>
 	</div>
+
+	<section class="panel" style="margin-top: 12px;">
+		<h2>Data Inventory</h2>
+		{#if inventoryLoading}
+			<div style="color: var(--text-muted);">Loading inventory...</div>
+		{:else if inventoryError}
+			<div class="error-text">{inventoryError}</div>
+		{:else if inventory}
+			<div class="stat-row" style="margin-bottom: 10px;">
+				{#each inventory.signals as signal}
+					<div class="metric">
+						<div class="metric-label">{signal.label}</div>
+						<div class="metric-value">
+							{signal.value}{signal.unit === 'percent' ? '%' : ''}
+						</div>
+					</div>
+				{/each}
+			</div>
+			<table>
+				<thead>
+					<tr>
+						<th>category</th>
+						<th>table</th>
+						<th>rows</th>
+						<th>latest</th>
+						<th>state</th>
+						<th>status counts</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each inventory.categories as row}
+						<tr>
+							<td>{row.category}</td>
+							<td>{row.table}</td>
+							<td>{row.rowCount}</td>
+							<td>{row.latestUpdatedAt ? new Date(row.latestUpdatedAt).toLocaleString('ja-JP', { hour12: false }) : '-'}</td>
+							<td>{row.maintenanceState}</td>
+							<td>{Object.keys(row.statusCounts).length > 0 ? Object.entries(row.statusCounts).map(([key, value]) => `${key}:${value}`).join(', ') : '-'}</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		{:else}
+			<div style="color: var(--text-muted);">No inventory data</div>
+		{/if}
+	</section>
 
 	<section class="panel timeline">
 		<div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px;">

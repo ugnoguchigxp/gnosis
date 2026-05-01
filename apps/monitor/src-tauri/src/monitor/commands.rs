@@ -113,6 +113,125 @@ pub async fn monitor_list_tasks(
 }
 
 #[tauri::command]
+pub async fn monitor_data_inventory(
+    state: State<'_, MonitorRuntime>,
+) -> Result<serde_json::Value, String> {
+    cli::fetch_data_inventory(&state.project_root)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_retry_task(
+    state: State<'_, MonitorRuntime>,
+    task_id: String,
+) -> Result<serde_json::Value, String> {
+    cli::retry_task(&state.project_root, &task_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_defer_task(
+    state: State<'_, MonitorRuntime>,
+    task_id: String,
+    defer_minutes: Option<i32>,
+) -> Result<serde_json::Value, String> {
+    cli::defer_task(&state.project_root, &task_id, defer_minutes)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_failure_firewall(
+    state: State<'_, MonitorRuntime>,
+) -> Result<serde_json::Value, String> {
+    cli::fetch_failure_firewall(&state.project_root)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_failure_firewall_action(
+    state: State<'_, MonitorRuntime>,
+    action: String,
+    kind: String,
+    id: String,
+) -> Result<serde_json::Value, String> {
+    cli::failure_firewall_action(&state.project_root, &action, &kind, &id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_review_data(
+    state: State<'_, MonitorRuntime>,
+) -> Result<serde_json::Value, String> {
+    cli::fetch_review_data(&state.project_root)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_review_action(
+    state: State<'_, MonitorRuntime>,
+    action: String,
+    review_case_id: String,
+) -> Result<serde_json::Value, String> {
+    cli::review_action(&state.project_root, &action, &review_case_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_sync_state(
+    state: State<'_, MonitorRuntime>,
+) -> Result<serde_json::Value, String> {
+    cli::fetch_sync_state(&state.project_root)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_sync_state_action(
+    state: State<'_, MonitorRuntime>,
+    action: String,
+    id: String,
+    confirm: Option<String>,
+) -> Result<serde_json::Value, String> {
+    cli::sync_state_action(&state.project_root, &action, &id, confirm.as_deref())
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_knowflow_corpus(
+    state: State<'_, MonitorRuntime>,
+) -> Result<serde_json::Value, String> {
+    cli::fetch_knowflow_corpus(&state.project_root)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_knowflow_evals(
+    state: State<'_, MonitorRuntime>,
+) -> Result<serde_json::Value, String> {
+    cli::fetch_knowflow_evals(&state.project_root)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_communities(
+    state: State<'_, MonitorRuntime>,
+) -> Result<serde_json::Value, String> {
+    cli::fetch_communities(&state.project_root)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub async fn monitor_list_lessons(
     state: State<'_, MonitorRuntime>,
 ) -> Result<serde_json::Value, String> {

@@ -127,6 +127,271 @@ pub async fn fetch_tasks(project_root: &Path) -> anyhow::Result<serde_json::Valu
 
     serde_json::from_slice(&output.stdout).context("failed to parse tasks list payload")
 }
+
+pub async fn retry_task(project_root: &Path, task_id: &str) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-task-actions.ts")
+        .arg("--json")
+        .arg("--action")
+        .arg("retry")
+        .arg("--task-id")
+        .arg(task_id)
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute monitor-task-actions retry command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("monitor-task-actions retry command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse retry result payload")
+}
+
+pub async fn defer_task(
+    project_root: &Path,
+    task_id: &str,
+    defer_minutes: Option<i32>,
+) -> anyhow::Result<serde_json::Value> {
+    let mut cmd = Command::new("bun");
+    cmd.arg("run")
+        .arg("src/scripts/monitor-task-actions.ts")
+        .arg("--json")
+        .arg("--action")
+        .arg("defer")
+        .arg("--task-id")
+        .arg(task_id);
+    if let Some(minutes) = defer_minutes {
+        cmd.arg("--defer-minutes").arg(minutes.to_string());
+    }
+    let output = cmd
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute monitor-task-actions defer command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("monitor-task-actions defer command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse defer result payload")
+}
+
+pub async fn fetch_data_inventory(project_root: &Path) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-data-inventory.ts")
+        .arg("--json")
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute monitor-data-inventory command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("monitor-data-inventory command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse monitor data inventory payload")
+}
+
+pub async fn fetch_failure_firewall(project_root: &Path) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-failure-firewall.ts")
+        .arg("--json")
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute monitor-failure-firewall command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("monitor-failure-firewall command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse failure firewall payload")
+}
+
+pub async fn failure_firewall_action(
+    project_root: &Path,
+    action: &str,
+    kind: &str,
+    id: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-failure-firewall-actions.ts")
+        .arg("--json")
+        .arg("--action")
+        .arg(action)
+        .arg("--kind")
+        .arg(kind)
+        .arg("--id")
+        .arg(id)
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute monitor-failure-firewall-actions command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("monitor-failure-firewall-actions command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse failure firewall action payload")
+}
+
+pub async fn fetch_review_data(project_root: &Path) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-review-data.ts")
+        .arg("--json")
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute monitor-review-data command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("monitor-review-data command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse review data payload")
+}
+
+pub async fn review_action(
+    project_root: &Path,
+    action: &str,
+    review_case_id: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-review-actions.ts")
+        .arg("--json")
+        .arg("--action")
+        .arg(action)
+        .arg("--review-case-id")
+        .arg(review_case_id)
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute monitor-review-actions command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("monitor-review-actions command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse review action payload")
+}
+
+pub async fn fetch_sync_state(project_root: &Path) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-sync-state.ts")
+        .arg("--json")
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute monitor-sync-state command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("monitor-sync-state command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse sync state payload")
+}
+
+pub async fn sync_state_action(
+    project_root: &Path,
+    action: &str,
+    id: &str,
+    confirm: Option<&str>,
+) -> anyhow::Result<serde_json::Value> {
+    let mut cmd = Command::new("bun");
+    cmd.arg("run")
+        .arg("src/scripts/monitor-sync-state-actions.ts")
+        .arg("--json")
+        .arg("--action")
+        .arg(action)
+        .arg("--id")
+        .arg(id);
+    if let Some(token) = confirm {
+        cmd.arg("--confirm").arg(token);
+    }
+
+    let output = cmd
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute monitor-sync-state-actions command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("monitor-sync-state-actions command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse sync state action payload")
+}
+
+pub async fn fetch_knowflow_corpus(project_root: &Path) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-knowflow-corpus.ts")
+        .arg("--json")
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute monitor-knowflow-corpus command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("monitor-knowflow-corpus command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse knowflow corpus payload")
+}
+
+pub async fn fetch_knowflow_evals(project_root: &Path) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-knowflow-evals.ts")
+        .arg("--json")
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute monitor-knowflow-evals command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("monitor-knowflow-evals command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse knowflow eval payload")
+}
+
+pub async fn fetch_communities(project_root: &Path) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-communities.ts")
+        .arg("--json")
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute monitor-communities command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("monitor-communities command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse communities payload")
+}
 pub async fn list_lessons(project_root: &Path) -> anyhow::Result<serde_json::Value> {
     let output = Command::new("bun")
         .arg("run")

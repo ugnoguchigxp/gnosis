@@ -1,5 +1,5 @@
 import { desc, inArray, sql } from 'drizzle-orm';
-import { db } from '../db/index.js';
+import { closeDbPool, db } from '../db/index.js';
 import { topicTasks } from '../db/schema.js';
 import { parseArgMap, readStringFlag } from '../services/knowflow/utils/args.js';
 import { renderOutput, resolveOutputFormat } from '../services/knowflow/utils/output.js';
@@ -10,6 +10,11 @@ type TaskEntry = {
   source: string | null;
   status: string;
   priority: number;
+  resultSummary: string | null;
+  errorReason: string | null;
+  nextRunAt: number | null;
+  lockedAt: number | null;
+  lockOwner: string | null;
   payload: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -25,6 +30,9 @@ const run = async (): Promise<void> => {
       id: topicTasks.id,
       status: topicTasks.status,
       priority: topicTasks.priority,
+      nextRunAt: topicTasks.nextRunAt,
+      lockedAt: topicTasks.lockedAt,
+      lockOwner: topicTasks.lockOwner,
       payload: topicTasks.payload,
       createdAt: topicTasks.createdAt,
       updatedAt: topicTasks.updatedAt,
@@ -49,6 +57,11 @@ const run = async (): Promise<void> => {
       source: typeof payload.source === 'string' ? payload.source : null,
       status: row.status,
       priority: row.priority,
+      resultSummary: typeof payload.resultSummary === 'string' ? payload.resultSummary : null,
+      errorReason: typeof payload.errorReason === 'string' ? payload.errorReason : null,
+      nextRunAt: row.nextRunAt ?? null,
+      lockedAt: row.lockedAt ?? null,
+      lockOwner: row.lockOwner ?? null,
       payload,
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
@@ -62,4 +75,6 @@ run().catch((error) => {
   const message = error instanceof Error ? error.message : String(error);
   process.stderr.write(`${message}\n`);
   process.exitCode = 1;
+}).finally(async () => {
+  await closeDbPool();
 });

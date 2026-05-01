@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { desc, inArray, sql } from 'drizzle-orm';
 import { envBoolean } from '../config.js';
 import { GNOSIS_CONSTANTS } from '../constants.js';
-import { db } from '../db/index.js';
+import { closeDbPool, db } from '../db/index.js';
 import { topicTasks } from '../db/schema.js';
 import { parseArgMap, readNumberFlag, readStringFlag } from '../services/knowflow/utils/args';
 import { renderOutput, resolveOutputFormat } from '../services/knowflow/utils/output';
@@ -495,5 +495,7 @@ if (import.meta.main) {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`${message}\n`);
     process.exitCode = 1;
+  }).finally(async () => {
+    await closeDbPool();
   });
 }

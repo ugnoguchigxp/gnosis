@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { db } from '../db/index.js';
+import { experienceLogs } from '../db/schema.js';
 import { searchMemoriesByType } from './memory.js';
 
 export type KnowledgeKind =
@@ -209,11 +211,107 @@ export async function recordTaskNote(input: {
   confidence?: number;
   source?: 'manual' | 'task' | 'review' | 'onboarding' | 'import';
 }) {
+  const content = input.content.trim();
+  if (content.length === 0) {
+    return {
+      saved: false,
+      entityId: null,
+      kind: input.kind ?? 'observation',
+      category: input.category ?? 'reference',
+      failureFirewallCandidateState: { saved: false, reason: 'empty_content' },
+    };
+  }
+
+  const tags = (input.tags ?? []).map((tag) => tag.trim().toLowerCase()).filter(Boolean);
+  const hasFirewallTag = tags.includes('failure-firewall');
+  const hasGoldenPathTag = tags.includes('golden-path');
+  const noteHash = createHash('sha256').update(content).digest('hex');
+  const entityId = `note/${noteHash.slice(0, 12)}`;
+
+  let failureFirewallCandidateState:
+    | { saved: false; reason: string }
+    | { saved: true; type: 'failure' | 'success'; scenarioId: string } = {
+    saved: false,
+    reason: 'no_firewall_tags',
+  };
+
+  if (hasFirewallTag || hasGoldenPathTag) {
+    const type: 'failure' | 'success' = hasGoldenPathTag ? 'success' : 'failure';
+    const scenarioId =
+      typeof input.metadata?.scenarioId === 'string' && input.metadata.scenarioId.trim().length > 0
+        ? input.metadata.scenarioId
+        : `firewall-${noteHash.slice(0, 12)}`;
+
+    const metadata = {
+      ...(typeof input.metadata === 'object' && input.metadata ? input.metadata : {}),
+      title: input.title ?? undefined,
+      tags,
+      source: input.source ?? 'manual',
+      kind: input.kind ?? 'observation',
+      category: input.category ?? 'reference',
+      purpose: input.purpose ?? undefined,
+      files: input.files ?? [],
+      evidence: input.evidence ?? [],
+      confidence: input.confidence ?? undefined,
+      ...(hasGoldenPathTag
+        ? {
+            pathId: typeof input.metadata?.pathId === 'string' ? input.metadata.pathId : entityId,
+            pathType:
+              typeof input.metadata?.pathType === 'string'
+                ? input.metadata.pathType
+                : 'record_task_note',
+            reusableSteps: Array.isArray(input.metadata?.reusableSteps)
+              ? input.metadata?.reusableSteps
+              : [],
+            blockWhenMissing: Array.isArray(input.metadata?.blockWhenMissing)
+              ? input.metadata?.blockWhenMissing
+              : [],
+            riskSignals: Array.isArray(input.metadata?.riskSignals)
+              ? input.metadata?.riskSignals
+              : [],
+          }
+        : {
+            patternId:
+              typeof input.metadata?.patternId === 'string' ? input.metadata.patternId : entityId,
+            patternType:
+              typeof input.metadata?.patternType === 'string'
+                ? input.metadata.patternType
+                : 'record_task_note',
+            severity:
+              typeof input.metadata?.severity === 'string' ? input.metadata.severity : 'warning',
+            riskSignals: Array.isArray(input.metadata?.riskSignals)
+              ? input.metadata?.riskSignals
+              : [],
+            matchHints: Array.isArray(input.metadata?.matchHints) ? input.metadata?.matchHints : [],
+            requiredEvidence: Array.isArray(input.metadata?.requiredEvidence)
+              ? input.metadata?.requiredEvidence
+              : [],
+          }),
+    };
+
+    await db.insert(experienceLogs).values({
+      sessionId: 'mcp-record-task-note',
+      scenarioId,
+      attempt: 1,
+      type,
+      failureType:
+        type === 'failure'
+          ? typeof input.metadata?.failureType === 'string'
+            ? input.metadata.failureType
+            : 'record_task_note'
+          : null,
+      content,
+      metadata,
+    });
+    failureFirewallCandidateState = { saved: true, type, scenarioId };
+  }
+
   return {
-    saved: input.content.trim().length > 0,
-    entityId: `note/${createHash('sha256').update(input.content).digest('hex').slice(0, 12)}`,
+    saved: true,
+    entityId,
     kind: input.kind ?? 'observation',
     category: input.category ?? 'reference',
+    failureFirewallCandidateState,
   };
 }
 

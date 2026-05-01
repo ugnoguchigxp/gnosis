@@ -14,6 +14,8 @@ type EntityPayload = {
   confidence?: number;
   scope?: string;
   metadata?: Record<string, unknown>;
+  provenance?: string | null;
+  freshness?: string | null;
 };
 
 type RelationPayload = {
@@ -689,6 +691,12 @@ async function createEntity(raw: EntityPayload) {
   const name = requireString(raw.name, 'name');
   const id = raw.id || generateEntityId(type, name);
   const description = raw.description || '';
+  const freshness =
+    typeof raw.freshness === 'string' && raw.freshness.trim().length > 0
+      ? new Date(raw.freshness)
+      : null;
+  const normalizedFreshness =
+    freshness && Number.isFinite(freshness.getTime()) ? freshness : undefined;
   const embedding = await generateEmbedding(`${name}\n${description}`);
 
   const [entity] = await db
@@ -702,7 +710,8 @@ async function createEntity(raw: EntityPayload) {
       confidence: raw.confidence ?? 0.5,
       scope: raw.scope || 'on_demand',
       metadata: raw.metadata || {},
-      provenance: 'monitor',
+      provenance: raw.provenance ?? 'monitor',
+      freshness: normalizedFreshness,
     })
     .returning();
   return entity;
@@ -726,6 +735,12 @@ async function updateEntity(id: string, raw: EntityPayload) {
   }
 
   const description = raw.description ?? existing.description ?? '';
+  const freshness =
+    typeof raw.freshness === 'string' && raw.freshness.trim().length > 0
+      ? new Date(raw.freshness)
+      : null;
+  const normalizedFreshness =
+    freshness && Number.isFinite(freshness.getTime()) ? freshness : existing.freshness;
   const embedding = await generateEmbedding(`${name}\n${description}`);
 
   const [entity] = await db
@@ -738,7 +753,8 @@ async function updateEntity(id: string, raw: EntityPayload) {
       confidence: raw.confidence ?? existing.confidence,
       scope: raw.scope || existing.scope,
       metadata: raw.metadata || existing.metadata,
-      provenance: 'monitor',
+      provenance: raw.provenance ?? existing.provenance ?? 'monitor',
+      freshness: normalizedFreshness,
     })
     .where(eq(entities.id, id))
     .returning();

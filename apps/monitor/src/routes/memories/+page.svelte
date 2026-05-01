@@ -1,6 +1,7 @@
 <script lang="ts">
 import { invoke } from '@tauri-apps/api/core';
 import { onMount } from 'svelte';
+import MonitorTable from '$lib/components/MonitorTable.svelte';
 
 type MemoryTab = 'lessons' | 'rules' | 'skills';
 type GuidanceType = 'rule' | 'skill';
@@ -48,7 +49,6 @@ interface DeleteTarget {
   label: string;
 }
 
-const pageSize = 10;
 const tabs: Array<{ id: MemoryTab; label: string }> = [
   { id: 'lessons', label: '経験' },
   { id: 'rules', label: '開発ルール' },
@@ -57,7 +57,6 @@ const tabs: Array<{ id: MemoryTab; label: string }> = [
 
 let activeTab = $state<MemoryTab>('lessons');
 let searchQuery = $state('');
-let currentPage = $state(1);
 
 let lessons = $state<Lesson[]>([]);
 let rules = $state<GuidanceItem[]>([]);
@@ -174,12 +173,10 @@ async function loadAll() {
 
 function selectTab(tabId: MemoryTab) {
   activeTab = tabId;
-  currentPage = 1;
 }
 
 function updateSearchQuery(value: string) {
   searchQuery = value;
-  currentPage = 1;
 }
 
 const filteredLessons = $derived.by(() => {
@@ -223,35 +220,65 @@ const currentItems = $derived.by(() =>
       : filteredSkills,
 );
 
-const totalItems = $derived(currentItems.length);
-const totalPages = $derived(Math.max(1, Math.ceil(totalItems / pageSize)));
+const lessonColumns = [
+  {
+    id: 'createdAt',
+    label: '日時',
+    sortable: true,
+    sortValue: (lesson: Lesson) => lesson.createdAt,
+  },
+  {
+    id: 'source',
+    label: 'Source',
+    sortable: true,
+    sortValue: (lesson: Lesson) => sourceLabel(lesson.source),
+  },
+  {
+    id: 'sessionId',
+    label: 'Session',
+    sortable: true,
+    sortValue: (lesson: Lesson) => lesson.sessionId,
+  },
+  {
+    id: 'scenarioId',
+    label: 'Scenario',
+    sortable: true,
+    sortValue: (lesson: Lesson) => lesson.scenarioId,
+  },
+  { id: 'type', label: 'Type', sortable: true, sortValue: (lesson: Lesson) => lesson.type },
+  { id: 'content', label: '内容', sortable: true, sortValue: (lesson: Lesson) => lesson.content },
+  { id: 'actions', label: '' },
+];
 
-const paginatedLessons = $derived.by(() => {
-  const start = (currentPage - 1) * pageSize;
-  return filteredLessons.slice(start, start + pageSize);
-});
-
-const paginatedRules = $derived.by(() => {
-  const start = (currentPage - 1) * pageSize;
-  return filteredRules.slice(start, start + pageSize);
-});
-
-const paginatedSkills = $derived.by(() => {
-  const start = (currentPage - 1) * pageSize;
-  return filteredSkills.slice(start, start + pageSize);
-});
-
-$effect(() => {
-  currentPage = 1;
-  void activeTab;
-  void searchQuery;
-});
-
-$effect(() => {
-  if (currentPage > totalPages) {
-    currentPage = totalPages;
-  }
-});
+const guidanceColumns = [
+  {
+    id: 'createdAt',
+    label: '日時',
+    sortable: true,
+    sortValue: (item: GuidanceItem) => item.createdAt,
+  },
+  {
+    id: 'source',
+    label: 'Source',
+    sortable: true,
+    sortValue: (item: GuidanceItem) => sourceLabel(item.source),
+  },
+  { id: 'title', label: 'Title', sortable: true, sortValue: (item: GuidanceItem) => item.title },
+  { id: 'scope', label: 'Scope', sortable: true, sortValue: (item: GuidanceItem) => item.scope },
+  {
+    id: 'priority',
+    label: 'Priority',
+    sortable: true,
+    sortValue: (item: GuidanceItem) => item.priority,
+  },
+  {
+    id: 'tags',
+    label: 'Tags',
+    sortable: true,
+    sortValue: (item: GuidanceItem) => item.tags.join(', '),
+  },
+  { id: 'actions', label: '' },
+];
 
 function formatDate(value: string) {
   const date = new Date(value);
@@ -521,79 +548,67 @@ onMount(() => {
   {/if}
 
   <section class="table-card">
-    {#if loadingState[activeTab]}
-      <div class="loading">読み込み中...</div>
-    {:else if totalItems === 0}
-      <div class="empty">データがありません</div>
+    {#if activeTab === 'lessons'}
+      <MonitorTable
+        columns={lessonColumns}
+        items={filteredLessons}
+        loading={loadingState.lessons}
+        emptyText="データがありません"
+        keyOf={(item: Lesson) => item.id}
+        pageSize={10}
+      >
+        {#snippet row(lesson: Lesson)}
+          <td>{formatDate(lesson.createdAt)}</td>
+          <td><span class="source-badge">{sourceLabel(lesson.source)}</span></td>
+          <td>{lesson.sessionId}</td>
+          <td>{lesson.scenarioId}</td>
+          <td>{lesson.type}</td>
+          <td>{truncate(lesson.content)}</td>
+          <td>
+            <button onclick={() => openEditLesson(lesson)}>編集</button>
+            <button
+              class="danger"
+              disabled={deletingId === lesson.id}
+              onclick={() => requestDelete({ kind: 'lesson', id: lesson.id, label: 'Lesson' })}
+            >
+              削除
+            </button>
+          </td>
+        {/snippet}
+      </MonitorTable>
     {:else}
-      {#if activeTab === 'lessons'}
-        <table>
-          <thead>
-            <tr><th>日時</th><th>Source</th><th>Session</th><th>Scenario</th><th>Type</th><th>内容</th><th></th></tr>
-          </thead>
-          <tbody>
-            {#each paginatedLessons as lesson (lesson.id)}
-              <tr>
-                <td>{formatDate(lesson.createdAt)}</td>
-                <td><span class="source-badge">{sourceLabel(lesson.source)}</span></td>
-                <td>{lesson.sessionId}</td>
-                <td>{lesson.scenarioId}</td>
-                <td>{lesson.type}</td>
-                <td>{truncate(lesson.content)}</td>
-                <td>
-                  <button
-                    onclick={() => openEditLesson(lesson)}
-                  >編集</button>
-                  <button
-                    class="danger"
-                    disabled={deletingId === lesson.id}
-                    onclick={() => requestDelete({ kind: 'lesson', id: lesson.id, label: 'Lesson' })}
-                  >削除</button>
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      {:else if activeTab === 'rules' || activeTab === 'skills'}
-        <table>
-          <thead>
-            <tr><th>日時</th><th>Source</th><th>Title</th><th>Scope</th><th>Priority</th><th>Tags</th><th></th></tr>
-          </thead>
-          <tbody>
-            {#each (activeTab === 'rules' ? paginatedRules : paginatedSkills) as item (item.id)}
-              <tr>
-                <td>{formatDate(item.createdAt)}</td>
-                <td><span class="source-badge">{sourceLabel(item.source)}</span></td>
-                <td>{item.title}</td>
-                <td>{item.scope}</td>
-                <td>{item.priority}</td>
-                <td>{item.tags.join(', ')}</td>
-                <td>
-                  <button
-                    onclick={() => openEditGuidance(item)}
-                  >編集</button>
-                  <button
-                    class="danger"
-                    disabled={deletingId === item.id}
-                    onclick={() =>
-                      requestDelete({
-                        kind: 'guidance',
-                        id: item.id,
-                        label: activeTab === 'rules' ? 'Rule' : 'Skill',
-                      })}
-                  >削除</button>
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      {/if}
-
-      <div class="pagination">
-        <button disabled={currentPage <= 1} onclick={() => currentPage--}>前へ</button>
-        <span>{currentPage} / {totalPages}</span>
-        <button disabled={currentPage >= totalPages} onclick={() => currentPage++}>次へ</button>
-      </div>
+      <MonitorTable
+        columns={guidanceColumns}
+        items={activeTab === 'rules' ? filteredRules : filteredSkills}
+        loading={loadingState[activeTab]}
+        emptyText="データがありません"
+        keyOf={(item: GuidanceItem) => item.id}
+        pageSize={10}
+      >
+        {#snippet row(item: GuidanceItem)}
+          <td>{formatDate(item.createdAt)}</td>
+          <td><span class="source-badge">{sourceLabel(item.source)}</span></td>
+          <td>{item.title}</td>
+          <td>{item.scope}</td>
+          <td>{item.priority}</td>
+          <td>{item.tags.join(', ')}</td>
+          <td>
+            <button onclick={() => openEditGuidance(item)}>編集</button>
+            <button
+              class="danger"
+              disabled={deletingId === item.id}
+              onclick={() =>
+                requestDelete({
+                  kind: 'guidance',
+                  id: item.id,
+                  label: activeTab === 'rules' ? 'Rule' : 'Skill',
+                })}
+            >
+              削除
+            </button>
+          </td>
+        {/snippet}
+      </MonitorTable>
     {/if}
   </section>
 </div>
@@ -754,10 +769,6 @@ onMount(() => {
   }
   .btn-primary:hover, .btn-secondary:hover { background: #374151; }
   .table-card { border: 1px solid #374151; border-radius: 10px; overflow: hidden; background: #0b1220; }
-  table { width: 100%; border-collapse: collapse; color: #e5e7eb; }
-  th, td { padding: 0.5rem; border-bottom: 1px solid #1f2937; text-align: left; vertical-align: top; }
-  th { background: #111827; color: #cbd5e1; font-weight: 700; letter-spacing: 0.04em; }
-  tbody tr:nth-child(even) { background: #0f172a; }
   .source-badge {
     display: inline-flex;
     align-items: center;
@@ -771,8 +782,6 @@ onMount(() => {
     font-weight: 700;
     white-space: nowrap;
   }
-  .loading, .empty { padding: 1rem; color: #9ca3af; }
-  .pagination { display: flex; justify-content: center; gap: 0.5rem; padding: 0.75rem; }
   button { background: #1f2937; color: #f9fafb; border: 1px solid #4b5563; border-radius: 8px; padding: 0.35rem 0.65rem; }
   button:hover { background: #374151; }
   button:disabled { opacity: 0.55; cursor: not-allowed; }

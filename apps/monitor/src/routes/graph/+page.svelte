@@ -56,15 +56,36 @@ let svgContainer: SVGSVGElement;
 
 let selectedNodeId = $state<string | null>(null);
 const selectedNode = $derived(graphData?.entities.find((e) => e.id === selectedNodeId) || null);
+const selectedNodeRelations = $derived.by(() => {
+  if (!selectedNodeId || !graphData) return [];
+  return graphData.relations.filter(
+    (relation) => relation.sourceId === selectedNodeId || relation.targetId === selectedNodeId,
+  );
+});
 let showDeleteConfirm = $state(false);
 let formLoading = $state(false);
 let formError = $state<string | null>(null);
+let relationActionLoading = $state(false);
 let editForm = $state({
   name: '',
   type: '',
   description: '',
   confidence: 0.5,
   scope: 'on_demand',
+  provenance: '',
+  freshness: '',
+  metadataText: '{}',
+});
+let createModalOpen = $state(false);
+let createForm = $state({
+  type: 'concept',
+  name: '',
+  description: '',
+  confidence: 0.5,
+  scope: 'on_demand',
+  provenance: 'monitor',
+  freshness: '',
+  metadataText: '{}',
 });
 
 let classificationMode = $state(false);
@@ -230,11 +251,38 @@ const toEditForm = (entity: Entity) => ({
   description: entity.description || '',
   confidence: entity.confidence ?? 0.5,
   scope: entity.scope || 'on_demand',
+  provenance: entity.provenance ?? '',
+  freshness: entity.freshness ? new Date(entity.freshness).toISOString().slice(0, 16) : '',
+  metadataText: JSON.stringify(entity.metadata ?? {}, null, 2),
 });
+
+const parseMetadataText = (raw: string): Record<string, unknown> => {
+  if (!raw.trim()) return {};
+  const parsed = JSON.parse(raw);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('metadata must be a JSON object');
+  }
+  return parsed as Record<string, unknown>;
+};
 
 const closeNodeModal = () => {
   selectedNodeId = null;
   showDeleteConfirm = false;
+};
+
+const openCreateModal = () => {
+  createForm = {
+    type: 'concept',
+    name: '',
+    description: '',
+    confidence: 0.5,
+    scope: 'on_demand',
+    provenance: 'monitor',
+    freshness: '',
+    metadataText: '{}',
+  };
+  formError = null;
+  createModalOpen = true;
 };
 
 const graphNodeStroke = (node: Pick<Entity, 'id'>) => {
@@ -420,14 +468,40 @@ const handleSave = async () => {
   formLoading = true;
   formError = null;
   try {
+    const metadata = parseMetadataText(editForm.metadataText);
     await invoke('monitor_update_entity', {
       id,
-      payload: JSON.stringify(editForm),
+      payload: JSON.stringify({
+        ...editForm,
+        metadata,
+        freshness: editForm.freshness ? new Date(editForm.freshness).toISOString() : null,
+      }),
     });
     selectedNodeId = null;
     await loadGraph();
   } catch (err) {
     formError = `Update failed: ${err instanceof Error ? err.message : String(err)}`;
+  } finally {
+    formLoading = false;
+  }
+};
+
+const handleCreate = async () => {
+  formLoading = true;
+  formError = null;
+  try {
+    const metadata = parseMetadataText(createForm.metadataText);
+    await invoke('monitor_create_entity', {
+      payload: JSON.stringify({
+        ...createForm,
+        metadata,
+        freshness: createForm.freshness ? new Date(createForm.freshness).toISOString() : null,
+      }),
+    });
+    createModalOpen = false;
+    await loadGraph();
+  } catch (err) {
+    formError = `Create failed: ${err instanceof Error ? err.message : String(err)}`;
   } finally {
     formLoading = false;
   }
@@ -455,6 +529,26 @@ const confirmDelete = async () => {
     formError = `Delete failed: ${err instanceof Error ? err.message : String(err)}`;
   } finally {
     formLoading = false;
+  }
+};
+
+const handleDeleteRelation = async (relation: Relation) => {
+  relationActionLoading = true;
+  formError = null;
+  try {
+    await invoke('monitor_delete_relation', {
+      sourceId: relation.sourceId,
+      targetId: relation.targetId,
+      relationType: relation.relationType,
+      source_id: relation.sourceId,
+      target_id: relation.targetId,
+      relation_type: relation.relationType,
+    });
+    await loadGraph();
+  } catch (err) {
+    formError = `Relation delete failed: ${err instanceof Error ? err.message : String(err)}`;
+  } finally {
+    relationActionLoading = false;
   }
 };
 
@@ -602,6 +696,9 @@ onMount(() => {
         <p>Interactive visualization of gnosis memories and relationships.</p>
       </div>
       <div class="actions">
+        <button type="button" class="btn-reload" onclick={openCreateModal} disabled={loading}>
+          + Entity
+        </button>
         <button
           type="button"
           class:active={classificationMode}
@@ -811,6 +908,37 @@ onMount(() => {
           Full Description
           <textarea id="node-desc" bind:value={editForm.description} rows="8" placeholder="Describe this piece of knowledge..."></textarea>
         </label>
+        <label for="node-provenance">
+          Provenance
+          <input id="node-provenance" type="text" bind:value={editForm.provenance} />
+        </label>
+        <label for="node-freshness">
+          Freshness
+          <input id="node-freshness" type="datetime-local" bind:value={editForm.freshness} />
+        </label>
+        <label for="node-metadata">
+          Metadata (JSON)
+          <textarea id="node-metadata" bind:value={editForm.metadataText} rows="8"></textarea>
+        </label>
+        <div class="relation-section">
+          <h3>Relations ({selectedNodeRelations.length})</h3>
+          {#if selectedNodeRelations.length === 0}
+            <p class="field-note">関連relationはありません。</p>
+          {:else}
+            <div class="relation-list">
+              {#each selectedNodeRelations as relation}
+                <div class="relation-item">
+                  <span class="relation-text">
+                    {relation.sourceId} --[{relation.relationType}]--> {relation.targetId}
+                  </span>
+                  <button type="button" class="danger small" disabled={relationActionLoading} onclick={() => void handleDeleteRelation(relation)}>
+                    Delete
+                  </button>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
         {#if formError}<p class="error-text">{formError}</p>{/if}
         <div class="form-actions split">
           {#if !showDeleteConfirm}
@@ -830,6 +958,85 @@ onMount(() => {
               </div>
             </div>
           {/if}
+        </div>
+      </form>
+    </div>
+  </div>
+{/if}
+
+{#if createModalOpen}
+  <div
+    class="modal-backdrop"
+    role="button"
+    tabindex="0"
+    onclick={() => (createModalOpen = false)}
+    onkeydown={(event) => onBackdropKeydown(event, () => (createModalOpen = false))}
+  >
+    <div
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      tabindex="-1"
+      onclick={(event) => event.stopPropagation()}
+      onkeydown={(event) => event.stopPropagation()}
+    >
+      <h2>Entity 作成</h2>
+      <form
+        onsubmit={(event) => {
+          event.preventDefault();
+          void handleCreate();
+        }}
+      >
+        <label>
+          Name
+          <input type="text" bind:value={createForm.name} required />
+        </label>
+        <label>
+          Type
+          <select bind:value={createForm.type}>
+            <option value="concept">concept</option>
+            <option value="task">task</option>
+            <option value="constraint">constraint</option>
+            <option value="rule">rule</option>
+            <option value="procedure">procedure</option>
+            <option value="decision">decision</option>
+            <option value="lesson">lesson</option>
+            <option value="project_doc">project_doc</option>
+          </select>
+        </label>
+        <label>
+          Scope
+          <select bind:value={createForm.scope}>
+            <option value="on_demand">on_demand</option>
+            <option value="always">always</option>
+          </select>
+        </label>
+        <label>
+          Confidence ({(createForm.confidence * 100).toFixed(0)}%)
+          <input type="range" min="0" max="1" step="0.01" bind:value={createForm.confidence} />
+        </label>
+        <label>
+          Description
+          <textarea bind:value={createForm.description} rows="6"></textarea>
+        </label>
+        <label>
+          Provenance
+          <input type="text" bind:value={createForm.provenance} />
+        </label>
+        <label>
+          Freshness
+          <input type="datetime-local" bind:value={createForm.freshness} />
+        </label>
+        <label>
+          Metadata (JSON)
+          <textarea bind:value={createForm.metadataText} rows="6"></textarea>
+        </label>
+        {#if formError}<p class="error-text">{formError}</p>{/if}
+        <div class="form-actions">
+          <button type="button" onclick={() => (createModalOpen = false)} disabled={formLoading}>Cancel</button>
+          <button type="submit" disabled={formLoading || !createForm.name.trim()}>
+            {formLoading ? 'Creating...' : 'Create'}
+          </button>
         </div>
       </form>
     </div>
@@ -1082,6 +1289,39 @@ onMount(() => {
     font-size: 0.75rem;
     color: #94a3b8;
     line-height: 1.4;
+  }
+
+  .relation-section {
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 0.75rem;
+    background: rgba(15, 23, 42, 0.5);
+  }
+
+  .relation-section h3 {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.9rem;
+    color: #e2e8f0;
+  }
+
+  .relation-list {
+    display: grid;
+    gap: 0.4rem;
+    max-height: 180px;
+    overflow: auto;
+  }
+
+  .relation-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .relation-text {
+    font-size: 0.72rem;
+    color: #94a3b8;
+    overflow-wrap: anywhere;
   }
 
   input, select, textarea {

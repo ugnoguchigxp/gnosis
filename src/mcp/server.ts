@@ -30,7 +30,12 @@ async function getAlwaysContext(): Promise<string> {
 
   try {
     const rows = await db
-      .select({ name: entities.name, type: entities.type, description: entities.description })
+      .select({
+        name: entities.name,
+        type: entities.type,
+        description: entities.description,
+        metadata: entities.metadata,
+      })
       .from(entities)
       .where(eq(entities.scope, 'always'));
 
@@ -39,7 +44,26 @@ async function getAlwaysContext(): Promise<string> {
       return '';
     }
 
-    const lines = rows.map((r) => `[${r.type}] ${r.name}: ${r.description ?? ''}`);
+    const lines: string[] = [];
+    for (const r of rows) {
+      const meta =
+        r.metadata && typeof r.metadata === 'object' ? (r.metadata as Record<string, unknown>) : {};
+      const metaContent = typeof meta.content === 'string' ? meta.content.trim() : '';
+      const desc = r.description ?? '';
+
+      // 本文が metadata.content にある場合はそれを優先表示し、省略しない
+      if (metaContent.length > 0) {
+        lines.push(`### [${r.type}] ${r.name}`);
+        if (desc.length > 0 && desc !== metaContent) {
+          lines.push(desc);
+        }
+        lines.push(metaContent);
+        lines.push('');
+      } else {
+        lines.push(`- [${r.type}] ${r.name}: ${desc}`);
+      }
+    }
+
     const content = `## 常時適用ルール・制約 (scope:always)\n${lines.join('\n')}\n---`;
     alwaysCache = { content, expiresAt: now + ALWAYS_CACHE_TTL_MS };
     return content;

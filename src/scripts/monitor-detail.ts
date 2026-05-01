@@ -1,7 +1,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { desc, eq } from 'drizzle-orm';
-import { db } from '../db/index.js';
+import { closeDbPool, db } from '../db/index.js';
 import { topicTasks } from '../db/schema.js';
 import { parseArgMap, readNumberFlag, readStringFlag } from '../services/knowflow/utils/args';
 import { renderOutput, resolveOutputFormat } from '../services/knowflow/utils/output';
@@ -223,5 +223,7 @@ if (import.meta.main) {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`${message}\n`);
     process.exitCode = 1;
+  }).finally(async () => {
+    await closeDbPool();
   });
 }

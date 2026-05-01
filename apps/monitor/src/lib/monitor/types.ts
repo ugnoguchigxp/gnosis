@@ -77,6 +77,11 @@ export type TaskHistoryEntry = {
   source: string | null;
   status: string;
   priority: number;
+  resultSummary: string | null;
+  errorReason: string | null;
+  nextRunAt: number | null;
+  lockedAt: number | null;
+  lockOwner: string | null;
   payload: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -101,6 +106,28 @@ export type TaskDetailPayload = {
   resultSummary: string | null;
   errorReason: string | null;
   logs: TaskDetailLogSnippet[];
+};
+
+export type InventoryCategory = {
+  category: string;
+  table: string;
+  rowCount: number;
+  latestUpdatedAt: string | null;
+  statusCounts: Record<string, number>;
+  maintenanceState: 'active' | 'deprecated';
+};
+
+export type InventorySignal = {
+  key: string;
+  label: string;
+  value: number;
+  unit: 'count' | 'percent';
+};
+
+export type MonitorDataInventory = {
+  ts: number;
+  categories: InventoryCategory[];
+  signals: InventorySignal[];
 };
 
 export type MonitorConfigResponse = {
@@ -138,6 +165,8 @@ export type Entity = {
   description: string | null;
   confidence: number;
   scope: string;
+  provenance?: string | null;
+  freshness?: string | null;
   metadata: Record<string, unknown>;
   createdAt: string;
 };
