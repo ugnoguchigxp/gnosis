@@ -700,7 +700,30 @@ export function createCloudReviewLLMService(options: CloudProviderOptions = {}):
           const systemMsg = messages.find((m) => m.role === 'system')?.content;
           const chatMsgs = messages
             .filter((m) => m.role !== 'system')
-            .map((m) => ({ role: m.role, content: [{ type: 'text' as const, text: m.content }] }));
+            .map((m) => {
+              if (m.role === 'tool') {
+                return {
+                  role: 'user' as const,
+                  content: [
+                    {
+                      type: 'tool_result' as const,
+                      tool_use_id: m.toolCallId,
+                      content: [{ type: 'text' as const, text: m.content }],
+                    },
+                  ],
+                };
+              }
+              if (m.role === 'assistant' && Array.isArray(m.rawAssistantContent)) {
+                return {
+                  role: 'assistant' as const,
+                  content: m.rawAssistantContent,
+                };
+              }
+              return {
+                role: m.role,
+                content: [{ type: 'text' as const, text: m.content }],
+              };
+            });
           const anthropicTools = (opts.tools ?? []).map((t) => ({
             name: t.name,
             description: t.description,
@@ -765,7 +788,24 @@ export function createCloudReviewLLMService(options: CloudProviderOptions = {}):
           apiKey as string,
           apiVersion,
         );
-        const apiMessages = messages.map((m) => ({ role: m.role, content: m.content }));
+        const apiMessages = messages.map((m) => {
+          if (m.role === 'tool') {
+            return {
+              role: 'tool',
+              content: m.content,
+              tool_call_id: m.toolCallId,
+            };
+          }
+          if (m.role === 'assistant' && m.rawAssistantContent && typeof m.rawAssistantContent === 'object') {
+            const raw = m.rawAssistantContent as Record<string, unknown>;
+            return {
+              role: 'assistant',
+              content: m.content,
+              ...(Array.isArray(raw.tool_calls) ? { tool_calls: raw.tool_calls } : {}),
+            };
+          }
+          return { role: m.role, content: m.content };
+        });
         const openaiTools = (opts.tools ?? []).map((t) => ({
           type: 'function' as const,
           function: { name: t.name, description: t.description, parameters: t.parameters },
@@ -816,6 +856,7 @@ export function createCloudReviewLLMService(options: CloudProviderOptions = {}):
         return {
           text,
           toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+          rawAssistantContent: { tool_calls: msg?.tool_calls ?? [] },
           usage: extractUsage(payload),
         };
       } catch (error) {

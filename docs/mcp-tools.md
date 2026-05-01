@@ -60,11 +60,9 @@ bun test test/mcpHostServices.test.ts test/mcpStdioIntegration.test.ts
 
 - **用途**: ユーザー依頼をタスク文脈として解釈し、今回の作業に本当に必要な知識だけを返します。
 - **処理**:
-  - `entities` から広めに候補を取得します。
-  - 必要に応じて raw `vibe_memories` も候補にします。
-  - Gemma4 が候補を `use` / `skip` / `maybe` に分類します。
-  - Gemma4 が失敗した場合は bonsai までの local fallback に留めます。cloud fallback は使いません。
-  - 採用した知識だけを短く要約して返します。
+  - `agentic_search` handler は `AgenticSearchRunner` を呼び出します。
+  - Runner は native tool calling で `knowledge_search` / `brave_search` / `fetch` を必要時に実行します。
+  - 候補採否や回答可否を正規表現で判定せず、追加調査か最終回答かは LLM の tool call 有無で判断します。
 - **入力**:
   - `userRequest` (string, 必須): ユーザー依頼または今回のタスク説明
   - `repoPath` (string, 任意)
@@ -72,17 +70,9 @@ bun test test/mcpHostServices.test.ts test/mcpStdioIntegration.test.ts
   - `changeTypes` (`frontend|backend|api|auth|db|docs|test|mcp|refactor|config|build|review`[], 任意)
   - `technologies` (string[], 任意)
   - `intent` (`plan|edit|debug|review|finish`, 任意)
-  - `includeRawMemory` (boolean, 任意): raw `vibe_memories` も検索対象にする
-  - `maxCandidates`, `maxReturned` (number, 任意)
-  - `localLlm.enabled`, `localLlm.required`, `localLlm.timeoutMs` (任意)
 - **出力**:
-  - `taskSummary`
-  - `decision`: `use_knowledge|no_relevant_knowledge|needs_clarification|degraded`
-  - `usedKnowledge`
-  - `failureFirewall`（該当タスクのみ）: Golden Path / failure pattern 候補と推奨利用方法
-  - `skippedCount`, `maybeCount`
-  - `diagnostics`
-  - `nextAction`
+  - MCP レスポンスは最終回答の自然文テキストを返します。
+  - CLI (`bun run agentic-search -- --json`) では `toolTrace` / `degraded` / `usage` を確認できます。
 
 ### `search_knowledge`
 

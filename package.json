@@ -48,6 +48,7 @@
     "monitor:detail": "bun run src/scripts/monitor-detail.ts --json",
     "monitor:dev": "bun run --cwd apps/monitor tauri:dev",
     "review": "bun run src/scripts/review.ts",
+    "agentic-search": "bun run src/scripts/agentic-search.ts",
     "failure-firewall": "bun run src/scripts/failure-firewall.ts",
     "semantic:mcp": "bun run src/scripts/semanticCodeMcpServer.ts",
     "gemma4": "./scripts/gemma4",
@@ -81,6 +82,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@nicia-ai/typegraph": "^0.3.0",
+    "cheerio": "^1.1.2",
     "drizzle-orm": "^0.45.2",
     "graphology": "^0.26.0",
     "graphology-communities-louvain": "^2.0.2",

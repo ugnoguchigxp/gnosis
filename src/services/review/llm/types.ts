@@ -1,4 +1,7 @@
-export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
+export type ChatMessage =
+  | { role: 'system' | 'user'; content: string }
+  | { role: 'assistant'; content: string; rawAssistantContent?: unknown }
+  | { role: 'tool'; content: string; toolCallId: string; toolName?: string };
 
 /** Tool definition passed to cloud LLM APIs for native tool calling. */
 export type LLMToolDefinition = {
