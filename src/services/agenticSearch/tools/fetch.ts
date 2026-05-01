@@ -53,7 +53,10 @@ export async function runFetch(args: FetchArgs): Promise<Record<string, unknown>
         contentType,
         text: '',
         truncated: false,
-        degraded: { code: 'UNSUPPORTED_CONTENT_TYPE', message: `Unsupported content-type: ${contentType}` },
+        degraded: {
+          code: 'UNSUPPORTED_CONTENT_TYPE',
+          message: `Unsupported content-type: ${contentType}`,
+        },
       };
     }
 
@@ -72,8 +75,10 @@ export async function runFetch(args: FetchArgs): Promise<Record<string, unknown>
       contentType: null,
       text: '',
       truncated: false,
-      degraded: { code: 'FETCH_TIMEOUT_OR_NETWORK', message: error instanceof Error ? error.message : String(error) },
+      degraded: {
+        code: 'FETCH_TIMEOUT_OR_NETWORK',
+        message: error instanceof Error ? error.message : String(error),
+      },
     };
   }
 }
-

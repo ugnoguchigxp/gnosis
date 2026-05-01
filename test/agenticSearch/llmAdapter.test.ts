@@ -61,7 +61,9 @@ describe('AgenticSearchLlmAdapter', () => {
       { role: 'tool', toolCallId: 'c1', toolName: 'fetch', content: '{"ok":true}' },
       { role: 'user', content: 'next' },
     ]);
-    const firstCall = generateMessagesStructured.mock.calls[0] as unknown as [Array<Record<string, unknown>>];
+    const firstCall = generateMessagesStructured.mock.calls[0] as unknown as [
+      Array<Record<string, unknown>>,
+    ];
     const messages = firstCall[0];
     const toolMsg = messages.find((m) => m.role === 'tool');
     expect(toolMsg?.toolCallId).toBe('c1');

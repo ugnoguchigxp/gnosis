@@ -1,13 +1,9 @@
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
-import type {
-  AgenticSearchToolName,
-  AgenticToolCall,
-  AgenticToolResult,
-} from './types.js';
 import { runBraveSearch } from './tools/braveSearch.js';
 import { runFetch } from './tools/fetch.js';
 import { runKnowledgeSearch } from './tools/knowledgeSearch.js';
+import type { AgenticSearchToolName, AgenticToolCall, AgenticToolResult } from './types.js';
 
 const knowledgeSearchArgsSchema = z.object({
   query: z.string().min(1),

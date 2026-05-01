@@ -1,7 +1,7 @@
 <script lang="ts">
+import MonitorTable from '$lib/components/MonitorTable.svelte';
 import { invoke } from '@tauri-apps/api/core';
 import { onMount } from 'svelte';
-import MonitorTable from '$lib/components/MonitorTable.svelte';
 
 type MemoryTab = 'lessons' | 'rules' | 'skills';
 type GuidanceType = 'rule' | 'skill';

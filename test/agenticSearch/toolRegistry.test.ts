@@ -1,6 +1,9 @@
 import { describe, expect, it, mock } from 'bun:test';
 import type { AgenticSearchToolExecutorRegistry } from '../../src/services/agenticSearch/toolRegistry.js';
-import { executeToolCall, listAgenticSearchToolSpecs as listSpecs } from '../../src/services/agenticSearch/toolRegistry.js';
+import {
+  executeToolCall,
+  listAgenticSearchToolSpecs as listSpecs,
+} from '../../src/services/agenticSearch/toolRegistry.js';
 
 describe('agenticSearch toolRegistry', () => {
   it('exposes only 3 tool names', () => {

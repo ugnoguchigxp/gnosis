@@ -32,7 +32,9 @@ describe('AgenticSearchRunner', () => {
       generate: mock()
         .mockResolvedValueOnce({
           text: '',
-          toolCalls: [{ id: 'c1', name: 'knowledge_search', arguments: { query: 'x', type: 'rule' } }],
+          toolCalls: [
+            { id: 'c1', name: 'knowledge_search', arguments: { query: 'x', type: 'rule' } },
+          ],
         })
         .mockResolvedValueOnce({ text: 'done', toolCalls: [] }),
     };
@@ -52,7 +54,13 @@ describe('AgenticSearchRunner', () => {
       generate: mock()
         .mockResolvedValueOnce({
           text: '',
-          toolCalls: [{ id: 'c1', name: 'brave_search', arguments: { query: 'latest bun test docs', count: 3 } }],
+          toolCalls: [
+            {
+              id: 'c1',
+              name: 'brave_search',
+              arguments: { query: 'latest bun test docs', count: 3 },
+            },
+          ],
         })
         .mockResolvedValueOnce({
           text: '',

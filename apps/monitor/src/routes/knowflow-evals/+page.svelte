@@ -1,8 +1,8 @@
 <script lang="ts">
+import MonitorTable from '$lib/components/MonitorTable.svelte';
+import type { MonitorDataInventory } from '$lib/monitor/types';
 import { invoke } from '@tauri-apps/api/core';
 import { onMount } from 'svelte';
-import type { MonitorDataInventory } from '$lib/monitor/types';
-import MonitorTable from '$lib/components/MonitorTable.svelte';
 
 type EvalSummaryRow = { [key: string]: string | number };
 type EvalPayload = {

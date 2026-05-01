@@ -48,7 +48,9 @@ export function parseAgenticSearchCliArgs(argv: string[]): AgenticSearchCliInput
 export async function runAgenticSearchCli(
   argv: string[],
   deps: {
-    runner?: { run: (input: Omit<AgenticSearchCliInput, 'asJson'>) => Promise<AgenticSearchRunnerOutput> };
+    runner?: {
+      run: (input: Omit<AgenticSearchCliInput, 'asJson'>) => Promise<AgenticSearchRunnerOutput>;
+    };
     write?: (line: string) => void;
   } = {},
 ): Promise<void> {

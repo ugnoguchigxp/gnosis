@@ -1,8 +1,5 @@
 import { describe, expect, it, mock } from 'bun:test';
-import {
-  parseAgenticSearchCliArgs,
-  runAgenticSearchCli,
-} from '../src/scripts/agentic-search.js';
+import { parseAgenticSearchCliArgs, runAgenticSearchCli } from '../src/scripts/agentic-search.js';
 
 describe('agentic-search CLI', () => {
   it('parses repeated flags and json mode', () => {

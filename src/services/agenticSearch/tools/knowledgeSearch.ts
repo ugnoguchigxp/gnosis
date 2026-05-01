@@ -52,7 +52,9 @@ async function typedFallback(args: KnowledgeSearchArgs, code: string, message: s
   };
 }
 
-export async function runKnowledgeSearch(args: KnowledgeSearchArgs): Promise<Record<string, unknown>> {
+export async function runKnowledgeSearch(
+  args: KnowledgeSearchArgs,
+): Promise<Record<string, unknown>> {
   const limit = args.limit ?? 5;
   const types = normalizeTypeFilter(args.type);
   try {

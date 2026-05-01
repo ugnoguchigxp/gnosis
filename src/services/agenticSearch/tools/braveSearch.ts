@@ -8,7 +8,10 @@ export type BraveSearchArgs = {
 export async function runBraveSearch(args: BraveSearchArgs): Promise<Record<string, unknown>> {
   const apiKey = process.env.BRAVE_SEARCH_API_KEY ?? '';
   if (!apiKey) {
-    return { results: [], degraded: { code: 'BRAVE_API_KEY_MISSING', message: 'BRAVE_SEARCH_API_KEY not set' } };
+    return {
+      results: [],
+      degraded: { code: 'BRAVE_API_KEY_MISSING', message: 'BRAVE_SEARCH_API_KEY not set' },
+    };
   }
 
   try {
@@ -26,7 +29,9 @@ export async function runBraveSearch(args: BraveSearchArgs): Promise<Record<stri
       };
     }
     const payload = (await response.json()) as {
-      web?: { results?: Array<{ title?: string; url?: string; description?: string; age?: string }> };
+      web?: {
+        results?: Array<{ title?: string; url?: string; description?: string; age?: string }>;
+      };
     };
     return {
       results: (payload.web?.results ?? []).slice(0, args.count ?? 5).map((item) => ({
@@ -47,4 +52,3 @@ export async function runBraveSearch(args: BraveSearchArgs): Promise<Record<stri
     };
   }
 }
-

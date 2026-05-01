@@ -1,12 +1,12 @@
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
-import { AgenticSearchRunner } from '../../services/agenticSearch/runner.js';
 import {
   buildDoctorRuntimeHealth,
   recordTaskNote,
   resolveStaleMetadataSignal,
   searchKnowledgeV2,
 } from '../../services/agentFirst.js';
+import { AgenticSearchRunner } from '../../services/agenticSearch/runner.js';
 import type { ToolEntry } from '../registry.js';
 
 const taskChangeTypes = [

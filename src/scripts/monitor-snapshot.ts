@@ -491,11 +491,13 @@ const run = async (): Promise<void> => {
 };
 
 if (import.meta.main) {
-  run().catch((error) => {
-    const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`${message}\n`);
-    process.exitCode = 1;
-  }).finally(async () => {
-    await closeDbPool();
-  });
+  run()
+    .catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`${message}\n`);
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      await closeDbPool();
+    });
 }

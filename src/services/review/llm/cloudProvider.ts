@@ -796,7 +796,11 @@ export function createCloudReviewLLMService(options: CloudProviderOptions = {}):
               tool_call_id: m.toolCallId,
             };
           }
-          if (m.role === 'assistant' && m.rawAssistantContent && typeof m.rawAssistantContent === 'object') {
+          if (
+            m.role === 'assistant' &&
+            m.rawAssistantContent &&
+            typeof m.rawAssistantContent === 'object'
+          ) {
             const raw = m.rawAssistantContent as Record<string, unknown>;
             return {
               role: 'assistant',
