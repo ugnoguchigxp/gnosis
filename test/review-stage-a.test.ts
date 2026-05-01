@@ -108,4 +108,38 @@ describe('stage A review flow', () => {
     expect(result.markdown).toContain('Missing validation');
     expect(result.markdown).not.toContain('src/missing.ts');
   });
+
+  test('returns needs_confirmation when LLM times out', async () => {
+    const repoPath = '/tmp';
+    process.env.GNOSIS_ALLOWED_ROOTS = '/tmp';
+
+    const result = await runReviewStageA(
+      {
+        taskId: 'task-timeout',
+        repoPath,
+        baseRef: 'main',
+        headRef: 'HEAD',
+        trigger: 'manual',
+        sessionId: 'code-review-repo:main',
+        mode: 'git_diff',
+      },
+      {
+        diffProvider: async () => SAMPLE_DIFF,
+        llmService: {
+          provider: 'cloud',
+          async generate() {
+            return JSON.stringify({
+              summary: 'Review timed out',
+              next_actions: [],
+              findings: [],
+            });
+          },
+        },
+      },
+    );
+
+    expect(result.review_status).toBe('needs_confirmation');
+    expect(result.metadata.degraded_mode).toBe(true);
+    expect(result.metadata.degraded_reasons).toContain('llm_timeout');
+  });
 });

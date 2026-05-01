@@ -26,6 +26,13 @@ function toErrorResult(error: unknown) {
   };
 }
 
+function resolveRequestRootDir(defaultRootDir: string, args: unknown): string {
+  if (!args || typeof args !== 'object') return defaultRootDir;
+  const candidate = (args as Record<string, unknown>).repoPath;
+  if (typeof candidate !== 'string' || candidate.trim().length === 0) return defaultRootDir;
+  return candidate;
+}
+
 function redirectLogs(): void {
   const originalError = console.error;
   console.log = (...args: unknown[]) => originalError(...args);
@@ -97,36 +104,36 @@ async function ensureHostRunning(rootDir: string): Promise<void> {
       health = null;
     }
 
-  if (health) {
-    if (hostMatchesCurrentSource(health)) return;
-    const replaceStale = envBoolean(process.env.GNOSIS_MCP_HOST_REPLACE_STALE, true);
-    if (!replaceStale) {
-      throw new Error(
-        `MCP host source fingerprint mismatch: running=${
-          health.sourceFingerprint ?? 'unknown'
-        }, current=${MCP_HOST_SOURCE_FINGERPRINT}`,
-      );
+    if (health) {
+      if (hostMatchesCurrentSource(health)) return;
+      const replaceStale = envBoolean(process.env.GNOSIS_MCP_HOST_REPLACE_STALE, true);
+      if (!replaceStale) {
+        throw new Error(
+          `MCP host source fingerprint mismatch: running=${
+            health.sourceFingerprint ?? 'unknown'
+          }, current=${MCP_HOST_SOURCE_FINGERPRINT}`,
+        );
+      }
+      await shutdownStaleHost(rootDir);
     }
-    await shutdownStaleHost(rootDir);
-  }
 
-  const autostart = envBoolean(process.env.GNOSIS_MCP_HOST_AUTOSTART, true);
-  if (!autostart) {
-    throw new Error(`MCP host is not running at ${getMcpHostSocketPath(rootDir)}`);
-  }
+    const autostart = envBoolean(process.env.GNOSIS_MCP_HOST_AUTOSTART, true);
+    if (!autostart) {
+      throw new Error(`MCP host is not running at ${getMcpHostSocketPath(rootDir)}`);
+    }
 
-  const bunCommand = process.argv[0] || 'bun';
-  const child = spawn(bunCommand, ['run', 'src/scripts/mcp-host.ts'], {
-    cwd: rootDir,
-    detached: true,
-    stdio: 'ignore',
-    env: process.env,
+    const bunCommand = process.argv[0] || 'bun';
+    const child = spawn(bunCommand, ['run', 'src/scripts/mcp-host.ts'], {
+      cwd: rootDir,
+      detached: true,
+      stdio: 'ignore',
+      env: process.env,
+    });
+    child.unref();
+    await waitForHost(rootDir, envNumber(process.env.GNOSIS_MCP_HOST_START_TIMEOUT_MS, 10000)); // Increased from 5000ms
+  })().finally(() => {
+    hostStartupPromise = null;
   });
-  child.unref();
-  await waitForHost(rootDir, envNumber(process.env.GNOSIS_MCP_HOST_START_TIMEOUT_MS, 10000)); // Increased from 5000ms
-})().finally(() => {
-  hostStartupPromise = null;
-});
 
   return hostStartupPromise;
 }
@@ -187,14 +194,15 @@ export async function runStdioAdapter(rootDir = process.cwd()): Promise<void> {
     activeRequests += 1;
     lastActivityAt = Date.now();
     try {
-      await ensureHostRunning(rootDir);
+      const requestRootDir = resolveRequestRootDir(rootDir, request.params.arguments);
+      await ensureHostRunning(requestRootDir);
       return await sendMcpHostRequest<McpHostToolResult>(
         {
           type: 'callTool',
           name: request.params.name,
           arguments: request.params.arguments,
         },
-        { rootDir },
+        { rootDir: requestRootDir },
       );
     } catch (error) {
       return toErrorResult(error);

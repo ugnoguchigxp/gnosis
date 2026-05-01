@@ -238,6 +238,12 @@ describe('review stage C', () => {
     expect(calls.length).toBeGreaterThanOrEqual(2);
     expect(saveExperienceCalls).toHaveLength(1);
     expect(saveMemoryCalls).toHaveLength(2);
+    const firstSaveExperienceCall = saveExperienceCalls[0] as unknown[] | undefined;
+    const savedExperience = firstSaveExperienceCall?.[0] as
+      | { type?: string; failureType?: string }
+      | undefined;
+    expect(savedExperience?.type).toBe('failure');
+    expect(savedExperience?.failureType).toBe('REVIEW_INCONCLUSIVE');
     expect(getProjectKey('/Users/y.noguchi/Code/gnosis')).toBe('gnosis');
   });
 });

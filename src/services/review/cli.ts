@@ -26,10 +26,20 @@ type CliArgs = {
   goal?: string;
   llmPreference?: 'local' | 'cloud';
   knowledgePolicy?: 'off' | 'best_effort' | 'required';
+  exitPolicy: 'strict' | 'balanced' | 'permissive';
   json: boolean;
   stage: 'a' | 'b' | 'c' | 'd' | 'e';
   enableStaticAnalysis: boolean;
 };
+
+export function resolveReviewExitCode(output: ReviewOutput, policy: CliArgs['exitPolicy']): number {
+  if (policy === 'permissive') return 0;
+  if (output.review_status === 'changes_requested') return 3;
+  if (policy === 'balanced') return 0;
+  if (output.review_status === 'needs_confirmation') return 2;
+  if (policy === 'strict' && output.metadata.degraded_mode) return 2;
+  return 0;
+}
 
 function isReviewDebugEnabled(): boolean {
   const raw = process.env.GNOSIS_REVIEW_DEBUG?.trim().toLowerCase();
@@ -61,6 +71,9 @@ function parseArgs(argv: string[]): CliArgs {
   const knowledgePolicy = knowledgePolicyArg
     ? KnowledgePolicySchema.parse(knowledgePolicyArg)
     : undefined;
+  const exitPolicyArg = getArg(argv, '--exit-policy');
+  const exitPolicy =
+    exitPolicyArg === 'strict' || exitPolicyArg === 'balanced' ? exitPolicyArg : 'permissive';
   const stageArg = getArg(argv, '--stage');
   const stage =
     stageArg === 'a' || stageArg === 'c' || stageArg === 'd' || stageArg === 'e' ? stageArg : 'b';
@@ -77,6 +90,7 @@ function parseArgs(argv: string[]): CliArgs {
     goal,
     llmPreference,
     knowledgePolicy,
+    exitPolicy,
     json,
     stage,
     enableStaticAnalysis,
@@ -162,8 +176,10 @@ export async function runReviewCli(argv = process.argv.slice(2)): Promise<void> 
 
   if (args.json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    process.exitCode = resolveReviewExitCode(result, args.exitPolicy);
     return;
   }
 
   process.stdout.write(`${result.markdown.trimEnd()}\n`);
+  process.exitCode = resolveReviewExitCode(result, args.exitPolicy);
 }

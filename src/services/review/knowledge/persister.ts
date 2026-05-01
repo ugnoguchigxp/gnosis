@@ -16,6 +16,22 @@ export function getProjectKey(repoPath: string): string {
   return base.replace(/[^a-zA-Z0-9_-]+/g, '-').toLowerCase();
 }
 
+function classifyReviewExperience(result: ReviewOutput): {
+  type: 'success' | 'failure';
+  failureType?: string;
+} {
+  if (result.review_status === 'changes_requested') {
+    return { type: 'failure', failureType: 'REVIEW_BLOCKING' };
+  }
+  if (result.review_status === 'needs_confirmation') {
+    return { type: 'failure', failureType: 'REVIEW_INCONCLUSIVE' };
+  }
+  if (result.metadata.degraded_mode) {
+    return { type: 'failure', failureType: 'REVIEW_DEGRADED' };
+  }
+  return { type: 'success' };
+}
+
 function mapFindingMemoryContent(finding: Finding): string {
   return `[${finding.severity}:${finding.category}] ${finding.title}: ${finding.rationale}`;
 }
@@ -148,8 +164,7 @@ export async function persistReviewCase(
       sessionId: `code-review-${projectKey}`,
       scenarioId: result.review_id,
       attempt: 1,
-      type: result.review_status === 'changes_requested' ? 'failure' : 'success',
-      failureType: result.review_status === 'changes_requested' ? 'REVIEW_BLOCKING' : undefined,
+      ...classifyReviewExperience(result),
       content: result.summary,
       metadata: {
         findingsCount: result.findings.length,

@@ -83,9 +83,33 @@ function countChangedFiles(rawDiff: string): number {
   return (rawDiff.match(/^diff --git /gm) || []).length;
 }
 
-function deriveReviewStatus(findings: Finding[]): ReviewStatus {
+function shouldEscalateToNeedsConfirmation(
+  findings: Finding[],
+  degradedReasons: DegradedMode[],
+  summary?: string,
+): boolean {
+  if (findings.some((finding) => finding.severity === 'error')) return false;
+  if (findings.some((finding) => finding.needsHumanConfirmation)) return true;
+  if (degradedReasons.includes('llm_timeout')) return true;
+  if (degradedReasons.includes('llm_failed')) return true;
+  if (degradedReasons.includes('llm_unparseable')) return true;
+  if (degradedReasons.includes('knowledge_retrieval_failed')) return true;
+  if (degradedReasons.includes('knowledge_empty_index')) return true;
+  if (degradedReasons.includes('knowledge_required_unavailable')) return true;
+  if (findings.length === 0 && degradedReasons.length > 0) return true;
+  if ((summary ?? '').trim().toLowerCase() === 'review timed out') return true;
+  return false;
+}
+
+function deriveReviewStatusWithContext(
+  findings: Finding[],
+  degradedReasons: DegradedMode[],
+  summary?: string,
+): ReviewStatus {
   if (findings.some((finding) => finding.severity === 'error')) return 'changes_requested';
-  if (findings.some((finding) => finding.needsHumanConfirmation)) return 'needs_confirmation';
+  if (shouldEscalateToNeedsConfirmation(findings, degradedReasons, summary)) {
+    return 'needs_confirmation';
+  }
   return 'no_major_findings';
 }
 
@@ -266,7 +290,7 @@ function buildNoChangesResult(startTime: number, now: () => number): ReviewOutpu
 function buildTimedOutResult(startTime: number, now: () => number): ReviewOutput {
   return buildResult({
     review_id: randomUUID(),
-    review_status: 'no_major_findings',
+    review_status: 'needs_confirmation',
     findings: [],
     summary: 'Review timed out',
     next_actions: [],
@@ -330,7 +354,7 @@ export async function runReviewStageA(
     const result = ReviewOutputSchema.parse({
       review_id: randomUUID(),
       task_id: req.taskId,
-      review_status: deriveReviewStatus(findings),
+      review_status: deriveReviewStatusWithContext(findings, [], summary),
       findings,
       summary,
       next_actions,
@@ -348,6 +372,10 @@ export async function runReviewStageA(
       },
       markdown: '',
     });
+
+    if (summary.trim().toLowerCase() === 'review timed out' && findings.length === 0) {
+      return buildTimedOutResult(startTime, now);
+    }
 
     return buildResult(result);
   } catch (error) {
@@ -508,7 +536,7 @@ export async function runReviewStageB(
   const result = ReviewOutputSchema.parse({
     review_id: randomUUID(),
     task_id: req.taskId,
-    review_status: deriveReviewStatus(mergedFindings),
+    review_status: deriveReviewStatusWithContext(mergedFindings, state.degradedModes, summary),
     findings: mergedFindings,
     summary,
     next_actions,
@@ -823,7 +851,7 @@ export async function runReviewStageC(
   const result = ReviewOutputSchema.parse({
     review_id: randomUUID(),
     task_id: req.taskId,
-    review_status: deriveReviewStatus(mergedFindings),
+    review_status: deriveReviewStatusWithContext(mergedFindings, state.degradedModes, summary),
     findings: mergedFindings,
     summary,
     next_actions,
@@ -1033,6 +1061,25 @@ Return your final review in the following JSON format ONLY:
     { role: 'user', content: `The diff to review:\n\n${rawDiff}` },
   ];
 
+  const recordReviewResultWithRetry = async (review: ReviewOutput): Promise<void> => {
+    const maxAttempts = 2;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        await recordReviewResult(review);
+        return;
+      } catch (err) {
+        const lastAttempt = attempt === maxAttempts;
+        console.error(
+          `[Stage E] review outcome persistence failed attempt=${attempt}/${maxAttempts} review_id=${
+            review.review_id
+          } retryable=${!lastAttempt} error=${err instanceof Error ? err.message : String(err)}`,
+        );
+        if (lastAttempt) return;
+        await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
+      }
+    }
+  };
+
   try {
     const finalResponse = await reviewWithToolsFn(llmService, messages, ctx);
 
@@ -1081,7 +1128,17 @@ Return your final review in the following JSON format ONLY:
     const result = ReviewOutputSchema.parse({
       review_id: randomUUID(),
       task_id: req.taskId,
-      review_status: deriveReviewStatus(findings),
+      review_status: deriveReviewStatusWithContext(
+        findings,
+        knowledgeRetrievalStatus === 'failed'
+          ? ['knowledge_retrieval_failed']
+          : knowledgeRetrievalStatus === 'empty_index'
+            ? ['knowledge_empty_index']
+            : knowledgeRetrievalStatus === 'no_applicable_knowledge'
+              ? ['knowledge_no_applicable']
+              : [],
+        parsed.summary,
+      ),
       findings,
       summary: parsed.summary || 'Review completed successfully.',
       next_actions: parsed.next_actions || [],
@@ -1116,9 +1173,7 @@ Return your final review in the following JSON format ONLY:
     });
 
     // Background call to record outcome in Gnosis memory
-    recordReviewResult(result).catch((err) => {
-      console.error('[Stage E] Failed to record review outcome:', err);
-    });
+    void recordReviewResultWithRetry(result);
 
     return buildResult(result);
   } catch (error) {

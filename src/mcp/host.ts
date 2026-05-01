@@ -4,13 +4,13 @@ import { join, resolve } from 'node:path';
 import { envBoolean, envNumber } from '../config.js';
 import { GNOSIS_CONSTANTS } from '../constants.js';
 import { closeDbPool } from '../db/index.js';
+import { isProcessAlive } from '../runtime/childProcesses.js';
 import { RuntimeLifecycle } from '../runtime/lifecycle.js';
 import { registerProcess } from '../runtime/processRegistry.js';
 import { startBackgroundWorkers, stopBackgroundWorkers } from '../services/background/manager.js';
 import { lookupFailureFirewallContext } from '../services/failureFirewall/context.js';
 import { runFailureFirewall } from '../services/failureFirewall/index.js';
 import { suggestFailureFirewallLearningCandidates } from '../services/failureFirewall/learningCandidates.js';
-import { isProcessAlive } from '../runtime/childProcesses.js';
 import { MCP_HOST_SOURCE_FINGERPRINT } from './hostFingerprint.js';
 import {
   MCP_HOST_MESSAGE_DELIMITER,

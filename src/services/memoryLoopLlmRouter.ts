@@ -219,7 +219,12 @@ function buildPromptArgs(prompt: string, maxTokens?: number): string[] {
 export async function runPromptWithMemoryLoopRouter(
   options: RunPromptOptions,
   deps: RunPromptDeps = {},
-): Promise<{ output: string; route: MemoryLoopRoute; attempts: number }> {
+): Promise<{
+  output: string;
+  route: MemoryLoopRoute;
+  attempts: number;
+  usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
+}> {
   const spawnSync = deps.spawnSync ?? defaultSpawnSync;
   const timeoutMs =
     options.llmTimeoutMs ?? (config as { llmTimeoutMs?: number }).llmTimeoutMs ?? 90_000;

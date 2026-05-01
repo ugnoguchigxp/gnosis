@@ -39,6 +39,10 @@ export async function ensureCodeReviewGoal() {
  */
 export async function recordReviewResult(review: ReviewOutput) {
   const goalId = await ensureCodeReviewGoal();
+  const succeeded =
+    review.review_status === 'no_major_findings' &&
+    review.metadata.degraded_mode === false &&
+    review.findings.length === 0;
 
   // Map findings to improvements
   const improvements = review.findings.map((finding) => ({
@@ -54,7 +58,7 @@ export async function recordReviewResult(review: ReviewOutput) {
       {
         taskId: goalId, // Linking to the goal itself as a task completion
         followed: true,
-        succeeded: review.findings.length === 0,
+        succeeded,
         note: review.summary,
       },
     ],

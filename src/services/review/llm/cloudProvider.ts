@@ -4,6 +4,7 @@ import type {
   ChatMessage,
   LLMGenerateResult,
   LLMToolDefinition,
+  LLMUsage,
   NativeToolCall,
   ReviewLLMService,
 } from './types.js';
@@ -106,6 +107,33 @@ const extractGoogleText = (payload: Record<string, unknown>): string => {
   return content.parts
     .map((part) => (isPlainRecord(part) && typeof part.text === 'string' ? part.text : ''))
     .join('');
+};
+
+const extractUsage = (payload: Record<string, unknown>): LLMUsage | undefined => {
+  const usage = payload.usage;
+  if (!isPlainRecord(usage)) return undefined;
+  const promptTokens =
+    typeof usage.prompt_tokens === 'number'
+      ? usage.prompt_tokens
+      : typeof usage.input_tokens === 'number'
+        ? usage.input_tokens
+        : undefined;
+  const completionTokens =
+    typeof usage.completion_tokens === 'number'
+      ? usage.completion_tokens
+      : typeof usage.output_tokens === 'number'
+        ? usage.output_tokens
+        : undefined;
+  const totalTokens =
+    typeof usage.total_tokens === 'number'
+      ? usage.total_tokens
+      : promptTokens !== undefined || completionTokens !== undefined
+        ? (promptTokens ?? 0) + (completionTokens ?? 0)
+        : undefined;
+  if (promptTokens === undefined && completionTokens === undefined && totalTokens === undefined) {
+    return undefined;
+  }
+  return { promptTokens, completionTokens, totalTokens };
 };
 
 function normalizeProvider(value: string | undefined): ReviewCloudProvider {
@@ -719,6 +747,7 @@ export function createCloudReviewLLMService(options: CloudProviderOptions = {}):
             text: textParts.join(''),
             toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
             rawAssistantContent: contentBlocks,
+            usage: extractUsage(payload),
           };
         }
 
@@ -787,6 +816,7 @@ export function createCloudReviewLLMService(options: CloudProviderOptions = {}):
         return {
           text,
           toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+          usage: extractUsage(payload),
         };
       } catch (error) {
         if (error instanceof ReviewError) throw error;

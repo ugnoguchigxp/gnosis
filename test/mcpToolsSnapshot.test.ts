@@ -53,11 +53,11 @@ describe('mcp tools snapshot', () => {
 
     expect(hashes).toEqual({
       initial_instructions: 'f973399805c1c233633f5196cf8e2ad40ee100b94996d711dcd030813b671bc5',
-      agentic_search: 'f277200b3235d2ed582e50d6134098cbd49de8b9e89a776751b6826d6b71f5f9',
-      search_knowledge: 'e987c2e2a17bd2119d36efc66f1c4180f1b66e21e2c154fe8e20171b1daeee99',
-      record_task_note: 'cb73f0b3739a9b7559acff1c1d3b70455514a0d0b61fac96ae6948c9a4e7449d',
-      review_task: 'e39bbbe4bcabb7b512162f27e9c167e82f211c84b8630b50948796a8420d8d92',
-      doctor: '2c0394f3b8ad34fddbe4881a4db02aebcebdb4b3ab7931ca505cbc6c6b9dcc18',
+      agentic_search: '1e0239515175b5776e895a6a6da6699b104e8481cbc04782e99b81416f489fb7',
+      search_knowledge: '35792c61001cf98ee29ab4c34dcd491c6c1943b22b231f11a21a9c8626fafd9c',
+      record_task_note: '9fe092606a6c15b455fd2eaf0aa83ff978a7088ad578159bb11cdc45bc84d1fd',
+      review_task: '925194479c1be2a6c38edf47fa80c92f04e62b901317fe8bacff75018bfff032',
+      doctor: '88e8588dd15d3a3a37e74a5f773ba67070df971090caa47384250ca512efc8e3',
     });
   });
 });

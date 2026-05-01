@@ -14,12 +14,19 @@ export type NativeToolCall = {
   arguments: Record<string, string>;
 };
 
+export type LLMUsage = {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+};
+
 /** Result from generateMessages — text and optional native tool calls. */
 export type LLMGenerateResult = {
   text: string;
   toolCalls?: NativeToolCall[];
   /** Raw response for re-injection into history (e.g. Anthropic content blocks). */
   rawAssistantContent?: unknown;
+  usage?: LLMUsage;
 };
 
 export interface ReviewLLMService {
