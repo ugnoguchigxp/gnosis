@@ -1,7 +1,17 @@
-import { describe, expect, it, mock } from 'bun:test';
+import { beforeEach, describe, expect, it, mock } from 'bun:test';
+
+const mockSaveAgenticAnswer = mock(async () => 'mem-1');
+mock.module('../../src/services/agenticSearch/saveAnswer.js', () => ({
+  saveAgenticAnswer: mockSaveAgenticAnswer,
+}));
+
 import { AgenticSearchRunner } from '../../src/services/agenticSearch/runner.js';
 
 describe('AgenticSearchRunner', () => {
+  beforeEach(() => {
+    mockSaveAgenticAnswer.mockClear();
+  });
+
   it('returns direct final answer when no tool calls', async () => {
     const adapter = {
       generate: mock(async () => ({ text: 'final answer', toolCalls: [] })),
@@ -13,7 +23,8 @@ describe('AgenticSearchRunner', () => {
     });
     const result = await runner.run({ userRequest: 'q' });
     expect(result.answer).toBe('final answer');
-    expect(result.toolTrace.toolCalls.length).toBe(0);
+    expect(result.toolTrace.toolCalls.length).toBe(2);
+    expect(mockSaveAgenticAnswer).toHaveBeenCalledTimes(1);
   });
 
   it('executes tool call then returns next answer', async () => {
@@ -32,8 +43,8 @@ describe('AgenticSearchRunner', () => {
     });
     const result = await runner.run({ userRequest: 'q' });
     expect(result.answer).toBe('done');
-    expect(result.toolTrace.toolCalls.length).toBe(1);
-    expect(result.toolTrace.toolCalls[0]?.toolName).toBe('knowledge_search');
+    expect(result.toolTrace.toolCalls.length).toBe(3);
+    expect(result.toolTrace.toolCalls[2]?.toolName).toBe('knowledge_search');
   });
 
   it('executes brave_search then fetch then returns final answer', async () => {
@@ -56,9 +67,9 @@ describe('AgenticSearchRunner', () => {
     });
     const result = await runner.run({ userRequest: 'bun test の最新Tips' });
     expect(result.answer).toContain('bun test --watch');
-    expect(result.toolTrace.toolCalls.length).toBe(2);
-    expect(result.toolTrace.toolCalls[0]?.toolName).toBe('brave_search');
-    expect(result.toolTrace.toolCalls[1]?.toolName).toBe('fetch');
+    expect(result.toolTrace.toolCalls.length).toBe(4);
+    expect(result.toolTrace.toolCalls[2]?.toolName).toBe('brave_search');
+    expect(result.toolTrace.toolCalls[3]?.toolName).toBe('fetch');
   });
 
   it('appends all tool messages before followup system context', async () => {
@@ -87,5 +98,40 @@ describe('AgenticSearchRunner', () => {
     const secondTurnRoles = seenMessageRoles[1] ?? [];
     const tail = secondTurnRoles.slice(-3);
     expect(tail).toEqual(['tool', 'tool', 'system']);
+  });
+
+  it('executes knowledge and web prefetch in first round', async () => {
+    const knowledgeSearch = mock(async () => ({ items: [] }));
+    const braveSearch = mock(async () => ({ results: [] }));
+    const fetchTool = mock(async () => ({}));
+    const adapter = {
+      generate: mock(async () => ({ text: 'done', toolCalls: [] })),
+    };
+    const runner = new AgenticSearchRunner(adapter as never, {
+      knowledge_search: knowledgeSearch,
+      brave_search: braveSearch,
+      fetch: fetchTool,
+    });
+    await runner.run({ userRequest: 'q' });
+    expect(knowledgeSearch).toHaveBeenCalledTimes(1);
+    expect(braveSearch).toHaveBeenCalledTimes(1);
+    expect(fetchTool).not.toHaveBeenCalled();
+  });
+
+  it('does not fail even when answer persistence fails', async () => {
+    mockSaveAgenticAnswer.mockImplementationOnce(async () => {
+      throw new Error('save failed');
+    });
+    const adapter = {
+      generate: mock(async () => ({ text: 'final answer', toolCalls: [] })),
+    };
+    const runner = new AgenticSearchRunner(adapter as never, {
+      knowledge_search: async () => ({ items: [] }),
+      brave_search: async () => ({ results: [] }),
+      fetch: async () => ({}),
+    });
+    const result = await runner.run({ userRequest: 'q' });
+    expect(result.answer).toBe('final answer');
+    expect(result.savedMemoryId).toBeUndefined();
   });
 });
