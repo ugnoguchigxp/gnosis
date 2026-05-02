@@ -241,6 +241,25 @@ pub async fn monitor_list_lessons(
 }
 
 #[tauri::command]
+pub async fn monitor_list_sessions(
+    state: State<'_, MonitorRuntime>,
+) -> Result<serde_json::Value, String> {
+    cli::list_sessions(&state.project_root)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_session_detail(
+    state: State<'_, MonitorRuntime>,
+    session_id: String,
+) -> Result<serde_json::Value, String> {
+    cli::session_detail(&state.project_root, &session_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub async fn monitor_create_lesson(
     state: State<'_, MonitorRuntime>,
     payload: String,

@@ -177,3 +177,32 @@ export type Relation = {
   relationType: string;
   weight: number;
 };
+
+export type SessionSummary = {
+  id: string;
+  title: string;
+  source: string;
+  sourceId: string | null;
+  sessionFile: string | null;
+  memorySessionId: string;
+  chunkCount: number;
+  messageCount: number;
+  roles: string[];
+  firstSeenAt: string;
+  lastSeenAt: string;
+  preview: string;
+};
+
+export type SessionMessage = {
+  id: string;
+  role: 'user' | 'assistant' | 'unknown';
+  content: string;
+  createdAt: string;
+  source: string;
+  chunkId: string;
+};
+
+export type SessionDetail = {
+  summary: SessionSummary;
+  messages: SessionMessage[];
+};

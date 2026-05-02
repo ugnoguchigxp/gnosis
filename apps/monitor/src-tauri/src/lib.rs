@@ -38,6 +38,8 @@ pub fn run() {
             monitor::commands::monitor_graph_snapshot,
             monitor::commands::monitor_enqueue_task,
             monitor::commands::monitor_list_lessons,
+            monitor::commands::monitor_list_sessions,
+            monitor::commands::monitor_session_detail,
             monitor::commands::monitor_create_lesson,
             monitor::commands::monitor_update_lesson,
             monitor::commands::monitor_delete_lesson,

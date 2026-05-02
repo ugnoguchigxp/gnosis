@@ -1,12 +1,12 @@
-<script lang="ts">
+<script lang="ts" generics="T">
 import type { Snippet } from 'svelte';
 
 type SortDirection = 'asc' | 'desc';
-type ColumnDef = {
+type ColumnDef<TItem> = {
   id: string;
   label: string;
   sortable?: boolean;
-  sortValue?: (item: unknown) => string | number | null | undefined;
+  sortValue?: (item: TItem) => string | number | null | undefined;
 };
 
 const {
@@ -20,15 +20,15 @@ const {
   keyOf,
   row,
 } = $props<{
-  columns: ColumnDef[];
-  items: unknown[];
+  columns: ColumnDef<T>[];
+  items: T[];
   loading?: boolean;
   infoText?: string | null;
   emptyText?: string;
   loadingText?: string;
   pageSize?: number;
-  keyOf: (item: unknown, index: number) => string;
-  row: Snippet<[unknown]>;
+  keyOf: (item: T, index: number) => string;
+  row: Snippet<[T]>;
 }>();
 
 let sortBy = $state<string | null>(null);
@@ -36,7 +36,7 @@ let sortDirection = $state<SortDirection>('asc');
 let currentPage = $state(1);
 
 const sortableColumnIds = $derived(
-  columns.filter((c: ColumnDef) => c.sortable).map((c: ColumnDef) => c.id),
+  columns.filter((c: ColumnDef<T>) => c.sortable).map((c: ColumnDef<T>) => c.id),
 );
 const activeSortBy = $derived(
   sortBy && sortableColumnIds.includes(sortBy) ? sortBy : sortableColumnIds[0] ?? null,
@@ -44,7 +44,7 @@ const activeSortBy = $derived(
 
 const sortedItems = $derived.by(() => {
   if (!activeSortBy) return items;
-  const column = columns.find((c: ColumnDef) => c.id === activeSortBy);
+  const column = columns.find((c: ColumnDef<T>) => c.id === activeSortBy);
   if (!column?.sortValue) return items;
   const dir = sortDirection === 'asc' ? 1 : -1;
   return [...items].sort((a, b) => {
@@ -62,7 +62,7 @@ const totalPages = $derived(Math.max(1, Math.ceil(sortedItems.length / pageSize)
 const safePage = $derived(Math.min(currentPage, totalPages));
 const pagedItems = $derived(sortedItems.slice((safePage - 1) * pageSize, safePage * pageSize));
 
-const toggleSort = (column: ColumnDef) => {
+const toggleSort = (column: ColumnDef<T>) => {
   if (!column.sortable) return;
   if (sortBy === column.id) {
     sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';

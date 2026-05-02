@@ -411,6 +411,46 @@ pub async fn list_lessons(project_root: &Path) -> anyhow::Result<serde_json::Val
     serde_json::from_slice(&output.stdout).context("failed to parse lessons list payload")
 }
 
+pub async fn list_sessions(project_root: &Path) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-sessions.ts")
+        .arg("list")
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute sessions list command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("sessions list command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse sessions list payload")
+}
+
+pub async fn session_detail(
+    project_root: &Path,
+    session_id: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/monitor-sessions.ts")
+        .arg("detail")
+        .arg(session_id)
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute session detail command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("session detail command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse session detail payload")
+}
+
 pub async fn create_lesson(
     project_root: &Path,
     payload: &str,

@@ -21,6 +21,8 @@ commands.allow = [
     "monitor_graph_snapshot",
     "monitor_enqueue_task",
     "monitor_list_lessons",
+    "monitor_list_sessions",
+    "monitor_session_detail",
     "monitor_create_lesson",
     "monitor_update_lesson",
     "monitor_delete_lesson",

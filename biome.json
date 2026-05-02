@@ -12,6 +12,7 @@
       "**/scratch/**",
       "apps/monitor/build",
       "apps/monitor/.svelte-kit",
+      "apps/monitor/src-tauri/gen",
       "apps/monitor/src-tauri/target",
       ".svelte-kit",
       "services/**/models",
