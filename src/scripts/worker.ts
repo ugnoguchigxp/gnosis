@@ -4,7 +4,6 @@ process.title = 'gnosis-worker';
 import { createLocalLlmRetriever } from '../adapters/retriever/mcpRetriever.js';
 import { config, envBoolean, envNumber } from '../config.js';
 import { GNOSIS_CONSTANTS } from '../constants.js';
-import { startBackgroundWorkers, stopBackgroundWorkers } from '../services/background/manager.js';
 
 // Add diagnostic info to environment
 process.env.GNOSIS_PROCESS_INFO = `Started:${new Date().toISOString()} | PPID:${
@@ -49,7 +48,6 @@ async function main() {
     }, 10000).unref();
 
     if (healthReportTimer) clearInterval(healthReportTimer);
-    stopBackgroundWorkers();
     await runLogger.flush();
     process.exit(0);
   };
@@ -89,7 +87,6 @@ async function main() {
 
   console.log('--- Gnosis KnowFlow Worker Daemon Start ---');
   await notifyTaskStart(process.title).catch(() => {});
-  startBackgroundWorkers();
 
   const queueRepository = new PgJsonbQueueRepository();
   const knowledgeRepository = new PgKnowledgeRepository();
@@ -218,7 +215,6 @@ async function main() {
     if (healthReportTimer) {
       clearInterval(healthReportTimer);
     }
-    stopBackgroundWorkers();
     await runLogger.flush();
   }
 

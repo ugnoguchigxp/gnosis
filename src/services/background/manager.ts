@@ -1,11 +1,33 @@
+import { createLocalLlmRetriever } from '../../adapters/retriever/mcpRetriever.js';
 import { config, envBoolean } from '../../config.js';
 import { GNOSIS_CONSTANTS } from '../../constants.js';
-import { processQueue } from './runner.js';
-import { scheduler } from './scheduler.js';
+import { withGlobalSemaphore } from '../../utils/lock.js';
+import { PgKnowledgeRepository } from '../knowflow/knowledge/repository.js';
+import { defaultStructuredLogger } from '../knowflow/ops/logger.js';
+import { PgJsonbQueueRepository } from '../knowflow/queue/pgJsonbRepository.js';
+import {
+  createKnowFlowTaskHandler,
+  createMcpEvidenceProvider,
+} from '../knowflow/worker/knowFlowHandler.js';
+import { runWorkerOnce } from '../knowflow/worker/loop.js';
 
 let intervalId: Timer | null = null;
 let isProcessing = false;
 let lastTickStart = 0;
+const queueRepository = new PgJsonbQueueRepository();
+const knowledgeRepository = new PgKnowledgeRepository();
+const retriever = createLocalLlmRetriever(config.localLlmPath);
+const evidenceProvider = createMcpEvidenceProvider(retriever, {
+  llmConfig: config.knowflow.llm,
+  logger: defaultStructuredLogger,
+});
+const handler = createKnowFlowTaskHandler({
+  repository: knowledgeRepository,
+  queueRepository,
+  evidenceProvider,
+  budget: config.knowflow.budget,
+  logger: defaultStructuredLogger,
+});
 
 /**
  * すべてのバックグラウンドプロセスを管理するマネージャー。
@@ -29,29 +51,37 @@ export function startBackgroundWorkers(): void {
 
   const tick = async () => {
     try {
-      // 定期タスクの登録/更新 (ID固定で重複排除)
-      await scheduler.enqueue('synthesis', {}, { id: 'periodic-synthesis', priority: 10 });
-      await scheduler.enqueue(
-        'embedding_batch',
-        { batchSize: 50 },
-        { id: 'periodic-embedding', priority: 20 },
-      );
-      await scheduler.enqueue('knowflow', {}, { id: 'periodic-knowflow', priority: 5 });
-      await scheduler.enqueue(
-        'knowflow_keyword_seed',
-        {},
-        { id: 'periodic-knowflow-keyword-seed', priority: 15 },
-      );
-      await scheduler.enqueue(
-        'knowflow_frontier_seed',
-        {},
-        { id: 'periodic-knowflow-frontier-seed', priority: 14 },
-      );
-      await scheduler.enqueue(
-        'hook_candidate_promotion',
-        {},
-        { id: 'periodic-hook-candidate-promotion', priority: 12 },
-      );
+      await queueRepository.clearStaleTasks(config.knowflow.worker.cronRunWindowMs);
+
+      // topic_tasks に system task を投入（単一キュー運用）
+      await queueRepository.enqueue({
+        topic: '__system__/synthesis',
+        mode: 'directed',
+        source: 'cron',
+        requestedBy: 'background-manager',
+        sourceGroup: 'system/synthesis',
+        priority: 10,
+        metadata: {
+          systemTask: {
+            type: 'synthesis',
+            payload: { maxFailures: 0 },
+          },
+        },
+      });
+      await queueRepository.enqueue({
+        topic: '__system__/embedding_batch',
+        mode: 'directed',
+        source: 'cron',
+        requestedBy: 'background-manager',
+        sourceGroup: 'system/embedding_batch',
+        priority: 20,
+        metadata: {
+          systemTask: {
+            type: 'embedding_batch',
+            payload: { batchSize: 50 },
+          },
+        },
+      });
     } catch (enqueueError) {
       console.error('[BackgroundManager] Error during periodic enqueue:', enqueueError);
     }
@@ -69,9 +99,22 @@ export function startBackgroundWorkers(): void {
     lastTickStart = Date.now();
 
     try {
-      console.error('[BackgroundManager] Ticking unified background scheduler...');
-      // キューを消化
-      await processQueue();
+      console.error('[BackgroundManager] Ticking unified topic queue worker...');
+      await withGlobalSemaphore(
+        'background-task',
+        config.backgroundWorker.maxConcurrency,
+        async () => {
+          const MAX_TASKS_PER_TICK = 10;
+          for (let i = 0; i < MAX_TASKS_PER_TICK; i += 1) {
+            const result = await runWorkerOnce(queueRepository, handler, {
+              workerId: `background-manager-${process.pid}`,
+            });
+            if (!result.processed) break;
+            if (result.status === 'failed') break;
+          }
+        },
+        1_000,
+      );
     } catch (error) {
       console.error('[BackgroundManager] Error during background tick:', error);
     } finally {

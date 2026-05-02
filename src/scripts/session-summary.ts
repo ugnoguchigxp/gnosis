@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { closeDbPool } from '../db/index.js';
-import { scheduler } from '../services/background/scheduler.js';
+import { PgJsonbQueueRepository } from '../services/knowflow/queue/pgJsonbRepository.js';
 import {
   findLatestSessionDistillation,
   getCandidatesByDistillationId,
@@ -38,6 +38,7 @@ async function run(argv: string[]) {
   const asJson = argv.includes('--json');
 
   if (command === 'enqueue') {
+    const queue = new PgJsonbQueueRepository();
     const sessionId = requireArg(argv, '--session-id');
     const provider = getArg(argv, '--provider') as
       | 'auto'
@@ -47,28 +48,39 @@ async function run(argv: string[]) {
       | 'bedrock'
       | undefined;
     const priority = toOptionalPriority(argv);
-    const taskId = `session-distillation:${sessionId}`;
     const force = toBool(argv, '--force');
     const promote = toBool(argv, '--promote');
-    await scheduler.enqueue(
-      'session_distillation',
-      { sessionId, force, promote, provider: provider ?? 'auto' },
-      {
-        id: taskId,
-        priority: priority ?? 30,
+    const enqueued = await queue.enqueue({
+      topic: `__system__/session_distillation/${sessionId}`,
+      mode: 'directed',
+      source: 'monitor',
+      requestedBy: 'session-summary',
+      sourceGroup: `session-distillation/${sessionId}`,
+      priority: priority ?? 30,
+      metadata: {
+        systemTask: {
+          type: 'session_distillation',
+          payload: {
+            sessionId,
+            force,
+            promote,
+            provider: provider ?? 'auto',
+          },
+        },
       },
-    );
+    });
 
     const payload = {
-      taskId,
+      taskId: enqueued.task.id,
       sessionId,
       status: 'pending',
-      queued: true,
+      queued: !enqueued.deduped,
+      deduped: enqueued.deduped,
       force,
       promote,
       provider: provider ?? 'auto',
     };
-    console.log(asJson ? JSON.stringify(payload, null, 2) : `queued: ${taskId}`);
+    console.log(asJson ? JSON.stringify(payload, null, 2) : `queued: ${payload.taskId}`);
     return;
   }
 

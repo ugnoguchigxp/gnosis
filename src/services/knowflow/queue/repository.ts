@@ -177,12 +177,16 @@ export class FileQueueRepository implements QueueRepository {
       const nextTasks = tasks.map((task) => {
         if (task.status === 'running' && task.updatedAt + timeoutMs < now) {
           clearedCount += 1;
+          const staleForMs = Math.max(0, now - task.updatedAt);
           return TopicTaskSchema.parse({
             ...task,
-            status: 'pending',
+            status: 'failed',
+            attempts: Math.max(task.attempts, 1),
+            errorReason: `stale running task auto-failed after ${staleForMs}ms`,
             updatedAt: now,
             lockedAt: undefined,
             lockOwner: undefined,
+            nextRunAt: undefined,
           });
         }
         return task;

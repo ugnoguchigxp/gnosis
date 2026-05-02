@@ -51,6 +51,7 @@
     "agentic-search": "bun run src/scripts/agentic-search.ts",
     "session:summary": "bun run src/scripts/session-summary.ts",
     "session:knowledge": "bun run src/scripts/session-knowledge.ts",
+    "queue:migrate-background": "bun run src/scripts/migrate-background-queue.ts",
     "failure-firewall": "bun run src/scripts/failure-firewall.ts",
     "semantic:mcp": "bun run src/scripts/semanticCodeMcpServer.ts",
     "gemma4": "./scripts/gemma4",

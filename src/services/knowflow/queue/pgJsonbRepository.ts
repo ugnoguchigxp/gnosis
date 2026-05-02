@@ -250,12 +250,16 @@ export class PgJsonbQueueRepository implements QueueRepository {
     await this.database.transaction(async (tx) => {
       for (const row of staleTasks) {
         const task = parseTaskPayload(row.payload);
+        const staleForMs = Math.max(0, now - task.updatedAt);
         const updated = TopicTaskSchema.parse({
           ...task,
-          status: 'pending',
+          status: 'failed',
+          attempts: Math.max(task.attempts, 1),
+          errorReason: `stale running task auto-failed after ${staleForMs}ms`,
           updatedAt: now,
           lockedAt: undefined,
           lockOwner: undefined,
+          nextRunAt: undefined,
         });
         const fields = toTaskRowFields(updated);
 
@@ -263,9 +267,9 @@ export class PgJsonbQueueRepository implements QueueRepository {
           .update(topicTasks)
           .set({
             status: fields.status,
+            payload: fields.payload,
             lockOwner: fields.lockOwner,
             lockedAt: fields.lockedAt,
-            payload: fields.payload,
             updatedAt: new Date(now),
           })
           .where(eq(topicTasks.id, row.id));

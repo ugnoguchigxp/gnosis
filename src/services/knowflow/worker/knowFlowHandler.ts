@@ -5,6 +5,9 @@ import { type BudgetConfig, type LlmClientConfig, config } from '../../../config
 import { db as defaultDb } from '../../../db/index.js';
 import { entities, relations } from '../../../db/schema.js';
 import { generateEntityId } from '../../../utils/entityId.js';
+import { embeddingBatchTask } from '../../background/tasks/embeddingBatchTask.js';
+import { synthesisTask } from '../../background/tasks/synthesisTask.js';
+import { distillSessionKnowledge } from '../../sessionSummary/engine.js';
 import type { TopicTask } from '../domain/task';
 import type { FlowEvidence } from '../flows/types';
 import { GapPlanner } from '../gap/planner.js';
@@ -35,6 +38,8 @@ const MIN_USEFULNESS_SCORE = 0.65;
 const MIN_EMERGENT_TOPIC_SCORE = 0.6;
 const MIN_EMERGENT_DIMENSION_SCORE = 0.45;
 const HIGH_IMPORTANCE_PRIORITY = 80;
+
+type SystemTaskType = 'synthesis' | 'embedding_batch' | 'session_distillation';
 
 export type KnowledgeRepositoryLike = {
   getByTopic: (topic: string) => Promise<Knowledge | null>;
@@ -1065,6 +1070,100 @@ const defaultEvidenceProvider: EvidenceProvider = async (task, _signal) => {
   };
 };
 
+function parseSystemTask(task: TopicTask): {
+  type: SystemTaskType;
+  payload: Record<string, unknown>;
+} | null {
+  if (!task.topic.startsWith('__system__/')) return null;
+  const metadata =
+    task.metadata && typeof task.metadata === 'object'
+      ? (task.metadata as Record<string, unknown>)
+      : {};
+  const systemTask =
+    metadata.systemTask && typeof metadata.systemTask === 'object'
+      ? (metadata.systemTask as Record<string, unknown>)
+      : null;
+  if (!systemTask) return null;
+  const type = systemTask.type;
+  if (type !== 'synthesis' && type !== 'embedding_batch' && type !== 'session_distillation') {
+    return null;
+  }
+  const payload =
+    systemTask.payload && typeof systemTask.payload === 'object'
+      ? (systemTask.payload as Record<string, unknown>)
+      : {};
+  return { type, payload };
+}
+
+async function runSystemTask(task: TopicTask): Promise<TaskExecutionResult | null> {
+  const parsed = parseSystemTask(task);
+  if (!parsed) return null;
+
+  try {
+    if (parsed.type === 'synthesis') {
+      const maxFailuresRaw = parsed.payload.maxFailures;
+      const maxFailures =
+        typeof maxFailuresRaw === 'number' && Number.isFinite(maxFailuresRaw)
+          ? Math.max(0, Math.trunc(maxFailuresRaw))
+          : 0;
+      const result = await synthesisTask({ maxFailures });
+      return {
+        ok: true,
+        summary: `system:synthesis processed=${result.processedMemories} failed=${result.failedCount}`,
+      };
+    }
+
+    if (parsed.type === 'embedding_batch') {
+      const batchSizeRaw = parsed.payload.batchSize;
+      const batchSize =
+        typeof batchSizeRaw === 'number' && Number.isFinite(batchSizeRaw)
+          ? Math.max(1, Math.trunc(batchSizeRaw))
+          : 50;
+      const result = await embeddingBatchTask(batchSize);
+      return {
+        ok: true,
+        summary: `system:embedding_batch processed=${result.processed}`,
+      };
+    }
+
+    const sessionId =
+      typeof parsed.payload.sessionId === 'string' && parsed.payload.sessionId.trim().length > 0
+        ? parsed.payload.sessionId.trim()
+        : '';
+    if (!sessionId) {
+      return { ok: false, error: 'system:session_distillation requires sessionId' };
+    }
+
+    const provider =
+      parsed.payload.provider === 'auto' ||
+      parsed.payload.provider === 'deterministic' ||
+      parsed.payload.provider === 'local' ||
+      parsed.payload.provider === 'openai' ||
+      parsed.payload.provider === 'bedrock'
+        ? parsed.payload.provider
+        : undefined;
+    const result = await distillSessionKnowledge({
+      sessionId,
+      force: parsed.payload.force === true,
+      promote: parsed.payload.promote === true,
+      provider,
+    });
+    const summary = `system:session_distillation session=${sessionId} status=${result.status} keep=${result.keptCount} drop=${result.droppedCount}`;
+    if (result.status === 'succeeded') {
+      return { ok: true, summary };
+    }
+    return {
+      ok: false,
+      error: summary,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 export const createKnowFlowTaskHandler = (
   options: CreateKnowFlowTaskHandlerOptions,
 ): TaskHandler => {
@@ -1089,6 +1188,9 @@ export const createKnowFlowTaskHandler = (
   });
 
   return async (task, signal): Promise<TaskExecutionResult> => {
+    const systemTaskResult = await runSystemTask(task);
+    if (systemTaskResult) return systemTaskResult;
+
     const now = options.now?.() ?? Date.now();
 
     // Budget window management

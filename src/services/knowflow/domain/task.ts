@@ -59,6 +59,7 @@ export const TopicTaskSchema = z
     resultSummary: z.string().min(1).optional(),
     evaluation: EvaluationSchema.optional(),
     expansion: TaskExpansionSchema.optional(),
+    metadata: z.record(z.unknown()).optional(),
   })
   .strict();
 
@@ -74,6 +75,7 @@ export const CreateTaskInputSchema = z
     sourceGroup: z.string().min(1).optional(),
     evaluation: EvaluationSchema.optional(),
     expansion: TaskExpansionSchema.optional(),
+    metadata: z.record(z.unknown()).optional(),
   })
   .strict();
 
@@ -110,6 +112,7 @@ export const createTask = (input: CreateTaskInput, now = Date.now()): TopicTask 
     requestedBy: parsed.requestedBy,
     evaluation: parsed.evaluation,
     expansion: parsed.expansion,
+    metadata: parsed.metadata,
     attempts: 0,
     createdAt: now,
     updatedAt: now,

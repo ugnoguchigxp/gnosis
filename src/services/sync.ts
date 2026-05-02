@@ -10,6 +10,7 @@ import {
   ingestCodexLogs,
   normalizeIngestCursor,
 } from './ingest.js';
+import { PgJsonbQueueRepository } from './knowflow/queue/pgJsonbRepository.js';
 
 const SYNC_SESSION_ID = 'sync-agent-logs';
 const DEFAULT_MAX_MESSAGES_PER_CHUNK = 120;
@@ -119,13 +120,14 @@ async function upsertSyncState(
  * 外部エージェントのログをスキャンし、新しい知識を Gnosis に同期します。
  */
 export async function syncAllAgentLogs() {
+  const queue = new PgJsonbQueueRepository();
   const sources = [
     { id: 'claude_logs', label: 'Claude Code', ingest: ingestClaudeLogs },
     { id: 'antigravity_logs', label: 'Antigravity', ingest: ingestAntigravityLogs },
     { id: 'codex_logs', label: 'Codex', ingest: ingestCodexLogs },
   ];
 
-  const summary = { imported: 0, sources: [] as string[] };
+  const summary = { imported: 0, sources: [] as string[], queuedTasks: [] as string[] };
   const maxMessagesPerChunk = positiveIntFromEnv(
     'GNOSIS_SYNC_MAX_MESSAGES_PER_CHUNK',
     DEFAULT_MAX_MESSAGES_PER_CHUNK,
@@ -224,6 +226,48 @@ export async function syncAllAgentLogs() {
     summary.imported += insertedMemories.count;
     summary.sources.push(source.label);
     console.log(`Successfully synced ${source.label}. (Raw memories: ${insertedMemories.count})`);
+  }
+
+  if (summary.imported > 0) {
+    try {
+      const synthesisTask = await queue.enqueue({
+        topic: '__system__/synthesis',
+        mode: 'directed',
+        source: 'cron',
+        requestedBy: 'sync',
+        sourceGroup: 'system/synthesis',
+        priority: 10,
+        metadata: {
+          systemTask: {
+            type: 'synthesis',
+            payload: { maxFailures: 0 },
+          },
+        },
+      });
+      summary.queuedTasks.push(synthesisTask.task.id);
+      const embeddingTask = await queue.enqueue({
+        topic: '__system__/embedding_batch',
+        mode: 'directed',
+        source: 'cron',
+        requestedBy: 'sync',
+        sourceGroup: 'system/embedding_batch',
+        priority: 20,
+        metadata: {
+          systemTask: {
+            type: 'embedding_batch',
+            payload: { batchSize: 50 },
+          },
+        },
+      });
+      summary.queuedTasks.push(embeddingTask.task.id);
+      console.log(
+        `[sync] queued follow-up tasks: ${summary.queuedTasks.join(', ')} (imported=${
+          summary.imported
+        })`,
+      );
+    } catch (enqueueError) {
+      console.warn('[sync] failed to enqueue follow-up tasks:', enqueueError);
+    }
   }
 
   return summary;
