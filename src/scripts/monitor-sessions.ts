@@ -9,7 +9,7 @@ import { filterSensitiveData } from '../utils/secretFilter.js';
 
 type VibeMemoryRow = typeof vibeMemories.$inferSelect;
 
-type SessionSummary = {
+export type SessionSummary = {
   id: string;
   title: string;
   source: string;
@@ -24,7 +24,7 @@ type SessionSummary = {
   preview: string;
 };
 
-type SessionMessage = {
+export type SessionMessage = {
   id: string;
   role: 'user' | 'assistant' | 'unknown';
   content: string;
@@ -33,7 +33,7 @@ type SessionMessage = {
   chunkId: string;
 };
 
-type SessionDetail = {
+export type SessionDetail = {
   summary: SessionSummary;
   messages: SessionMessage[];
 };
@@ -585,7 +585,7 @@ async function enrichSessionFileTitles(summaries: SessionSummary[]): Promise<Ses
   return enriched;
 }
 
-async function listSessions(): Promise<SessionSummary[]> {
+export async function listSessions(): Promise<SessionSummary[]> {
   const rows = await db
     .select()
     .from(vibeMemories)
@@ -596,7 +596,7 @@ async function listSessions(): Promise<SessionSummary[]> {
   return enrichSessionFileTitles(summarizeRows(rows));
 }
 
-async function getSession(sessionId: string): Promise<SessionDetail> {
+export async function getSessionDetail(sessionId: string): Promise<SessionDetail> {
   const rows = await db
     .select()
     .from(vibeMemories)
@@ -633,18 +633,20 @@ async function main() {
 
   if (command === 'detail') {
     const sessionId = requireString(args[1], 'session id');
-    console.log(JSON.stringify(await getSession(sessionId), null, 2));
+    console.log(JSON.stringify(await getSessionDetail(sessionId), null, 2));
     return;
   }
 
   throw new Error('Usage: bun run src/scripts/monitor-sessions.ts <list|detail> [session-id]');
 }
 
-main()
-  .catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    await closeDbPool();
-  });
+if (import.meta.main) {
+  main()
+    .catch((error) => {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      await closeDbPool();
+    });
+}

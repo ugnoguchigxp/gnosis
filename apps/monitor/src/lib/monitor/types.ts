@@ -206,3 +206,93 @@ export type SessionDetail = {
   summary: SessionSummary;
   messages: SessionMessage[];
 };
+
+export type SessionKnowledgeCandidate = {
+  id?: string;
+  distillationId?: string;
+  turnIndex: number;
+  kind: 'lesson' | 'rule' | 'procedure' | 'candidate';
+  title: string;
+  statement: string;
+  keep: boolean;
+  keepReason: string;
+  evidence?: Array<Record<string, unknown>>;
+  actions?: Array<Record<string, unknown>>;
+  confidence: number;
+  status: 'deterministic' | 'llm_succeeded' | 'llm_failed';
+  approvalStatus?: 'pending' | 'approved' | 'rejected';
+  rejectionReason?: string | null;
+  recordError?: string | null;
+  promotedNoteId?: string;
+};
+
+export type SessionDistillationResult = {
+  distillationId?: string;
+  sessionKey: string;
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'stale';
+  turnCount: number;
+  messageCount: number;
+  keptCount: number;
+  droppedCount: number;
+  promotedCount: number;
+  modelProvider: 'deterministic' | 'local-llm' | 'openai' | 'bedrock';
+  modelName?: string;
+  candidates: SessionKnowledgeCandidate[];
+  error?: string;
+};
+
+export type SessionDistillationStatus = {
+  id: string;
+  sessionKey: string;
+  transcriptHash: string;
+  promptVersion: string;
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'stale';
+  modelProvider: string | null;
+  modelName: string | null;
+  turnCount: number;
+  messageCount: number;
+  keptCount: number;
+  droppedCount: number;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+};
+
+export type SessionDistillationStatusPayload = {
+  record: SessionDistillationStatus;
+  candidates: SessionKnowledgeCandidate[];
+};
+
+export type SessionDistillationListItem = {
+  id: string;
+  sessionKey: string;
+  transcriptHash: string;
+  promptVersion: string;
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'stale';
+  modelProvider: string | null;
+  modelName: string | null;
+  turnCount: number;
+  messageCount: number;
+  keptCount: number;
+  droppedCount: number;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+};
+
+export type SessionKnowledgeListPayload = {
+  distillation: SessionDistillationStatus | null;
+  candidates: SessionKnowledgeCandidate[];
+};
+
+export type SessionDistillationEnqueueResult = {
+  taskId: string;
+  sessionId: string;
+  status: 'pending';
+  queued: true;
+  force: boolean;
+  promote: boolean;
+  provider: 'auto' | 'deterministic' | 'local' | 'openai' | 'bedrock';
+};

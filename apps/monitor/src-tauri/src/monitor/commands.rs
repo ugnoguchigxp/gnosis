@@ -260,6 +260,78 @@ pub async fn monitor_session_detail(
 }
 
 #[tauri::command]
+pub async fn monitor_session_distillation(
+    state: State<'_, MonitorRuntime>,
+    session_id: String,
+) -> Result<serde_json::Value, String> {
+    cli::session_distillation(&state.project_root, &session_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_list_session_summaries(
+    state: State<'_, MonitorRuntime>,
+) -> Result<serde_json::Value, String> {
+    cli::list_session_summaries(&state.project_root)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_distill_session_knowledge(
+    state: State<'_, MonitorRuntime>,
+    session_id: String,
+    force: bool,
+    promote: bool,
+) -> Result<serde_json::Value, String> {
+    cli::distill_session_knowledge(&state.project_root, &session_id, force, promote)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_list_session_knowledge(
+    state: State<'_, MonitorRuntime>,
+    session_id: String,
+) -> Result<serde_json::Value, String> {
+    cli::list_session_knowledge(&state.project_root, &session_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_approve_session_knowledge(
+    state: State<'_, MonitorRuntime>,
+    candidate_id: String,
+) -> Result<serde_json::Value, String> {
+    cli::approve_session_knowledge(&state.project_root, &candidate_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_reject_session_knowledge(
+    state: State<'_, MonitorRuntime>,
+    candidate_id: String,
+    reason: String,
+) -> Result<serde_json::Value, String> {
+    cli::reject_session_knowledge(&state.project_root, &candidate_id, &reason)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn monitor_record_session_knowledge(
+    state: State<'_, MonitorRuntime>,
+    candidate_id: String,
+) -> Result<serde_json::Value, String> {
+    cli::record_session_knowledge(&state.project_root, &candidate_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub async fn monitor_create_lesson(
     state: State<'_, MonitorRuntime>,
     payload: String,

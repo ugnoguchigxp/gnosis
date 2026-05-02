@@ -451,6 +451,181 @@ pub async fn session_detail(
     serde_json::from_slice(&output.stdout).context("failed to parse session detail payload")
 }
 
+pub async fn session_distillation(
+    project_root: &Path,
+    session_id: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/session-summary.ts")
+        .arg("status")
+        .arg("--session-id")
+        .arg(session_id)
+        .arg("--json")
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute session distillation status command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("session distillation status command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse session distillation status payload")
+}
+
+pub async fn list_session_summaries(project_root: &Path) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/session-summary.ts")
+        .arg("list")
+        .arg("--json")
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute session summaries list command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("session summaries list command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse session summaries list payload")
+}
+
+pub async fn distill_session_knowledge(
+    project_root: &Path,
+    session_id: &str,
+    force: bool,
+    promote: bool,
+) -> anyhow::Result<serde_json::Value> {
+    let mut cmd = Command::new("bun");
+    cmd.arg("run")
+        .arg("src/scripts/session-summary.ts")
+        .arg("enqueue")
+        .arg("--session-id")
+        .arg(session_id)
+        .arg("--json");
+    if force {
+        cmd.arg("--force");
+    }
+    if promote {
+        cmd.arg("--promote");
+    }
+    let output = cmd
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute session distillation command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("session distillation command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse session distillation payload")
+}
+
+pub async fn list_session_knowledge(
+    project_root: &Path,
+    session_id: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/session-knowledge.ts")
+        .arg("list")
+        .arg("--session-id")
+        .arg(session_id)
+        .arg("--json")
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute session knowledge list command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("session knowledge list command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse session knowledge list payload")
+}
+
+pub async fn approve_session_knowledge(
+    project_root: &Path,
+    candidate_id: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/session-knowledge.ts")
+        .arg("approve")
+        .arg("--candidate-id")
+        .arg(candidate_id)
+        .arg("--json")
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute session knowledge approve command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("session knowledge approve command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse session knowledge approve payload")
+}
+
+pub async fn reject_session_knowledge(
+    project_root: &Path,
+    candidate_id: &str,
+    reason: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/session-knowledge.ts")
+        .arg("reject")
+        .arg("--candidate-id")
+        .arg(candidate_id)
+        .arg("--reason")
+        .arg(reason)
+        .arg("--json")
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute session knowledge reject command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("session knowledge reject command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse session knowledge reject payload")
+}
+
+pub async fn record_session_knowledge(
+    project_root: &Path,
+    candidate_id: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("bun")
+        .arg("run")
+        .arg("src/scripts/session-knowledge.ts")
+        .arg("record")
+        .arg("--candidate-id")
+        .arg(candidate_id)
+        .arg("--json")
+        .current_dir(project_root)
+        .output()
+        .await
+        .context("failed to execute session knowledge record command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("session knowledge record command failed: {stderr}");
+    }
+
+    serde_json::from_slice(&output.stdout).context("failed to parse session knowledge record payload")
+}
+
 pub async fn create_lesson(
     project_root: &Path,
     payload: &str,

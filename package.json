@@ -49,6 +49,8 @@
     "monitor:dev": "bun run --cwd apps/monitor tauri:dev",
     "review": "bun run src/scripts/review.ts",
     "agentic-search": "bun run src/scripts/agentic-search.ts",
+    "session:summary": "bun run src/scripts/session-summary.ts",
+    "session:knowledge": "bun run src/scripts/session-knowledge.ts",
     "failure-firewall": "bun run src/scripts/failure-firewall.ts",
     "semantic:mcp": "bun run src/scripts/semanticCodeMcpServer.ts",
     "gemma4": "./scripts/gemma4",

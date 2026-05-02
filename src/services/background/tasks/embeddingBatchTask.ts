@@ -1,6 +1,6 @@
-import { and, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import { db } from '../../../db/index.js';
-import { entities, experienceLogs, vibeMemories } from '../../../db/schema.js';
+import { entities, experienceLogs, sessionKnowledgeCandidates } from '../../../db/schema.js';
 import { generateEmbedding } from '../../memory.js';
 
 /**
@@ -9,20 +9,7 @@ import { generateEmbedding } from '../../memory.js';
 export async function embeddingBatchTask(batchSize = 20): Promise<{ processed: number }> {
   let totalProcessed = 0;
 
-  // 1. Vibe Memories の欠損確認
-  const pendingMemories = await db
-    .select({ id: vibeMemories.id, content: vibeMemories.content })
-    .from(vibeMemories)
-    .where(isNull(vibeMemories.embedding))
-    .limit(batchSize);
-
-  for (const mem of pendingMemories) {
-    const embedding = await generateEmbedding(mem.content);
-    await db.update(vibeMemories).set({ embedding }).where(sql`id = ${mem.id}`);
-    totalProcessed++;
-  }
-
-  // 2. Entities の欠損確認
+  // 1. Entities の欠損確認
   const pendingEntities = await db
     .select({ id: entities.id, name: entities.name, description: entities.description })
     .from(entities)
@@ -36,7 +23,7 @@ export async function embeddingBatchTask(batchSize = 20): Promise<{ processed: n
     totalProcessed++;
   }
 
-  // 3. Experience Logs の欠損確認
+  // 2. Experience Logs の欠損確認
   const pendingLogs = await db
     .select({ id: experienceLogs.id, content: experienceLogs.content })
     .from(experienceLogs)
@@ -46,6 +33,25 @@ export async function embeddingBatchTask(batchSize = 20): Promise<{ processed: n
   for (const log of pendingLogs) {
     const embedding = await generateEmbedding(log.content);
     await db.update(experienceLogs).set({ embedding }).where(sql`id = ${log.id}`);
+    totalProcessed++;
+  }
+
+  // 3. Session Knowledge Candidates の欠損確認
+  const pendingCandidates = await db
+    .select({
+      id: sessionKnowledgeCandidates.id,
+      title: sessionKnowledgeCandidates.title,
+      statement: sessionKnowledgeCandidates.statement,
+    })
+    .from(sessionKnowledgeCandidates)
+    .where(
+      and(isNull(sessionKnowledgeCandidates.embedding), eq(sessionKnowledgeCandidates.keep, true)),
+    )
+    .limit(batchSize);
+
+  for (const candidate of pendingCandidates) {
+    const embedding = await generateEmbedding(`${candidate.title}\n${candidate.statement}`);
+    await db.update(sessionKnowledgeCandidates).set({ embedding }).where(sql`id = ${candidate.id}`);
     totalProcessed++;
   }
 

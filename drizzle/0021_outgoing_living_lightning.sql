@@ -1,0 +1,2 @@
+ALTER TABLE "session_knowledge_candidates" ADD COLUMN "embedding" vector(384);--> statement-breakpoint
+CREATE INDEX "session_knowledge_candidates_embedding_hnsw_idx" ON "session_knowledge_candidates" USING hnsw ("embedding" vector_cosine_ops);

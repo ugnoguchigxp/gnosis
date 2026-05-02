@@ -10,7 +10,6 @@ import {
   ingestCodexLogs,
   normalizeIngestCursor,
 } from './ingest.js';
-import { generateEmbedding } from './memory.js';
 
 const SYNC_SESSION_ID = 'sync-agent-logs';
 const DEFAULT_MAX_MESSAGES_PER_CHUNK = 120;
@@ -182,13 +181,11 @@ export async function syncAllAgentLogs() {
         const dedupeKey = createHash('sha256')
           .update(`${source.id}\n${index}\n${content}`)
           .digest('hex');
-        const embedding = await generateEmbedding(content);
         const inserted = await tx
           .insert(vibeMemories)
           .values({
             sessionId: SYNC_SESSION_ID,
             content,
-            embedding,
             dedupeKey,
             metadata: {
               ...mergeMessageMetadata(chunk),

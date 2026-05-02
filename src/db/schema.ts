@@ -527,3 +527,103 @@ export const failureFirewallPatterns = pgTable(
     ),
   }),
 );
+
+export const sessionDistillations = pgTable(
+  'session_distillations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    sessionKey: text('session_key').notNull(),
+    transcriptHash: text('transcript_hash').notNull(),
+    promptVersion: text('prompt_version').notNull(),
+    status: text('status').notNull(),
+    modelProvider: text('model_provider'),
+    modelName: text('model_name'),
+    turnCount: integer('turn_count').notNull(),
+    messageCount: integer('message_count').notNull(),
+    keptCount: integer('kept_count').notNull().default(0),
+    droppedCount: integer('dropped_count').notNull().default(0),
+    metadata: jsonb('metadata').notNull().default({}),
+    error: text('error'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+    completedAt: timestamp('completed_at'),
+  },
+  (table) => ({
+    sessionHashPromptUnique: unique('session_distillations_session_hash_prompt_unique').on(
+      table.sessionKey,
+      table.transcriptHash,
+      table.promptVersion,
+    ),
+    sessionCreatedAtIdx: index('session_distillations_session_created_at_idx').on(
+      table.sessionKey,
+      table.createdAt.desc(),
+    ),
+    statusCreatedAtIdx: index('session_distillations_status_created_at_idx').on(
+      table.status,
+      table.createdAt.desc(),
+    ),
+    statusCheck: check(
+      'session_distillations_status_check',
+      sql`${table.status} IN ('pending', 'running', 'succeeded', 'failed', 'stale')`,
+    ),
+  }),
+);
+
+export const sessionKnowledgeCandidates = pgTable(
+  'session_knowledge_candidates',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    distillationId: uuid('distillation_id')
+      .notNull()
+      .references(() => sessionDistillations.id, { onDelete: 'cascade' }),
+    turnIndex: integer('turn_index').notNull(),
+    kind: text('kind').notNull(),
+    title: text('title').notNull(),
+    statement: text('statement').notNull(),
+    keep: boolean('keep').notNull(),
+    keepReason: text('keep_reason').notNull(),
+    evidence: jsonb('evidence').notNull().default([]),
+    actions: jsonb('actions').notNull().default([]),
+    embedding: vector('embedding', { dimensions: config.embeddingDimension }),
+    confidence: real('confidence').notNull().default(0.5),
+    status: text('status').notNull(),
+    approvalStatus: text('approval_status').notNull().default('pending'),
+    rejectionReason: text('rejection_reason'),
+    recordError: text('record_error'),
+    approvedAt: timestamp('approved_at'),
+    rejectedAt: timestamp('rejected_at'),
+    promotedNoteId: text('promoted_note_id'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    distillationTurnIdx: index('session_knowledge_candidates_distillation_turn_idx').on(
+      table.distillationId,
+      table.turnIndex,
+    ),
+    kindKeepIdx: index('session_knowledge_candidates_kind_keep_idx').on(table.kind, table.keep),
+    promotedNoteIdIdx: index('session_knowledge_candidates_promoted_note_id_idx').on(
+      table.promotedNoteId,
+    ),
+    embeddingHnswIdx: index('session_knowledge_candidates_embedding_hnsw_idx').using(
+      'hnsw',
+      table.embedding.op('vector_cosine_ops'),
+    ),
+    kindCheck: check(
+      'session_knowledge_candidates_kind_check',
+      sql`${table.kind} IN ('lesson', 'rule', 'procedure', 'candidate')`,
+    ),
+    statusCheck: check(
+      'session_knowledge_candidates_status_check',
+      sql`${table.status} IN ('deterministic', 'llm_succeeded', 'llm_failed')`,
+    ),
+    approvalStatusCheck: check(
+      'session_knowledge_candidates_approval_status_check',
+      sql`${table.approvalStatus} IN ('pending', 'approved', 'rejected')`,
+    ),
+    confidenceCheck: check(
+      'session_knowledge_candidates_confidence_check',
+      sql`${table.confidence} >= 0 AND ${table.confidence} <= 1`,
+    ),
+  }),
+);

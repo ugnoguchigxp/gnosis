@@ -172,6 +172,50 @@ export async function searchMemoriesByType(
   limit = 5,
   database: DbClient = db,
 ) {
+  const vectorReady = await database
+    .select({ id: vibeMemories.id })
+    .from(vibeMemories)
+    .where(
+      sql`${vibeMemories.memoryType} = ${memoryType} AND ${vibeMemories.embedding} IS NOT NULL`,
+    )
+    .limit(1);
+
+  if (vectorReady.length === 0) {
+    const tsquery = sql`plainto_tsquery('simple', ${query})`;
+    const tsvector = sql`to_tsvector('simple', ${vibeMemories.content})`;
+    const rank = sql<number>`ts_rank_cd(${tsvector}, ${tsquery})`;
+
+    const lexicalHits = await database
+      .select({
+        id: vibeMemories.id,
+        content: vibeMemories.content,
+        metadata: vibeMemories.metadata,
+        createdAt: vibeMemories.createdAt,
+        sessionId: vibeMemories.sessionId,
+        similarity: rank.mapWith(Number),
+      })
+      .from(vibeMemories)
+      .where(sql`${vibeMemories.memoryType} = ${memoryType} AND ${tsvector} @@ ${tsquery}`)
+      .orderBy(sql`${rank} DESC`, desc(vibeMemories.createdAt))
+      .limit(limit);
+
+    if (lexicalHits.length > 0) return lexicalHits;
+
+    return database
+      .select({
+        id: vibeMemories.id,
+        content: vibeMemories.content,
+        metadata: vibeMemories.metadata,
+        createdAt: vibeMemories.createdAt,
+        sessionId: vibeMemories.sessionId,
+        similarity: sql<number>`0`,
+      })
+      .from(vibeMemories)
+      .where(eq(vibeMemories.memoryType, memoryType))
+      .orderBy(desc(vibeMemories.createdAt))
+      .limit(limit);
+  }
+
   const embedding = await generateEmbedding(query);
   const embeddingStr = JSON.stringify(embedding);
   const similarity = sql`1 - (${vibeMemories.embedding} <=> ${embeddingStr}::vector)`;

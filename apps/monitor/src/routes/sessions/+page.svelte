@@ -1,21 +1,43 @@
 <script lang="ts">
 import { browser } from '$app/environment';
-import type { SessionDetail, SessionMessage, SessionSummary } from '$lib/monitor/types';
+import type {
+  SessionDetail,
+  SessionDistillationEnqueueResult,
+  SessionDistillationListItem,
+  SessionDistillationResult,
+  SessionDistillationStatus,
+  SessionDistillationStatusPayload,
+  SessionKnowledgeListPayload,
+  SessionMessage,
+  SessionSummary,
+} from '$lib/monitor/types';
 import { invoke } from '@tauri-apps/api/core';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import { onMount, tick } from 'svelte';
 
 type MessageOrder = 'asc' | 'desc';
+type SessionViewTab = 'conversation' | 'summarize';
 
 let sessions = $state<SessionSummary[]>([]);
 let selectedSessionId = $state<string | null>(null);
 let selectedDetail = $state<SessionDetail | null>(null);
 const filters = $state({ searchQuery: '' });
 let sessionsLoading = $state(true);
+let summariesLoading = $state(false);
 let detailLoading = $state(false);
+let distillationLoading = $state(false);
+let distillationError = $state<string | null>(null);
+let distillationQueueMessage = $state<string | null>(null);
+let candidateActionLoading = $state(false);
+let distillationStatus = $state<SessionDistillationStatus | null>(null);
+let distillationResult = $state<SessionDistillationResult | null>(null);
 let sessionsError = $state<string | null>(null);
+let summariesError = $state<string | null>(null);
 let detailError = $state<string | null>(null);
+// biome-ignore lint/style/useConst: tab is switched by button handlers.
+let sessionViewTab = $state<SessionViewTab>('conversation');
+let sessionSummaries = $state<SessionDistillationListItem[]>([]);
 let detailRequestSeq = 0;
 let messageOrder = $state<MessageOrder>('asc');
 // biome-ignore lint/style/useConst: Svelte bind:this assigns the element reference at runtime.
@@ -53,6 +75,10 @@ const renderedMessages = $derived.by(() =>
       const directionalTimeDiff = messageOrder === 'asc' ? timeDiff : -timeDiff;
       return directionalTimeDiff || a.orderIndex - b.orderIndex;
     }),
+);
+
+const selectedSessionSummaries = $derived.by(() =>
+  sessionSummaries.filter((summary) => summary.sessionKey === selectedSessionId),
 );
 
 function messageTimestamp(value: string): number {
@@ -119,6 +145,8 @@ function renderMarkdown(content: string): string {
 async function selectSession(session: SessionSummary): Promise<void> {
   selectedSessionId = session.id;
   selectedDetail = null;
+  distillationResult = null;
+  distillationError = null;
   detailError = null;
   detailLoading = true;
   const requestSeq = ++detailRequestSeq;
@@ -132,6 +160,7 @@ async function selectSession(session: SessionSummary): Promise<void> {
       selectedDetail = detail;
       detailLoading = false;
       await focusMessageOrderEdge();
+      await loadDistillationStatus(session.id);
     }
   } catch (error) {
     if (requestSeq === detailRequestSeq) {
@@ -141,6 +170,148 @@ async function selectSession(session: SessionSummary): Promise<void> {
     if (requestSeq === detailRequestSeq) {
       detailLoading = false;
     }
+  }
+}
+
+async function loadDistillationStatus(sessionId: string): Promise<void> {
+  try {
+    const payload = await invoke<SessionDistillationStatusPayload | null>(
+      'monitor_session_distillation',
+      {
+        sessionId,
+        session_id: sessionId,
+      },
+    );
+    distillationStatus = payload?.record ?? null;
+    if (payload?.candidates && payload.candidates.length > 0) {
+      distillationResult = {
+        distillationId: payload.record.id,
+        sessionKey: payload.record.sessionKey,
+        status: payload.record.status,
+        turnCount: payload.record.turnCount,
+        messageCount: payload.record.messageCount,
+        keptCount: payload.record.keptCount,
+        droppedCount: payload.record.droppedCount,
+        promotedCount: payload.candidates.filter((candidate) => Boolean(candidate.promotedNoteId))
+          .length,
+        modelProvider:
+          payload.record.modelProvider === 'openai' ||
+          payload.record.modelProvider === 'bedrock' ||
+          payload.record.modelProvider === 'local-llm'
+            ? payload.record.modelProvider
+            : 'deterministic',
+        modelName: payload.record.modelName ?? undefined,
+        candidates: payload.candidates,
+        error: payload.record.error ?? undefined,
+      };
+    }
+  } catch {
+    distillationStatus = null;
+  }
+}
+
+async function runDistillation(promote: boolean): Promise<void> {
+  if (!selectedDetail) return;
+  distillationLoading = true;
+  distillationError = null;
+  distillationQueueMessage = null;
+  try {
+    const queued = await invoke<SessionDistillationEnqueueResult>(
+      'monitor_distill_session_knowledge',
+      {
+        sessionId: selectedDetail.summary.id,
+        session_id: selectedDetail.summary.id,
+        force: true,
+        promote,
+      },
+    );
+    distillationQueueMessage = `queued: ${queued.taskId}`;
+    await loadSessionSummaries();
+  } catch (error) {
+    distillationError = error instanceof Error ? error.message : String(error);
+  } finally {
+    distillationLoading = false;
+  }
+}
+
+async function refreshKnowledgeCandidates(): Promise<void> {
+  if (!selectedDetail) return;
+  const payload = await invoke<SessionKnowledgeListPayload>('monitor_list_session_knowledge', {
+    sessionId: selectedDetail.summary.id,
+    session_id: selectedDetail.summary.id,
+  });
+  if (payload.distillation) {
+    distillationStatus = payload.distillation;
+  }
+  if (payload.candidates.length > 0 && payload.distillation) {
+    distillationResult = {
+      distillationId: payload.distillation.id,
+      sessionKey: payload.distillation.sessionKey,
+      status: payload.distillation.status,
+      turnCount: payload.distillation.turnCount,
+      messageCount: payload.distillation.messageCount,
+      keptCount: payload.distillation.keptCount,
+      droppedCount: payload.distillation.droppedCount,
+      promotedCount: payload.candidates.filter((candidate) => Boolean(candidate.promotedNoteId))
+        .length,
+      modelProvider:
+        payload.distillation.modelProvider === 'openai' ||
+        payload.distillation.modelProvider === 'bedrock' ||
+        payload.distillation.modelProvider === 'local-llm'
+          ? payload.distillation.modelProvider
+          : 'deterministic',
+      modelName: payload.distillation.modelName ?? undefined,
+      candidates: payload.candidates,
+      error: payload.distillation.error ?? undefined,
+    };
+  }
+}
+
+async function approveCandidate(candidateId: string): Promise<void> {
+  candidateActionLoading = true;
+  distillationError = null;
+  try {
+    await invoke('monitor_approve_session_knowledge', { candidateId, candidate_id: candidateId });
+    await refreshKnowledgeCandidates();
+    await loadSessionSummaries();
+  } catch (error) {
+    distillationError = error instanceof Error ? error.message : String(error);
+  } finally {
+    candidateActionLoading = false;
+  }
+}
+
+async function rejectCandidate(candidateId: string): Promise<void> {
+  const reason = prompt('却下理由を入力してください');
+  if (!reason || reason.trim().length === 0) return;
+  candidateActionLoading = true;
+  distillationError = null;
+  try {
+    await invoke('monitor_reject_session_knowledge', {
+      candidateId,
+      candidate_id: candidateId,
+      reason,
+    });
+    await refreshKnowledgeCandidates();
+    await loadSessionSummaries();
+  } catch (error) {
+    distillationError = error instanceof Error ? error.message : String(error);
+  } finally {
+    candidateActionLoading = false;
+  }
+}
+
+async function recordCandidate(candidateId: string): Promise<void> {
+  candidateActionLoading = true;
+  distillationError = null;
+  try {
+    await invoke('monitor_record_session_knowledge', { candidateId, candidate_id: candidateId });
+    await refreshKnowledgeCandidates();
+    await loadSessionSummaries();
+  } catch (error) {
+    distillationError = error instanceof Error ? error.message : String(error);
+  } finally {
+    candidateActionLoading = false;
   }
 }
 
@@ -182,8 +353,23 @@ async function loadSessions(): Promise<void> {
   }
 }
 
+async function loadSessionSummaries(): Promise<void> {
+  summariesLoading = true;
+  summariesError = null;
+  try {
+    sessionSummaries = await invoke<SessionDistillationListItem[]>(
+      'monitor_list_session_summaries',
+    );
+  } catch (error) {
+    summariesError = error instanceof Error ? error.message : String(error);
+  } finally {
+    summariesLoading = false;
+  }
+}
+
 onMount(() => {
   void loadSessions();
+  void loadSessionSummaries();
 });
 </script>
 
@@ -191,7 +377,14 @@ onMount(() => {
   <aside class="session-sidebar" aria-label="Sessions">
     <div class="sidebar-header">
       <h1>Sessions</h1>
-      <button class="icon-button" onclick={() => void loadSessions()} disabled={sessionsLoading}>
+      <button
+        class="icon-button"
+        onclick={async () => {
+          await loadSessions();
+          await loadSessionSummaries();
+        }}
+        disabled={sessionsLoading || summariesLoading}
+      >
         再読込
       </button>
     </div>
@@ -248,7 +441,48 @@ onMount(() => {
           </div>
         </div>
         <div class="conversation-actions">
-          <div class="order-control" role="group" aria-label="Message order">
+          {#if selectedDetail.summary.sessionFile}
+            <div class="session-path" title={selectedDetail.summary.sessionFile}>
+              {selectedDetail.summary.sessionFile}
+            </div>
+          {/if}
+        </div>
+      </header>
+
+      <div class="session-subtabs" role="tablist" aria-label="Session sub views">
+        <button
+          type="button"
+          role="tab"
+          class:active={sessionViewTab === 'conversation'}
+          aria-selected={sessionViewTab === 'conversation'}
+          onclick={() => {
+            sessionViewTab = 'conversation';
+          }}
+        >
+          会話
+        </button>
+        <button
+          type="button"
+          role="tab"
+          class:active={sessionViewTab === 'summarize'}
+          aria-selected={sessionViewTab === 'summarize'}
+          onclick={async () => {
+            sessionViewTab = 'summarize';
+            await refreshKnowledgeCandidates();
+          }}
+        >
+          Summarize
+        </button>
+      </div>
+
+      {#if sessionViewTab === 'conversation'}
+        <section
+          class="messages"
+          aria-label="Conversation history"
+          bind:this={messagesElement}
+          tabindex="-1"
+        >
+          <div class="order-control conversation-order" role="group" aria-label="Message order">
             <button
               type="button"
               class:active={messageOrder === 'asc'}
@@ -266,48 +500,185 @@ onMount(() => {
               新しい順
             </button>
           </div>
-          {#if selectedDetail.summary.sessionFile}
-            <div class="session-path" title={selectedDetail.summary.sessionFile}>
-              {selectedDetail.summary.sessionFile}
-            </div>
-          {/if}
-        </div>
-      </header>
-
-      <section
-        class="messages"
-        aria-label="Conversation history"
-        bind:this={messagesElement}
-        tabindex="-1"
-      >
-        {#each renderedMessages as message (message.id)}
-          <article class="message" class:user={message.role === 'user'}>
-            <div class="message-avatar">{roleLabel(message.role).slice(0, 1)}</div>
-            <div class="message-content">
-              <div class="message-meta">
-                <span>{roleLabel(message.role)}</span>
-                <span>{formatDateTime(message.createdAt)}</span>
-              </div>
-              {#if message.isAgentInstruction}
-                <details class="message-accordion">
-                  <summary>
-                    <span>AGENTS.md instructions</span>
-                    <span class="accordion-label show-label">表示</span>
-                    <span class="accordion-label hide-label">非表示</span>
-                  </summary>
+          {#each renderedMessages as message (message.id)}
+            <article class="message" class:user={message.role === 'user'}>
+              <div class="message-avatar">{roleLabel(message.role).slice(0, 1)}</div>
+              <div class="message-content">
+                <div class="message-meta">
+                  <span>{roleLabel(message.role)}</span>
+                  <span>{formatDateTime(message.createdAt)}</span>
+                </div>
+                {#if message.isAgentInstruction}
+                  <details class="message-accordion">
+                    <summary>
+                      <span>AGENTS.md instructions</span>
+                      <span class="accordion-label show-label">表示</span>
+                      <span class="accordion-label hide-label">非表示</span>
+                    </summary>
+                    <div class="markdown-body">
+                      {@html message.html}
+                    </div>
+                  </details>
+                {:else}
                   <div class="markdown-body">
                     {@html message.html}
                   </div>
-                </details>
-              {:else}
-                <div class="markdown-body">
-                  {@html message.html}
-                </div>
+                {/if}
+              </div>
+            </article>
+          {/each}
+        </section>
+      {:else}
+        <section class="summarize-tab" aria-label="Session summarize view">
+          <div class="summaries-header">
+            <div class="distillation-actions">
+              <button
+                type="button"
+                class="icon-button"
+                onclick={() => void runDistillation(false)}
+                disabled={distillationLoading}
+              >
+                知識抽出
+              </button>
+              <button
+                type="button"
+                class="icon-button"
+                onclick={() => void runDistillation(true)}
+                disabled={distillationLoading}
+              >
+                昇格まで実行
+              </button>
+              <button
+                type="button"
+                class="icon-button"
+                onclick={async () => {
+                  await loadSessionSummaries();
+                  await refreshKnowledgeCandidates();
+                }}
+                disabled={summariesLoading || candidateActionLoading}
+              >
+                要約一覧更新
+              </button>
+            </div>
+            <div class="distillation-meta">
+              <strong>知識抽出ステータス:</strong>
+              <span>{distillationStatus?.status ?? '未生成'}</span>
+              {#if distillationStatus}
+                <span>keep {distillationStatus.keptCount}</span>
+                <span>drop {distillationStatus.droppedCount}</span>
               {/if}
             </div>
-          </article>
-        {/each}
-      </section>
+          </div>
+          {#if distillationError}
+            <div class="conversation-state error">{distillationError}</div>
+          {/if}
+          {#if distillationQueueMessage}
+            <div class="conversation-state">{distillationQueueMessage}</div>
+          {/if}
+          {#if summariesError}
+            <div class="conversation-state error">{summariesError}</div>
+          {/if}
+          <div class="summary-list">
+            <h3>要約一覧 ({selectedSessionSummaries.length})</h3>
+            {#if summariesLoading}
+              <div class="conversation-state">Loading summaries...</div>
+            {:else if selectedSessionSummaries.length === 0}
+              <div class="conversation-state">No summaries for this session</div>
+            {:else}
+              {#each selectedSessionSummaries as summary (summary.id)}
+                <article class="summary-item">
+                  <div class="candidate-head">
+                    <span>{summary.status}</span>
+                    <span>{summary.modelProvider ?? 'unknown'}</span>
+                    {#if summary.modelName}
+                      <span>{summary.modelName}</span>
+                    {/if}
+                  </div>
+                  <div class="candidate-foot">
+                    <span>id: {summary.id}</span>
+                    <span>keep: {summary.keptCount}</span>
+                    <span>drop: {summary.droppedCount}</span>
+                    <span>created: {formatDateTime(summary.createdAt)}</span>
+                    <span>updated: {formatDateTime(summary.updatedAt)}</span>
+                  </div>
+                  {#if summary.error}
+                    <div class="candidate-foot">
+                      <span>error: {summary.error}</span>
+                    </div>
+                  {/if}
+                </article>
+              {/each}
+            {/if}
+          </div>
+
+          {#if distillationResult}
+            <div class="distillation-candidates">
+              {#each distillationResult.candidates as candidate, idx (`${candidate.turnIndex}-${idx}-${candidate.title}`)}
+                <article class="candidate-item" class:drop={!candidate.keep}>
+                  <div class="candidate-head">
+                    <span class="candidate-kind">{candidate.kind}</span>
+                    <span class="candidate-keep">{candidate.keep ? 'keep' : 'drop'}</span>
+                    <span class="candidate-status">{candidate.status}</span>
+                  </div>
+                  <h3>{candidate.title}</h3>
+                  <p>{candidate.statement}</p>
+                  <div class="candidate-foot">
+                    <span>理由: {candidate.keepReason}</span>
+                    <span>confidence: {candidate.confidence.toFixed(2)}</span>
+                    <span>approval: {candidate.approvalStatus ?? 'pending'}</span>
+                    {#if candidate.promotedNoteId}
+                      <span>promoted: {candidate.promotedNoteId}</span>
+                    {/if}
+                    {#if candidate.rejectionReason}
+                      <span>rejected: {candidate.rejectionReason}</span>
+                    {/if}
+                    {#if candidate.recordError}
+                      <span>recordError: {candidate.recordError}</span>
+                    {/if}
+                  </div>
+                  {#if candidate.id}
+                    <div class="candidate-actions">
+                      <button
+                        type="button"
+                        class="icon-button"
+                        onclick={() => void approveCandidate(candidate.id!)}
+                        disabled={candidateActionLoading || candidate.approvalStatus === 'approved'}
+                      >
+                        承認
+                      </button>
+                      <button
+                        type="button"
+                        class="icon-button"
+                        onclick={() => void rejectCandidate(candidate.id!)}
+                        disabled={candidateActionLoading || candidate.approvalStatus === 'rejected'}
+                      >
+                        却下
+                      </button>
+                      <button
+                        type="button"
+                        class="icon-button"
+                        onclick={() => void recordCandidate(candidate.id!)}
+                        disabled={
+                          candidateActionLoading ||
+                          candidate.approvalStatus !== 'approved' ||
+                          Boolean(candidate.promotedNoteId)
+                        }
+                      >
+                        登録
+                      </button>
+                    </div>
+                  {/if}
+                  <div class="candidate-foot">
+                    {#if Array.isArray(candidate.evidence) && candidate.evidence.length > 0}
+                      <span>evidence: {candidate.evidence.length}</span>
+                    {/if}
+                  </div>
+                </article>
+              {/each}
+            </div>
+          {/if}
+        </section>
+      {/if}
     {:else}
       <div class="conversation-state">No session selected</div>
     {/if}
@@ -485,6 +856,134 @@ onMount(() => {
   gap: 0.55rem;
 }
 
+.distillation-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.session-subtabs {
+  display: flex;
+  gap: 0.45rem;
+  padding: 0.8rem 2rem 0.2rem;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.08);
+}
+
+.session-subtabs button {
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px 8px 0 0;
+  background: rgba(15, 23, 42, 0.55);
+  color: #94a3b8;
+  padding: 0.42rem 0.72rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.session-subtabs button.active {
+  color: #e2e8f0;
+  border-color: rgba(96, 165, 250, 0.38);
+  background: rgba(37, 99, 235, 0.2);
+}
+
+.summarize-tab {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  padding: 1rem 2rem 2rem;
+}
+
+.summaries-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.summary-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.summary-list h3 {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #cbd5e1;
+}
+
+.summary-item {
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.distillation-meta {
+  display: flex;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  color: #cbd5e1;
+  font-size: 0.82rem;
+}
+
+.distillation-candidates {
+  display: grid;
+  gap: 0.6rem;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.candidate-item {
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  padding: 0.65rem 0.75rem;
+  background: rgba(15, 23, 42, 0.5);
+}
+
+.candidate-item.drop {
+  opacity: 0.7;
+}
+
+.candidate-head {
+  display: flex;
+  gap: 0.5rem;
+  color: #93c5fd;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.candidate-item h3 {
+  margin: 0.35rem 0 0.25rem;
+  font-size: 0.92rem;
+  color: #f8fafc;
+}
+
+.candidate-item p {
+  margin: 0;
+  color: #e2e8f0;
+  font-size: 0.86rem;
+}
+
+.candidate-foot {
+  margin-top: 0.45rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  color: #94a3b8;
+  font-size: 0.75rem;
+}
+
+.candidate-actions {
+  margin-top: 0.45rem;
+  display: flex;
+  gap: 0.5rem;
+}
+
 .order-control {
   display: inline-flex;
   padding: 0.15rem;
@@ -522,6 +1021,10 @@ onMount(() => {
   min-height: 0;
   overflow: auto;
   padding: 1.5rem 2rem 3rem;
+}
+
+.conversation-order {
+  margin-bottom: 0.9rem;
 }
 
 .message {
@@ -684,6 +1187,14 @@ onMount(() => {
   .conversation-actions {
     max-width: 100%;
     align-items: flex-start;
+  }
+
+  .session-subtabs {
+    padding: 0.7rem 1rem 0.2rem;
+  }
+
+  .summarize-tab {
+    padding: 0.9rem 1rem 1rem;
   }
 
   .session-path {

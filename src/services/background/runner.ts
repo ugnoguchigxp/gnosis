@@ -16,6 +16,7 @@ import {
 } from '../knowflow/worker/knowFlowHandler.js';
 import { runWorkerOnce } from '../knowflow/worker/loop.js';
 import type { RunOnceResult } from '../knowflow/worker/loop.js';
+import { distillSessionKnowledge } from '../sessionSummary/engine.js';
 import { scheduler } from './scheduler.js';
 import { embeddingBatchTask } from './tasks/embeddingBatchTask.js';
 import { synthesisTask } from './tasks/synthesisTask.js';
@@ -23,6 +24,10 @@ import { synthesisTask } from './tasks/synthesisTask.js';
 interface TaskPayload {
   batchSize?: number;
   maxFailures?: number;
+  sessionId?: string;
+  force?: boolean;
+  promote?: boolean;
+  provider?: 'auto' | 'deterministic' | 'local' | 'openai' | 'bedrock';
   [key: string]: unknown;
 }
 
@@ -160,6 +165,43 @@ export async function runTask(
         summary: `candidates=${result.candidates.length} enqueued=${result.enqueued} deduped=${result.deduped}`,
         partialFailures: 0,
         stats: result,
+      };
+    }
+
+    case 'session_distillation': {
+      const sessionId =
+        typeof payload.sessionId === 'string' && payload.sessionId.trim().length > 0
+          ? payload.sessionId.trim()
+          : null;
+      if (!sessionId) {
+        return {
+          ok: false,
+          processed: true,
+          summary: 'sessionId is required for session_distillation task',
+          partialFailures: 1,
+          error: 'sessionId is required',
+        };
+      }
+
+      const result = await distillSessionKnowledge({
+        sessionId,
+        force: payload.force === true,
+        promote: payload.promote === true,
+        provider: payload.provider,
+      });
+
+      return {
+        ok: result.status === 'succeeded',
+        processed: true,
+        summary: `session=${result.sessionKey} status=${result.status} keep=${result.keptCount} drop=${result.droppedCount} promoted=${result.promotedCount}`,
+        partialFailures: result.status === 'succeeded' ? 0 : 1,
+        error: result.error,
+        stats: {
+          distillationId: result.distillationId,
+          turnCount: result.turnCount,
+          messageCount: result.messageCount,
+          modelProvider: result.modelProvider,
+        },
       };
     }
 
