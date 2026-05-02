@@ -322,3 +322,56 @@ export function renderWatchdogFindings(findings: WatchdogFinding[]): string {
 export function clearWatchdogState(registryDir = getProcessRegistryDir()): void {
   rmSync(statePath(registryDir), { force: true });
 }
+
+/**
+ * Lightweight auto-cleanup: remove registry entries for PIDs that no longer exist.
+ *
+ * Unlike `scanWatchdog`, this skips full `ps` parsing, state files, and
+ * consecutive-observation gates.  It only checks bare liveness via
+ * `process.kill(pid, 0)` and deletes the registry file when the PID is
+ * confirmed dead.  Designed to be called periodically (e.g. from the MCP
+ * host heartbeat) with negligible overhead.
+ *
+ * @returns number of pruned entries
+ */
+export function pruneDeadRegistryEntries(
+  options: {
+    registryDir?: string;
+    selfPid?: number;
+    logger?: Pick<Console, 'error'>;
+  } = {},
+): number {
+  const registryDir = options.registryDir ?? getProcessRegistryDir();
+  const selfPid = options.selfPid ?? process.pid;
+  const logger = options.logger ?? console;
+  const results = readRegistryEntries(registryDir);
+  let pruned = 0;
+
+  for (const result of results) {
+    if (result.kind === 'corrupt') {
+      removeRegistryFile(result.path);
+      pruned += 1;
+      continue;
+    }
+
+    const { entry } = result;
+    // Never prune our own entry
+    if (entry.pid === selfPid) continue;
+
+    let alive = false;
+    try {
+      process.kill(entry.pid, 0);
+      alive = true;
+    } catch {
+      // pid does not exist → dead
+    }
+
+    if (!alive) {
+      removeRegistryFile(result.path);
+      pruned += 1;
+      logger.error(`[ProcessRegistry] Auto-pruned dead entry: role=${entry.role} pid=${entry.pid}`);
+    }
+  }
+
+  return pruned;
+}

@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RuntimeLifecycle } from '../src/runtime/lifecycle.js';
 import { registerProcess } from '../src/runtime/processRegistry.js';
-import { parseElapsedMs, scanWatchdog } from '../src/runtime/processWatchdog.js';
+import {
+  parseElapsedMs,
+  pruneDeadRegistryEntries,
+  scanWatchdog,
+} from '../src/runtime/processWatchdog.js';
 
 const tempDirs: string[] = [];
 
@@ -88,5 +92,71 @@ describe('process watchdog', () => {
     scanWatchdog({ registryDir, apply: false });
 
     expect(existsSync(join(rootDir, 'watchdog-state.json'))).toBe(false);
+  });
+});
+
+describe('pruneDeadRegistryEntries', () => {
+  it('removes registry entries for dead PIDs', () => {
+    const registryDir = tempDir();
+    // Create a registry entry for a PID that definitely does not exist
+    const fakePid = 999999;
+    const fakeEntry = {
+      schemaVersion: 1,
+      pid: fakePid,
+      ppid: 1,
+      originalPpid: 1,
+      startedAt: new Date().toISOString(),
+      startedAtEpochMs: Date.now(),
+      heartbeatAt: new Date().toISOString(),
+      cwd: process.cwd(),
+      argv: [],
+      title: 'test',
+      role: 'mcp-host',
+      registryStatus: 'enabled',
+    };
+    const fileName = `mcp-host-${fakePid}-${fakeEntry.startedAtEpochMs}.json`;
+    writeFileSync(join(registryDir, fileName), JSON.stringify(fakeEntry), 'utf8');
+
+    const pruned = pruneDeadRegistryEntries({
+      registryDir,
+      selfPid: process.pid,
+      logger: { error: () => {} },
+    });
+
+    expect(pruned).toBe(1);
+    expect(existsSync(join(registryDir, fileName))).toBe(false);
+  });
+
+  it('removes corrupt registry files', () => {
+    const registryDir = tempDir();
+    writeFileSync(join(registryDir, 'corrupt.json'), '{invalid', 'utf8');
+
+    const pruned = pruneDeadRegistryEntries({
+      registryDir,
+      logger: { error: () => {} },
+    });
+
+    expect(pruned).toBe(1);
+    expect(existsSync(join(registryDir, 'corrupt.json'))).toBe(false);
+  });
+
+  it('never prunes own process entry', () => {
+    const registryDir = tempDir();
+    const registration = registerProcess({
+      role: 'mcp-host',
+      registryDir,
+      logger: { error: () => {} },
+    });
+
+    const pruned = pruneDeadRegistryEntries({
+      registryDir,
+      selfPid: process.pid,
+      logger: { error: () => {} },
+    });
+
+    expect(pruned).toBe(0);
+    expect(registration.filePath).toBeTruthy();
+    expect(existsSync(registration.filePath ?? '')).toBe(true);
+    registration.unregister();
   });
 });

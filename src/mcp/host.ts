@@ -6,7 +6,8 @@ import { GNOSIS_CONSTANTS } from '../constants.js';
 import { closeDbPool } from '../db/index.js';
 import { isProcessAlive } from '../runtime/childProcesses.js';
 import { RuntimeLifecycle } from '../runtime/lifecycle.js';
-import { registerProcess } from '../runtime/processRegistry.js';
+import { getProcessRegistryDir, registerProcess } from '../runtime/processRegistry.js';
+import { pruneDeadRegistryEntries } from '../runtime/processWatchdog.js';
 import { startBackgroundWorkers, stopBackgroundWorkers } from '../services/background/manager.js';
 import { lookupFailureFirewallContext } from '../services/failureFirewall/context.js';
 import { runFailureFirewall } from '../services/failureFirewall/index.js';
@@ -233,6 +234,21 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
   if (options.bindProcessEvents !== false) lifecycle.bindProcessEvents();
   lifecycle.markRunning();
   lifecycle.startHeartbeat();
+
+  // Periodic auto-cleanup of dead process registry entries (every 30s)
+  const pruneIntervalMs = 30_000;
+  const registryDir = getProcessRegistryDir(rootDir);
+  const pruneTimer = setInterval(() => {
+    try {
+      pruneDeadRegistryEntries({ registryDir, selfPid: process.pid });
+    } catch (error) {
+      console.error(`[McpHost] Registry prune failed: ${toErrorMessage(error)}`);
+    }
+  }, pruneIntervalMs);
+  pruneTimer.unref?.();
+  lifecycle.addCleanupStep(() => {
+    clearInterval(pruneTimer);
+  });
 
   if (workersEnabled) {
     startBackgroundWorkers();
