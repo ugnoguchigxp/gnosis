@@ -1083,10 +1083,15 @@ async function runReviewAgenticCore(
       markdown: '',
     });
 
+    const withMarkdown = buildResult(result);
+    await persistReviewCase(req, withMarkdown).catch((error) => {
+      console.warn(`Agentic review persistence failed (non-fatal): ${error}`);
+    });
+
     // Background call to record outcome in Gnosis memory
     void recordReviewResultWithRetry(result);
 
-    return buildResult(result);
+    return withMarkdown;
   } catch (error) {
     if (error instanceof ReviewError && error.code === 'E006') {
       return buildTimedOutResult(startTime, now);
