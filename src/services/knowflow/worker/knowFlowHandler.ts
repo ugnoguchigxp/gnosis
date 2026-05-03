@@ -116,6 +116,12 @@ const parseSearchResults = (text: string): ParsedSearchResult[] => {
   return uniqueByUrl(results);
 };
 
+const buildFallbackQueries = (topic: string): string[] => {
+  const base = topic.trim();
+  if (!base) return [];
+  return [base, `${base} overview`, `${base} best practices`];
+};
+
 const truncateContent = (contentRaw: string): string =>
   contentRaw.length > MAX_CONTENT_CHARS
     ? `${contentRaw.slice(0, MAX_CONTENT_CHARS)}\n\n[...Truncated from ${
@@ -317,7 +323,23 @@ export const createMcpEvidenceProvider = (
       };
     }
 
-    const queries = queryResult.output.queries.slice(0, MAX_INITIAL_QUERIES);
+    const rawQueries = queryResult.output.queries
+      .map((query) => query.trim())
+      .filter((query) => query.length > 0);
+    const queries =
+      rawQueries.length > 0
+        ? rawQueries.slice(0, MAX_INITIAL_QUERIES)
+        : buildFallbackQueries(task.topic).slice(0, MAX_INITIAL_QUERIES);
+
+    if (rawQueries.length === 0) {
+      logger({
+        event: 'retriever.mcp.query_generation.empty',
+        taskId: task.id,
+        topic: task.topic,
+        fallbackQueries: queries,
+        level: 'warn',
+      });
+    }
     const allClaims: EvidenceClaim[] = [];
     const allSources: EvidenceSource[] = [];
     const allNormalized: SourceRef[] = [];
@@ -509,18 +531,25 @@ export const createMcpEvidenceProvider = (
       }
     }
 
+    const diagnosticsMessages = [
+      ...(rawQueries.length === 0
+        ? ['Query generation returned empty queries. Fallback query set was used.']
+        : []),
+      ...diagnosticMessages,
+    ];
+
     const diagnostics: FlowEvidence['diagnostics'] =
       usefulDomains.size > 0 || allClaims.length > 0
-        ? { outcome: 'ok', messages: diagnosticMessages.slice(0, 5) }
+        ? { outcome: 'ok', messages: diagnosticsMessages.slice(0, 5) }
         : fetchedPageUrls.size > 0 && notUsefulCount > 0
-          ? { outcome: 'no_useful_pages', messages: diagnosticMessages.slice(0, 5) }
+          ? { outcome: 'no_useful_pages', messages: diagnosticsMessages.slice(0, 5) }
           : fetchErrorCount > 0
-            ? { outcome: 'fetch_failed', messages: diagnosticMessages.slice(0, 5) }
+            ? { outcome: 'fetch_failed', messages: diagnosticsMessages.slice(0, 5) }
             : searchErrorCount > 0 && queryCountUsed === 0
-              ? { outcome: 'search_failed', messages: diagnosticMessages.slice(0, 5) }
+              ? { outcome: 'search_failed', messages: diagnosticsMessages.slice(0, 5) }
               : noSearchResultCount > 0
-                ? { outcome: 'no_search_results', messages: diagnosticMessages.slice(0, 5) }
-                : { outcome: 'no_evidence_collected', messages: diagnosticMessages.slice(0, 5) };
+                ? { outcome: 'no_search_results', messages: diagnosticsMessages.slice(0, 5) }
+                : { outcome: 'no_evidence_collected', messages: diagnosticsMessages.slice(0, 5) };
 
     return {
       claims: allClaims,

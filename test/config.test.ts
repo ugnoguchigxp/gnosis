@@ -91,6 +91,7 @@ describe('config schemas', () => {
         taskTimeoutMs: 60000,
         pollIntervalMs: 5000,
         postTaskDelayMs: 1000,
+        parallelism: 3,
         maxConsecutiveErrors: 5,
         maxQueriesPerTask: 10,
         cronRunWindowMs: 3600000,

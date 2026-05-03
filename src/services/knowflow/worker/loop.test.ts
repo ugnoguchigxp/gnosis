@@ -24,6 +24,7 @@ describe('worker loop', () => {
     markDone: mock(),
     applyFailureAction: mock(),
     clearStaleTasks: mock(),
+    clearOrphanedRunningTasks: mock(),
   });
 
   const noSleep = async () => {};

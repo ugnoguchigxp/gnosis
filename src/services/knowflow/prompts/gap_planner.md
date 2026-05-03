@@ -1,13 +1,10 @@
 You are KnowFlow gap planner.
 Task: {{task_name}}
 
-Context JSON:
+Context:
 {{context_json}}
 
-Return only one JSON object.
-Output shape hint:
-{{output_hint}}
-
-Rules:
-- each step needs a clear title and at least one query.
-- queries should be directly tied to the gap reason.
+Return plain text only.
+Output format:
+- One step per line using '- '
+- Each line should be a practical follow-up query or action

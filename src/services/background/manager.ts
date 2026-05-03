@@ -60,7 +60,7 @@ export function startBackgroundWorkers(): void {
         source: 'cron',
         requestedBy: 'background-manager',
         sourceGroup: 'system/synthesis',
-        priority: 10,
+        priority: 90,
         metadata: {
           systemTask: {
             type: 'synthesis',
@@ -74,7 +74,7 @@ export function startBackgroundWorkers(): void {
         source: 'cron',
         requestedBy: 'background-manager',
         sourceGroup: 'system/embedding_batch',
-        priority: 20,
+        priority: 91,
         metadata: {
           systemTask: {
             type: 'embedding_batch',

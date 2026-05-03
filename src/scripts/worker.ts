@@ -34,26 +34,20 @@ async function main() {
 
   const runLogger = await createRunLogger({ runId: `worker-daemon-${Date.now()}` });
   let healthReportTimer: ReturnType<typeof setInterval> | undefined;
+  let shutdownRequested = false;
+  let shutdownReason = 'normal';
 
-  const cleanup = async (reason: string) => {
-    await notifyTaskEnd().catch(() => {});
-    console.error(`\n--- Gnosis Worker Shutdown (Reason: ${reason}, PID: ${process.pid}) ---`);
-
-    // Watchdog: Force exit if cleanup takes too long (10s)
-    setTimeout(() => {
-      console.error(
-        `--- Gnosis Worker Shutdown Timed Out! Forcing exit. (PID: ${process.pid}) ---`,
-      );
-      process.exit(1);
-    }, 10000).unref();
-
-    if (healthReportTimer) clearInterval(healthReportTimer);
-    await runLogger.flush();
-    process.exit(0);
+  const requestShutdown = (reason: string) => {
+    if (shutdownRequested) return;
+    shutdownRequested = true;
+    shutdownReason = reason;
+    console.error(
+      `\n--- Gnosis Worker Graceful Shutdown Requested (${reason}, PID: ${process.pid}) ---`,
+    );
   };
 
-  process.on('SIGINT', () => cleanup('SIGINT'));
-  process.on('SIGTERM', () => cleanup('SIGTERM'));
+  process.on('SIGINT', () => requestShutdown('SIGINT'));
+  process.on('SIGTERM', () => requestShutdown('SIGTERM'));
 
   const logger = runLogger.createStructuredLogger({ verbose: true });
   const llmLogger = runLogger.createLlmLogger({ verbose: true });
@@ -119,6 +113,16 @@ async function main() {
       level: 'info',
     });
   }
+  const orphanClearedCount = await queueRepository.clearOrphanedRunningTasks([
+    `daemon-${process.pid}-`,
+  ]);
+  if (orphanClearedCount > 0) {
+    logger({
+      event: 'worker.startup.orphan_cleanup',
+      clearedCount: orphanClearedCount,
+      level: 'warn',
+    });
+  }
 
   let healthCheckInFlight = false;
   const runHealthCheck = async (trigger: 'startup' | 'interval') => {
@@ -175,38 +179,47 @@ async function main() {
 
   let fatalError: unknown;
   try {
-    // 常にループを回すが、LLMリソースの同時実行数は制限する
-    await runWorkerLoop(queueRepository, handler, {
-      workerId: `daemon-${process.pid}`,
-      intervalMs: config.knowflow.worker.pollIntervalMs, // Configurable interval
-      logger,
-      // runWorkerOnce の実行をラップして、独自プロセスでもセマフォを共有する
-      runOnceWrapper: async (fn) => {
-        const lockWaitStartedAt = Date.now();
-        try {
-          const result = await withGlobalSemaphore(
-            'background-task',
-            config.backgroundWorker.maxConcurrency,
-            async () => {
-              runtimeMonitor.recordSemaphoreWait(Date.now() - lockWaitStartedAt, false);
-              const wrappedResult = await fn();
-              runtimeMonitor.recordRunResult(wrappedResult);
+    // ワーカーは並列に走らせ、空きスロットがあれば pending を即時処理する。
+    const workerParallelism = Math.max(
+      1,
+      Math.min(config.knowflow.worker.parallelism, config.backgroundWorker.maxConcurrency),
+    );
+    const workers = Array.from({ length: workerParallelism }, (_, index) => {
+      const workerIndex = index + 1;
+      return runWorkerLoop(queueRepository, handler, {
+        workerId: `daemon-${process.pid}-${workerIndex}`,
+        intervalMs: config.knowflow.worker.pollIntervalMs,
+        postTaskDelayMs: 0,
+        shouldStop: () => shutdownRequested,
+        logger,
+        runOnceWrapper: async (fn) => {
+          const lockWaitStartedAt = Date.now();
+          try {
+            const result = await withGlobalSemaphore(
+              'background-task',
+              config.backgroundWorker.maxConcurrency,
+              async () => {
+                runtimeMonitor.recordSemaphoreWait(Date.now() - lockWaitStartedAt, false);
+                const wrappedResult = await fn();
+                runtimeMonitor.recordRunResult(wrappedResult);
+                runtimeMonitor.emitIfDue();
+                return wrappedResult;
+              },
+              1000,
+            );
+            return result;
+          } catch (err) {
+            if (err instanceof Error && err.message.includes('Global lock timeout')) {
+              runtimeMonitor.recordSemaphoreWait(Date.now() - lockWaitStartedAt, true);
               runtimeMonitor.emitIfDue();
-              return wrappedResult;
-            },
-            1000, // タイムアウト時は次回のイテレーションに回す
-          );
-          return result;
-        } catch (err) {
-          if (err instanceof Error && err.message.includes('Global lock timeout')) {
-            runtimeMonitor.recordSemaphoreWait(Date.now() - lockWaitStartedAt, true);
-            runtimeMonitor.emitIfDue();
-            return { processed: false }; // セマフォ取得失敗時は「未処理」として扱う
+              return { processed: false };
+            }
+            throw err;
           }
-          throw err;
-        }
-      },
+        },
+      });
     });
+    await Promise.all(workers);
   } catch (error) {
     fatalError = error;
     console.error('Worker Daemon Critical Error:', error);
@@ -215,6 +228,12 @@ async function main() {
     if (healthReportTimer) {
       clearInterval(healthReportTimer);
     }
+    await notifyTaskEnd().catch(() => {});
+    console.error(
+      `--- Gnosis Worker Shutdown Complete (Reason: ${
+        fatalError ? 'fatal_error' : shutdownReason
+      }, PID: ${process.pid}) ---`,
+    );
     await runLogger.flush();
   }
 

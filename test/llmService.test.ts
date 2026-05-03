@@ -64,7 +64,7 @@ describe('llm service (legacy local LLM)', () => {
   describe('summarizeCommunity', () => {
     it('parses community summary from LLM output', async () => {
       const spawnSync = makeSpawnSync(
-        '{"name":"日本の地理","summary":"日本の主要都市と地形に関する知識群"}',
+        'Name: 日本の地理\nSummary: 日本の主要都市と地形に関する知識群',
       );
       const result = await summarizeCommunity('Entities: Tokyo, Osaka', {
         ...testDeps,
@@ -82,12 +82,12 @@ describe('llm service (legacy local LLM)', () => {
       expect(result.name).toBe('Unknown Community');
     });
 
-    it('returns fallback when output has no JSON object', async () => {
+    it('supports plain text fallback when output has no labels', async () => {
       const result = await summarizeCommunity('context', {
         ...testDeps,
         spawnSync: makeSpawnSync('no json here'),
       });
-      expect(result.name).toBe('Unknown Community');
+      expect(result.name).toBe('no json here');
     });
   });
 
@@ -120,28 +120,16 @@ describe('llm service (legacy local LLM)', () => {
   });
 
   describe('distillKnowledgeFromTranscript', () => {
-    it('parses distilled knowledge from LLM output', async () => {
-      const payload = {
-        memories: ['Bun is fast'],
-        entities: [
-          {
-            type: 'rule',
-            name: 'Bun runtime rule',
-            description: 'Use Bun as the runtime when running repository scripts in this project.',
-            metadata: { category: 'workflow', tags: ['bun'] },
-          },
-        ],
-        relations: [],
-      };
-      const spawnSync = makeSpawnSync(JSON.stringify(payload));
+    it('parses plain text distilled knowledge from LLM output', async () => {
+      const spawnSync = makeSpawnSync('- Bun is fast\n- Use bun run for scripts');
       const result = await distillKnowledgeFromTranscript('transcript text', {
         ...testDeps,
         spawnSync,
       });
-      expect(result.memories).toContain('Bun is fast');
-      expect(result.entities).toHaveLength(1);
-      expect(result.entities[0]?.type).toBe('rule');
-      expect(result.entities[0]?.metadata?.category).toBe('workflow');
+      expect(result.memories).toContain('- Bun is fast');
+      expect(result.memories).toContain('- Use bun run for scripts');
+      expect(result.entities).toHaveLength(0);
+      expect(result.relations).toHaveLength(0);
     });
 
     it('throws when LLM exits non-zero', async () => {
@@ -159,13 +147,12 @@ describe('llm service (legacy local LLM)', () => {
       ).rejects.toThrow('Empty LLM response');
     });
 
-    it('throws when LLM output has no JSON', async () => {
-      await expect(
-        distillKnowledgeFromTranscript('transcript', {
-          ...testDeps,
-          spawnSync: makeSpawnSync('no json'),
-        }),
-      ).rejects.toThrow('No JSON found');
+    it('accepts non-JSON output as plain text memories', async () => {
+      const result = await distillKnowledgeFromTranscript('transcript', {
+        ...testDeps,
+        spawnSync: makeSpawnSync('no json'),
+      });
+      expect(result.memories).toContain('no json');
     });
   });
 });

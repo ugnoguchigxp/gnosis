@@ -236,7 +236,7 @@ export async function syncAllAgentLogs() {
         source: 'cron',
         requestedBy: 'sync',
         sourceGroup: 'system/synthesis',
-        priority: 10,
+        priority: 90,
         metadata: {
           systemTask: {
             type: 'synthesis',
@@ -251,7 +251,7 @@ export async function syncAllAgentLogs() {
         source: 'cron',
         requestedBy: 'sync',
         sourceGroup: 'system/embedding_batch',
-        priority: 20,
+        priority: 91,
         metadata: {
           systemTask: {
             type: 'embedding_batch',

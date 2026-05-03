@@ -25,6 +25,25 @@ export type QueueRepository = {
   markDone: (taskId: string, resultSummary?: string, now?: number) => Promise<TopicTask>;
   applyFailureAction: (taskId: string, action: FailureAction, now?: number) => Promise<TopicTask>;
   clearStaleTasks: (timeoutMs: number, now?: number) => Promise<number>;
+  clearOrphanedRunningTasks: (activeLockOwnerPrefixes: string[], now?: number) => Promise<number>;
+};
+
+const extractLockOwnerPid = (lockOwner: string | undefined): number | null => {
+  if (!lockOwner) return null;
+  const match = lockOwner.match(/daemon-(\d+)(?:-\d+)?$/);
+  if (!match?.[1]) return null;
+  const pid = Number(match[1]);
+  return Number.isFinite(pid) && pid > 1 ? pid : null;
+};
+
+const isPidAlive = (pid: number | null): boolean => {
+  if (!pid || pid <= 1) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 };
 
 export class FileQueueRepository implements QueueRepository {
@@ -192,6 +211,34 @@ export class FileQueueRepository implements QueueRepository {
         return task;
       });
 
+      return { tasks: nextTasks, output: clearedCount };
+    });
+  }
+
+  async clearOrphanedRunningTasks(
+    activeLockOwnerPrefixes: string[],
+    now = Date.now(),
+  ): Promise<number> {
+    const prefixes = activeLockOwnerPrefixes.filter((value) => value.trim().length > 0);
+    return this.withMutation<number>(async (tasks) => {
+      let clearedCount = 0;
+      const nextTasks = tasks.map((task) => {
+        if (task.status !== 'running' || !task.lockOwner) return task;
+        if (isPidAlive(extractLockOwnerPid(task.lockOwner))) return task;
+        const active = prefixes.some((prefix) => task.lockOwner?.startsWith(prefix));
+        if (active) return task;
+        clearedCount += 1;
+        return TopicTaskSchema.parse({
+          ...task,
+          status: 'deferred',
+          attempts: task.attempts,
+          errorReason: `orphaned running task recovered (lockOwner=${task.lockOwner})`,
+          updatedAt: now,
+          lockedAt: undefined,
+          lockOwner: undefined,
+          nextRunAt: now,
+        });
+      });
       return { tasks: nextTasks, output: clearedCount };
     });
   }

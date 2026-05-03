@@ -104,7 +104,12 @@ describe('synthesizeKnowledge', () => {
 
     expect(mockSaveEnts).not.toHaveBeenCalled();
     expect(mockSaveRels).not.toHaveBeenCalled();
-    expect(result).toEqual({ count: 1, extractedEntities: 0, extractedRelations: 0 });
+    expect(result).toEqual({
+      count: 0,
+      extractedEntities: 0,
+      extractedRelations: 0,
+      message: 'No extractable knowledge produced by distillation. Raw memories kept.',
+    });
   });
 
   it('propagates errors from distillKnowledgeFromTranscript', async () => {

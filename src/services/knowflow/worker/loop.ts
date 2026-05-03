@@ -1,5 +1,6 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { config } from '../../../config.js';
+import { GNOSIS_CONSTANTS } from '../../../constants.js';
 import type { TopicTask } from '../domain/task';
 import { type StructuredLogger, defaultStructuredLogger } from '../ops/logger';
 import type { QueueRepository } from '../queue/repository';
@@ -111,7 +112,10 @@ export const runWorkerOnce = async (
   });
 
   const abortController = new AbortController();
-  const timeoutMs = options.taskTimeoutMs ?? config.knowflow.worker.taskTimeoutMs;
+  const timeoutMs =
+    options.taskTimeoutMs ??
+    config.knowflow?.worker?.taskTimeoutMs ??
+    GNOSIS_CONSTANTS.WORKER_TASK_TIMEOUT_MS_DEFAULT;
   const timeoutController = (options.createTaskTimeout ?? createTaskTimeout)(
     timeoutMs,
     abortController,
@@ -183,6 +187,7 @@ export type LoopOptions = WorkerOptions & {
   postTaskDelayMs?: number;
   maxIterations?: number;
   maxConsecutiveErrors?: number;
+  shouldStop?: () => boolean;
   /** runWorkerOnce の実行をラップする関数 (セマフォ取得などに利用可能) */
   runOnceWrapper?: (fn: () => Promise<RunOnceResult>) => Promise<RunOnceResult>;
 };
@@ -192,19 +197,35 @@ export const runWorkerLoop = async (
   handler: TaskHandler = defaultTaskHandler,
   options: LoopOptions = {},
 ): Promise<void> => {
-  const intervalMs = options.intervalMs ?? config.knowflow.worker.pollIntervalMs;
-  const postTaskDelayMs = options.postTaskDelayMs ?? config.knowflow.worker.postTaskDelayMs;
+  const intervalMs =
+    options.intervalMs ??
+    config.knowflow?.worker?.pollIntervalMs ??
+    GNOSIS_CONSTANTS.WORKER_POLL_INTERVAL_MS_DEFAULT;
+  const postTaskDelayMs =
+    options.postTaskDelayMs ??
+    config.knowflow?.worker?.postTaskDelayMs ??
+    GNOSIS_CONSTANTS.WORKER_POST_TASK_DELAY_MS_DEFAULT;
   const maxIterations = options.maxIterations ?? Number.POSITIVE_INFINITY;
   const maxConsecutiveErrors =
-    options.maxConsecutiveErrors ?? config.knowflow.worker.maxConsecutiveErrors;
+    options.maxConsecutiveErrors ??
+    config.knowflow?.worker?.maxConsecutiveErrors ??
+    GNOSIS_CONSTANTS.WORKER_MAX_CONSECUTIVE_ERRORS_DEFAULT;
   const logger = options.logger ?? defaultStructuredLogger;
   const runOnceWrapper = options.runOnceWrapper ?? ((fn) => fn());
   const sleepFn = options.sleep ?? sleep;
+  const shouldStop = options.shouldStop ?? (() => false);
 
   let iteration = 0;
   let consecutiveErrors = 0;
 
   while (iteration < maxIterations) {
+    if (shouldStop()) {
+      logger({
+        event: 'worker.loop.stop_requested',
+        level: 'info',
+      });
+      break;
+    }
     iteration += 1;
 
     try {

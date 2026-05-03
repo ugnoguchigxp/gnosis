@@ -52,6 +52,7 @@ export const WorkerConfigSchema = z
     taskTimeoutMs: z.number().int().positive(),
     pollIntervalMs: z.number().int().positive(),
     postTaskDelayMs: z.number().int().nonnegative(),
+    parallelism: z.number().int().positive(),
     maxConsecutiveErrors: z.number().int().positive(),
     maxQueriesPerTask: z.number().int().positive(),
     cronRunWindowMs: z.number().int().positive(),
@@ -249,6 +250,13 @@ export const config = {
         process.env.KNOWFLOW_WORKER_POST_TASK_DELAY_MS,
         GNOSIS_CONSTANTS.WORKER_POST_TASK_DELAY_MS_DEFAULT,
       ),
+      parallelism: Math.max(
+        1,
+        envNumber(
+          process.env.KNOWFLOW_WORKER_PARALLELISM,
+          GNOSIS_CONSTANTS.WORKER_PARALLELISM_DEFAULT,
+        ),
+      ),
       maxConsecutiveErrors: envNumber(
         process.env.KNOWFLOW_WORKER_MAX_CONSECUTIVE_ERRORS,
         GNOSIS_CONSTANTS.WORKER_MAX_CONSECUTIVE_ERRORS_DEFAULT,
@@ -381,7 +389,10 @@ export const config = {
     ),
     intervalMs: envNumber(process.env.GNOSIS_BACKGROUND_WORKER_INTERVAL_MS, 300_000), // 5 min
     minRawCount: envNumber(process.env.GNOSIS_BACKGROUND_WORKER_MIN_RAW_COUNT, 5),
-    maxConcurrency: envNumber(process.env.GNOSIS_BACKGROUND_WORKER_MAX_CONCURRENCY, 1),
+    maxConcurrency: envNumber(
+      process.env.GNOSIS_BACKGROUND_WORKER_MAX_CONCURRENCY,
+      GNOSIS_CONSTANTS.BACKGROUND_WORKER_MAX_CONCURRENCY_DEFAULT,
+    ),
   },
 
   llmharness: {

@@ -129,9 +129,11 @@ export async function summarizeCommunity(
   const lockFn = deps.withLock ?? defaultLock;
   const prompt = `
 以下のナレッジグラフ断片（エンティティと関係性）を読み取り、この知識の塊が「何に関するものか」を要約してください。
-出力は必ず以下のJSON形式のみで返してください。
+JSON整形は不要です。自然言語のテキストで出力してください。
 
-{ "name": "この知識群を表す短い名前(例: 日本の地理)", "summary": "このコミュニティが含む主要なトピックや関係性の概要(100文字程度)" }
+出力形式（プレーンテキスト）:
+Name: この知識群を表す短い名前
+Summary: このコミュニティが含む主要トピックや関係性の概要（100文字程度）
 
 対象データ:
 """
@@ -157,10 +159,36 @@ ${context}
       throw new Error('Empty LLM response');
     }
 
-    const jsonMatch = output.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('No JSON found');
+    const nameMatch = output.match(/^\s*name\s*:\s*(.+)$/im);
+    const summaryMatch = output.match(/^\s*summary\s*:\s*(.+)$/im);
+    if (nameMatch?.[1] && summaryMatch?.[1]) {
+      return {
+        name: nameMatch[1].trim(),
+        summary: summaryMatch[1].trim(),
+      };
+    }
 
-    return JSON.parse(jsonMatch[0]);
+    // 互換: JSONが返ってきた場合も読み込めるようにする
+    const jsonMatch = output.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]) as { name?: string; summary?: string };
+      if (typeof parsed.name === 'string' && typeof parsed.summary === 'string') {
+        return { name: parsed.name, summary: parsed.summary };
+      }
+    }
+
+    // 最終フォールバック: 1行目をname, 残りをsummaryとして扱う
+    const lines = output
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    if (lines.length > 0) {
+      return {
+        name: lines[0] ?? 'Unknown Community',
+        summary: lines.slice(1).join(' ') || '要約の生成に失敗しました。',
+      };
+    }
+    throw new Error('Empty summary output');
   } catch (error) {
     console.error('Failed to summarize community:', error);
     return { name: 'Unknown Community', summary: '要約の生成に失敗しました。' };
@@ -175,6 +203,24 @@ const CommunitySummarySchema = z.object({
 function normalizeDistilledKnowledge(raw: unknown): DistilledKnowledge {
   return DistilledKnowledgeSchema.parse(raw);
 }
+
+const truncateLogText = (value: string, max = 400): string => {
+  const compact = value.replace(/\s+/g, ' ').trim();
+  if (compact.length <= max) return compact;
+  return `${compact.slice(0, max)}...`;
+};
+
+const parseDistillationFromText = (text: string): DistilledKnowledge => {
+  const memories = text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  return normalizeDistilledKnowledge({
+    memories: memories.slice(0, 20),
+    entities: [],
+    relations: [],
+  });
+};
 
 /**
  * 会話記録から重要な知識を要約・抽出します。
@@ -197,33 +243,8 @@ export async function distillKnowledgeFromTranscript(
 3. 単なるタスク開始・終了・進捗ログは抽出しないでください。
 4. ユーザーの明示的な方針、成功した手順、失敗から得た教訓、運用上の注意、プロジェクト固有ルールを優先してください。
 5. type は原則として rule|procedure|skill|decision|lesson|observation|risk|command_recipe|reference|project_doc から選択してください。旧来の task|goal|constraint|context|project|library|service|tool|concept|person|pattern|config は対象が再利用ナレッジでない場合の補助分類に限ります。
-6. 出力は必ず以下のJSON形式のみで返してください。
-
-{
-  "memories": ["短い文章形式の記憶1", "記憶2"],
-  "entities": [
-    {
-      "type": "以下から1つ選択: rule|procedure|skill|decision|lesson|observation|risk|command_recipe|reference|project_doc|task|goal|constraint|context|project|library|service|tool|concept|person|pattern|config",
-      "name": "正規化された名前（公式名称、日本語可）",
-      "description": "50文字以上の説明。何であるか、なぜ重要かを含む。短すぎる説明は不可",
-      "metadata": {
-        "category": "project_overview|architecture|mcp|hook|memory|workflow|testing|operation|debugging|coding_convention|security|performance|reference",
-        "purpose": "この知識を使うべき状況",
-        "tags": ["検索しやすい短いタグ"]
-      }
-    }
-  ],
-  "relations": [
-    {
-      "sourceType": "source の type",
-      "sourceName": "source の name",
-      "targetType": "target の type",
-      "targetName": "target の name",
-      "relationType": "以下から1つ選択: has_step|precondition|follows|when|prohibits|alternative_to|depends_on|uses|implements|extends|part_of|caused_by|resolved_by",
-      "weight": 0.0−1.0の数値
-    }
-  ]
-}
+6. JSONの整形は不要です。自然言語のテキストで出力してください。
+7. 箇条書き中心の自然文で、再利用可能な知識のみを書いてください。
 
 会話記録:
 """
@@ -232,6 +253,11 @@ ${transcript}
 `.trim();
 
   let output = '';
+  const startedAt = Date.now();
+  console.info(
+    `[SynthesisDistill] start transcriptChars=${transcript.length} promptChars=${prompt.length}`,
+  );
+
   try {
     const routed = await runPromptWithMemoryLoopRouter(
       {
@@ -250,30 +276,44 @@ ${transcript}
       },
     );
     output = routed.output;
+    console.info(
+      `[SynthesisDistill] route alias=${routed.route.alias} attempts=${routed.attempts} cloud=${routed.route.cloudEnabledForAttempt} reason=${routed.route.reason} outputChars=${output.length}`,
+    );
   } catch (error) {
-    console.error('LLM Distillation Error:', error);
+    console.error(
+      `[SynthesisDistill] route_error elapsedMs=${Date.now() - startedAt} message=${truncateLogText(
+        error instanceof Error ? error.message : String(error),
+        600,
+      )}`,
+    );
     throw new Error('LLM distillation command failed');
   }
 
   if (!output) {
+    console.error(
+      `[SynthesisDistill] empty_output elapsedMs=${Date.now() - startedAt} transcriptChars=${
+        transcript.length
+      }`,
+    );
     throw new Error('Empty LLM response');
   }
 
-  const jsonMatch = output.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    console.error('LLM Distillation raw output:', output);
-    throw new Error('No JSON found in LLM response');
-  }
-
-  let jsonStr = jsonMatch[0];
-  // トレイリングカンマなどの一般的なJSONエラーを簡易除去
-  jsonStr = jsonStr.replace(/,\s*([\}\]])/g, '$1');
-
   try {
-    const parsed = JSON.parse(jsonStr);
-    return normalizeDistilledKnowledge(parsed);
+    const normalized = parseDistillationFromText(output);
+    console.info(
+      `[SynthesisDistill] parsed_ok elapsedMs=${Date.now() - startedAt} memories=${
+        normalized.memories.length
+      } entities=${normalized.entities.length} relations=${normalized.relations.length}`,
+    );
+    return normalized;
   } catch (error) {
-    console.error('Failed to parse distilled JSON:', jsonStr);
+    console.error(
+      `[SynthesisDistill] parse_error elapsedMs=${
+        Date.now() - startedAt
+      } outputPreview="${truncateLogText(output)}" message=${truncateLogText(
+        error instanceof Error ? error.message : String(error),
+      )}`,
+    );
     throw error;
   }
 }

@@ -8,7 +8,6 @@ import {
   LlmTaskNameSchema,
   type LlmTaskOutputMap,
   getTaskOutputHint,
-  parseLlmTaskOutput,
 } from '../services/knowflow/schemas/llm.js';
 import { withGlobalSemaphore } from '../utils/lock.js';
 import { sleep } from '../utils/time.js';
@@ -77,11 +76,11 @@ const parsePositiveEnvInt = (value: string | undefined, fallback: number): numbe
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 
-const LLM_QUEUE_NAME =
-  process.env.KNOWFLOW_LLM_QUEUE_NAME?.trim() || GNOSIS_CONSTANTS.LLM_QUEUE_NAME_DEFAULT;
+// 全LLM経路で同一セマフォを使い、同時実行上限を1系統で強制する。
+const LLM_QUEUE_NAME = 'llm-pool';
 const LLM_QUEUE_MAX_CONCURRENCY = parsePositiveEnvInt(
   process.env.KNOWFLOW_LLM_MAX_CONCURRENCY,
-  GNOSIS_CONSTANTS.LLM_MAX_CONCURRENCY_DEFAULT,
+  config.llm.concurrencyLimit,
 );
 const LLM_QUEUE_TIMEOUT_MS = parsePositiveEnvInt(
   process.env.KNOWFLOW_LLM_QUEUE_TIMEOUT_MS,
@@ -165,7 +164,7 @@ const defaultInvokeApi = async (
           messages: [
             {
               role: 'system',
-              content: 'You are a structured assistant. Return only JSON object output.',
+              content: 'You are a concise assistant. Return plain text only.',
             },
             {
               role: 'user',
@@ -306,126 +305,190 @@ const resolveLlmClientConfig = (override: Partial<LlmClientConfig> = {}): LlmCli
     ...override,
   });
 
-export const extractJsonCandidate = (text: string): string | undefined => {
+const unwrapModelEnvelope = (text: string): string => {
   const trimmed = text.trim();
-
-  // 1. Markdown code block check (most common in well-behaved LLMs)
-  const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-  if (fenceMatch?.[1]) {
-    const fenced = fenceMatch[1].trim();
-    if (fenced.startsWith('{') && fenced.endsWith('}')) {
-      return fenced;
-    }
-    // Deep check inside fence (e.g. text before/after JSON inside a fence)
-    const inner = extractJsonCandidate(fenced);
-    if (inner) return inner;
+  if (!trimmed.startsWith('{') || !trimmed.includes('"response"')) return trimmed;
+  const responseMatch = trimmed.match(/"response"\s*:\s*"([\s\S]*)"\s*\}\s*$/);
+  if (!responseMatch?.[1]) return trimmed;
+  try {
+    const parsed = JSON.parse(`"${responseMatch[1]}"`);
+    return typeof parsed === 'string' ? parsed : trimmed;
+  } catch {
+    return trimmed;
   }
-
-  // 2. Finding boundaries with priority to outer most braces
-  const firstBrace = trimmed.indexOf('{');
-  const lastBrace = trimmed.lastIndexOf('}');
-
-  if (firstBrace >= 0) {
-    // If no closing brace, or closing brace is before opening brace
-    if (lastBrace <= firstBrace) {
-      // Possible truncated output: return from first brace to end
-      return trimmed.slice(firstBrace);
-    }
-    return trimmed.slice(firstBrace, lastBrace + 1);
-  }
-
-  return undefined;
 };
 
-/**
- * 不完全なJSON（切り捨てられた出力など）を修復する試み
- */
-function repairJson(json: string): string {
-  let repaired = json.trim();
+const splitTextLines = (text: string): string[] =>
+  text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
 
-  // 末尾がカンマで終わっている場合、削除する（不完全なオブジェクト/配列の要素の後のカンマ）
-  repaired = repaired.replace(/,\s*$/, '');
-
-  // 文字列が閉じられていない場合の処理
-  // エスケープされたクォート \" を除外してカウント
-  const quoteCount = (repaired.match(/(?<!\\)"/g) || []).length;
-  if (quoteCount % 2 !== 0) {
-    repaired += '"';
+const extractUrls = (text: string): string[] => {
+  const matches = text.match(/https?:\/\/[^\s)"'<>\]]+/g) ?? [];
+  const seen = new Set<string>();
+  const urls: string[] = [];
+  for (const raw of matches) {
+    const url = raw.trim();
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    urls.push(url);
   }
+  return urls;
+};
 
-  // 括弧のバランスを取る
-  const stack: string[] = [];
-  let inString = false;
-  for (let i = 0; i < repaired.length; i++) {
-    const char = repaired[i];
-    // 文字列の中かどうかを判定（エスケープされていないクォートで切り替え）
-    if (char === '"' && (i === 0 || repaired[i - 1] !== '\\')) {
-      inString = !inString;
-      continue;
-    }
+const clamp01 = (value: number, fallback = 0): number => {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(0, Math.min(1, value));
+};
 
-    if (inString) continue;
+const extractScore = (line: string, fallback = 0.5): number => {
+  const match = line.match(/(?:score|priority|confidence)\s*[:=]\s*([01](?:\.\d+)?)/i);
+  if (!match?.[1]) return fallback;
+  return clamp01(Number(match[1]), fallback);
+};
 
-    if (char === '{') stack.push('}');
-    else if (char === '[') stack.push(']');
-    else if (char === '}' || char === ']') {
-      if (stack.length > 0 && stack[stack.length - 1] === char) {
-        stack.pop();
-      }
-    }
-  }
-
-  // 足りない閉じ括弧を逆順に追加
-  while (stack.length > 0) {
-    repaired += stack.pop();
-  }
-
-  return repaired;
-}
+// Backward-compatible export for callers/tests that still import this symbol.
+// JSON厳格運用は廃止したため、ここでは単純に生テキストを返す。
+export const extractJsonCandidate = (text: string): string | undefined => {
+  const trimmed = text.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+};
 
 export const parseLlmTaskOutputText = <T extends LlmTaskName>(
   task: T,
   text: string,
 ): LlmTaskOutputMap[T] => {
-  const jsonCandidate = extractJsonCandidate(text);
-  if (!jsonCandidate) {
-    throw new Error(`Failed to find JSON object in LLM output. (Text length: ${text.length})`);
-  }
+  const plain = unwrapModelEnvelope(text);
+  const trimmed = plain.trim();
+  const lines = splitTextLines(plain);
+  const firstLine = lines[0] ?? '';
+  const bulletValues = lines
+    .map((line) => line.match(/^[-*]\s+(.+)$/)?.[1]?.trim() ?? '')
+    .filter((line) => line.length > 0);
 
-  // 1. そのままパースを試みる
-  try {
-    return parseLlmTaskOutput(task, JSON.parse(jsonCandidate));
-  } catch (error) {
-    // 2. ロバストな修復を試みる
-    try {
-      const repaired = repairJson(jsonCandidate);
-      if (repaired !== jsonCandidate) {
-        return parseLlmTaskOutput(task, JSON.parse(repaired));
-      }
-    } catch {
-      // ignore
-    }
-
-    // 3. 従来の固定サフィックスによる修復（後方互換性のため）
-    if (jsonCandidate.startsWith('{')) {
-      // Basic heuristic: append closing characters until it parses or we reach a limit
-      const repairSuffixes = ['}', ']}', ' ] }', ']]}', '}]}', '}}', '}}}'];
-      for (const suffix of repairSuffixes) {
+  switch (task) {
+    case 'query_generation': {
+      // Backward compatibility: if a JSON payload comes back, read queries from it.
+      if (trimmed.startsWith('{')) {
         try {
-          return parseLlmTaskOutput(task, JSON.parse(jsonCandidate + suffix));
+          const parsed = JSON.parse(trimmed) as { queries?: unknown };
+          if (Array.isArray(parsed.queries)) {
+            const queries = parsed.queries
+              .filter((item): item is string => typeof item === 'string')
+              .map((item) => item.trim())
+              .filter((item) => item.length > 0)
+              .slice(0, 5);
+            if (queries.length > 0) {
+              return { queries } as LlmTaskOutputMap[T];
+            }
+          }
         } catch {
-          // continue
+          // fall through to plain-text parsing
         }
       }
+      const queries = (bulletValues.length > 0 ? bulletValues : lines)
+        .map((line) => line.replace(/^(query|q)\s*[:\-]\s*/i, '').trim())
+        .filter((line) => line.length > 0)
+        .slice(0, 5);
+      return { queries: queries.length > 0 ? queries : ['topic overview'] } as LlmTaskOutputMap[T];
     }
-    const snippet =
-      jsonCandidate.length > 100 ? `${jsonCandidate.slice(0, 100)}...` : jsonCandidate;
-    const rawSnippet = text.length > 200 ? `${text.slice(0, 200)}...` : text;
-    throw new Error(
-      `Incomplete or malformed JSON from LLM: ${snippet}. Raw output: ${rawSnippet}. Original error: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
+    case 'search_result_selection': {
+      const selected = extractUrls(plain)
+        .slice(0, 5)
+        .map((url) => ({
+          url,
+          reason: 'Selected from plain-text output.',
+          priority: 0.6,
+        }));
+      return { selected } as LlmTaskOutputMap[T];
+    }
+    case 'page_usefulness_evaluation': {
+      const merged = lines.join(' ').toLowerCase();
+      const useful =
+        /\b(useful|relevant|valuable|high signal|contains evidence)\b/i.test(merged) &&
+        !/\b(not useful|irrelevant|off-topic|thin)\b/i.test(merged);
+      const score = extractScore(
+        lines.find((line) => /score|priority|confidence/i.test(line)) ?? '',
+        useful ? 0.75 : 0.2,
+      );
+      const shouldFetchAnother =
+        /\b(fetch another|need another|too thin|off-topic|insufficient)\b/i.test(merged);
+      return {
+        useful,
+        score,
+        reason: firstLine || 'Parsed from plain-text evaluation output.',
+        shouldFetchAnother,
+      } as LlmTaskOutputMap[T];
+    }
+    case 'emergent_topic_extraction': {
+      const items = (bulletValues.length > 0 ? bulletValues : lines)
+        .slice(0, 5)
+        .map((line) => ({
+          topic: line.replace(/^(topic)\s*[:\-]\s*/i, '').trim(),
+          whyResearch: 'Extracted from plain-text emergent topic output.',
+          relationType: 'expands' as const,
+          score: extractScore(line, 0.65),
+        }))
+        .filter((item) => item.topic.length > 0);
+      return { items } as LlmTaskOutputMap[T];
+    }
+    case 'hypothesis': {
+      const hypotheses = (bulletValues.length > 0 ? bulletValues : lines)
+        .slice(0, 5)
+        .map((line, index) => ({
+          id: `h${index + 1}`,
+          hypothesis: line,
+          rationale: 'Extracted from plain-text output.',
+          priority: extractScore(line, 0.6),
+        }));
+      return { hypotheses } as LlmTaskOutputMap[T];
+    }
+    case 'gap_detection': {
+      const gaps = (bulletValues.length > 0 ? bulletValues : lines).slice(0, 5).map((line) => ({
+        type: 'uncertain' as const,
+        description: line,
+        priority: extractScore(line, 0.6),
+      }));
+      return { gaps } as LlmTaskOutputMap[T];
+    }
+    case 'gap_planner': {
+      const steps = (bulletValues.length > 0 ? bulletValues : lines).slice(0, 5).map((line) => ({
+        title: line,
+        reason: 'Derived from plain-text gap planning output.',
+        queries: [line],
+      }));
+      return { steps } as LlmTaskOutputMap[T];
+    }
+    case 'frontier_selection': {
+      const selected = (bulletValues.length > 0 ? bulletValues : lines)
+        .slice(0, 5)
+        .map((line) => {
+          const entityId = line.match(/\b[a-z_]+\/[A-Za-z0-9._:-]+\b/)?.[0] ?? line;
+          return {
+            entityId,
+            score: extractScore(line, 0.6),
+            reason: 'Selected from plain-text frontier output.',
+          };
+        })
+        .filter((item) => item.entityId.length > 0);
+      return { selected } as LlmTaskOutputMap[T];
+    }
+    case 'summarize': {
+      return {
+        summary: firstLine || 'Summary generated from plain-text output.',
+        findings: (bulletValues.length > 0 ? bulletValues : lines.slice(1)).slice(0, 8),
+      } as LlmTaskOutputMap[T];
+    }
+    case 'extract_evidence': {
+      const claims = (bulletValues.length > 0 ? bulletValues : lines).slice(0, 10).map((line) => ({
+        text: line,
+        confidence: extractScore(line, 0.6),
+      }));
+      return { claims, relations: [] } as unknown as LlmTaskOutputMap[T];
+    }
+    default:
+      return {} as LlmTaskOutputMap[T];
   }
 };
 

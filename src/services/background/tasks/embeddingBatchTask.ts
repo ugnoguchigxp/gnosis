@@ -37,22 +37,36 @@ export async function embeddingBatchTask(batchSize = 20): Promise<{ processed: n
   }
 
   // 3. Session Knowledge Candidates の欠損確認
-  const pendingCandidates = await db
-    .select({
-      id: sessionKnowledgeCandidates.id,
-      title: sessionKnowledgeCandidates.title,
-      statement: sessionKnowledgeCandidates.statement,
-    })
-    .from(sessionKnowledgeCandidates)
-    .where(
-      and(isNull(sessionKnowledgeCandidates.embedding), eq(sessionKnowledgeCandidates.keep, true)),
-    )
-    .limit(batchSize);
+  // テーブル未作成環境（古いDB）ではこの処理をスキップして、KnowFlow全体の詰まりを防ぐ。
+  const tableCheck = await db.execute(
+    sql`select to_regclass('public.session_knowledge_candidates') as table_name`,
+  );
+  const hasSessionKnowledgeCandidates = Boolean(tableCheck.rows[0]?.table_name);
 
-  for (const candidate of pendingCandidates) {
-    const embedding = await generateEmbedding(`${candidate.title}\n${candidate.statement}`);
-    await db.update(sessionKnowledgeCandidates).set({ embedding }).where(sql`id = ${candidate.id}`);
-    totalProcessed++;
+  if (hasSessionKnowledgeCandidates) {
+    const pendingCandidates = await db
+      .select({
+        id: sessionKnowledgeCandidates.id,
+        title: sessionKnowledgeCandidates.title,
+        statement: sessionKnowledgeCandidates.statement,
+      })
+      .from(sessionKnowledgeCandidates)
+      .where(
+        and(
+          isNull(sessionKnowledgeCandidates.embedding),
+          eq(sessionKnowledgeCandidates.keep, true),
+        ),
+      )
+      .limit(batchSize);
+
+    for (const candidate of pendingCandidates) {
+      const embedding = await generateEmbedding(`${candidate.title}\n${candidate.statement}`);
+      await db
+        .update(sessionKnowledgeCandidates)
+        .set({ embedding })
+        .where(sql`id = ${candidate.id}`);
+      totalProcessed++;
+    }
   }
 
   return { processed: totalProcessed };

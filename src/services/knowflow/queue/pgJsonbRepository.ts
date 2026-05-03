@@ -11,6 +11,24 @@ const activeStatuses = [...ACTIVE_STATUSES];
 
 type DbTransaction = Parameters<Parameters<typeof defaultDb.transaction>[0]>[0];
 
+const extractLockOwnerPid = (lockOwner: string | undefined): number | null => {
+  if (!lockOwner) return null;
+  const match = lockOwner.match(/daemon-(\d+)(?:-\d+)?$/);
+  if (!match?.[1]) return null;
+  const pid = Number(match[1]);
+  return Number.isFinite(pid) && pid > 1 ? pid : null;
+};
+
+const isPidAlive = (pid: number | null): boolean => {
+  if (!pid || pid <= 1) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 export class PgJsonbQueueRepository implements QueueRepository {
   private database: typeof defaultDb;
 
@@ -274,6 +292,61 @@ export class PgJsonbQueueRepository implements QueueRepository {
           })
           .where(eq(topicTasks.id, row.id));
 
+        clearedCount += 1;
+      }
+    });
+
+    return clearedCount;
+  }
+
+  async clearOrphanedRunningTasks(
+    activeLockOwnerPrefixes: string[],
+    now = Date.now(),
+  ): Promise<number> {
+    const prefixes = activeLockOwnerPrefixes
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
+    if (prefixes.length === 0) return 0;
+
+    const running = await this.database
+      .select({ id: topicTasks.id, payload: topicTasks.payload })
+      .from(topicTasks)
+      .where(eq(topicTasks.status, 'running'));
+
+    const orphanRows = running.filter((row) => {
+      const task = parseTaskPayload(row.payload);
+      if (!task.lockOwner) return true;
+      if (isPidAlive(extractLockOwnerPid(task.lockOwner))) return false;
+      return !prefixes.some((prefix) => task.lockOwner?.startsWith(prefix));
+    });
+
+    if (orphanRows.length === 0) return 0;
+
+    let clearedCount = 0;
+    await this.database.transaction(async (tx) => {
+      for (const row of orphanRows) {
+        const task = parseTaskPayload(row.payload);
+        const updated = TopicTaskSchema.parse({
+          ...task,
+          status: 'deferred',
+          attempts: task.attempts,
+          errorReason: `orphaned running task recovered (lockOwner=${task.lockOwner ?? 'none'})`,
+          updatedAt: now,
+          lockedAt: undefined,
+          lockOwner: undefined,
+          nextRunAt: now,
+        });
+        const fields = toTaskRowFields(updated);
+        await tx
+          .update(topicTasks)
+          .set({
+            status: fields.status,
+            payload: fields.payload,
+            lockOwner: fields.lockOwner,
+            lockedAt: fields.lockedAt,
+            updatedAt: new Date(now),
+          })
+          .where(eq(topicTasks.id, row.id));
         clearedCount += 1;
       }
     });
