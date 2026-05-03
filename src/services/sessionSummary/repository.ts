@@ -4,6 +4,102 @@ import { sessionDistillations, sessionKnowledgeCandidates } from '../../db/schem
 import type { KnowledgeCandidate, SessionSummaryStatus } from './types.js';
 
 type SessionDistillationRecord = typeof sessionDistillations.$inferSelect;
+type SessionKnowledgeCandidateRecord = typeof sessionKnowledgeCandidates.$inferSelect;
+
+const SESSION_KNOWLEDGE_MIN_CONFIDENCE = 0.7;
+const CLI_COMMAND_LIKE_PATTERN = /^\/[a-z0-9._-]+(?:\s|$)/i;
+const CLI_COMMAND_INLINE_PATTERN = /\b(?:bun run|npm|pnpm|git|rg|drizzle-kit|tsc)\b/i;
+
+function isCliCommandLike(value: string | null | undefined): boolean {
+  if (!value) return false;
+  return CLI_COMMAND_LIKE_PATTERN.test(value.trim());
+}
+
+function shouldHideFromSessionKnowledgeList(candidate: SessionKnowledgeCandidateRecord): boolean {
+  if (candidate.confidence < SESSION_KNOWLEDGE_MIN_CONFIDENCE) return true;
+  return (
+    isCliCommandLike(candidate.title) ||
+    isCliCommandLike(candidate.statement) ||
+    CLI_COMMAND_INLINE_PATTERN.test(candidate.title) ||
+    CLI_COMMAND_INLINE_PATTERN.test(candidate.statement)
+  );
+}
+
+function normalizeCandidateText(value: string): string {
+  return value
+    .replace(/`/g, '')
+    .replace(/[「」"'.,:;!?()[\]{}]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function dedupeSessionKnowledgeCandidateRecords(
+  candidates: SessionKnowledgeCandidateRecord[],
+): SessionKnowledgeCandidateRecord[] {
+  const byKey = new Map<string, SessionKnowledgeCandidateRecord>();
+  for (const candidate of candidates) {
+    const statementKey = normalizeCandidateText(candidate.statement);
+    const titleKey = normalizeCandidateText(candidate.title);
+    const key = statementKey || titleKey;
+    if (!key) continue;
+
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, candidate);
+      continue;
+    }
+
+    const approvalScore = (value: SessionKnowledgeCandidateRecord['approvalStatus']): number =>
+      value === 'approved' ? 3 : value === 'pending' ? 2 : 1;
+    const kindScore = (value: SessionKnowledgeCandidateRecord['kind']): number =>
+      value === 'rule' ? 3 : value === 'lesson' ? 2 : value === 'procedure' ? 1 : 0;
+    const score = (row: SessionKnowledgeCandidateRecord): number =>
+      (row.keep ? 100 : 0) +
+      approvalScore(row.approvalStatus) * 10 +
+      row.confidence * 5 +
+      kindScore(row.kind);
+
+    if (score(candidate) > score(existing)) {
+      byKey.set(key, candidate);
+    }
+  }
+  return Array.from(byKey.values()).sort((a, b) => a.turnIndex - b.turnIndex);
+}
+
+export function filterSessionKnowledgeCandidates(
+  candidates: SessionKnowledgeCandidateRecord[],
+): SessionKnowledgeCandidateRecord[] {
+  const filtered = candidates.filter((candidate) => !shouldHideFromSessionKnowledgeList(candidate));
+  return dedupeSessionKnowledgeCandidateRecords(filtered);
+}
+
+function dedupeKnowledgeCandidates(candidates: KnowledgeCandidate[]): KnowledgeCandidate[] {
+  const byKey = new Map<string, KnowledgeCandidate>();
+  for (const candidate of candidates) {
+    const statementKey = normalizeCandidateText(candidate.statement);
+    const titleKey = normalizeCandidateText(candidate.title);
+    const key = statementKey || titleKey;
+    if (!key) continue;
+
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, candidate);
+      continue;
+    }
+
+    const score = (row: KnowledgeCandidate): number => {
+      const keepScore = row.keep ? 100 : 0;
+      const kindScore =
+        row.kind === 'rule' ? 3 : row.kind === 'lesson' ? 2 : row.kind === 'procedure' ? 1 : 0;
+      return keepScore + row.confidence * 10 + kindScore;
+    };
+    if (score(candidate) > score(existing)) {
+      byKey.set(key, candidate);
+    }
+  }
+  return Array.from(byKey.values()).sort((a, b) => a.turnIndex - b.turnIndex);
+}
 
 export async function findLatestSessionDistillation(sessionKey: string) {
   const rows = await db
@@ -56,7 +152,9 @@ export async function listCandidatesBySession(sessionKey: string) {
       distillation: null,
       candidates: [] as (typeof sessionKnowledgeCandidates.$inferSelect)[],
     };
-  const candidates = await getCandidatesByDistillationId(latest.id);
+  const candidates = filterSessionKnowledgeCandidates(
+    await getCandidatesByDistillationId(latest.id),
+  );
   return { distillation: latest, candidates };
 }
 
@@ -118,9 +216,11 @@ export async function replaceKnowledgeCandidates(
     .delete(sessionKnowledgeCandidates)
     .where(eq(sessionKnowledgeCandidates.distillationId, distillationId));
   if (candidates.length === 0) return;
+  const deduped = dedupeKnowledgeCandidates(candidates);
+  if (deduped.length === 0) return;
 
   await db.insert(sessionKnowledgeCandidates).values(
-    candidates.map((candidate) => ({
+    deduped.map((candidate) => ({
       distillationId,
       turnIndex: candidate.turnIndex,
       kind: candidate.kind,

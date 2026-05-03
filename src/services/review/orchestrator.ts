@@ -12,7 +12,6 @@ import { getDiff } from './foundation/gitDiff.js';
 import { enforceHardLimit } from './foundation/hardLimit.js';
 import { maskOrThrow } from './foundation/secretMask.js';
 import { validateSessionId } from './foundation/sessionId.js';
-import { generateFixSuggestion } from './knowledge/fixSuggester.js';
 import {
   getProjectKey,
   persistReviewCase,
@@ -25,12 +24,12 @@ import { resolveReviewerAlias } from './llm/reviewer.js';
 import type { ChatMessage, ReviewLLMService } from './llm/types.js';
 import type { ReviewMcpToolCaller } from './mcp/caller.js';
 import { recordReviewResult } from './memoryIntegration.js';
-import { calculateMetrics } from './metrics/calculator.js';
 import { enrichRiskSignalsWithImpact, planReview } from './planner/riskScorer.js';
 import { renderReviewMarkdown } from './render/markdown.js';
 import { analyzeImpactWithAstmend, extractChangedSymbols } from './static/astmend.js';
 import { analyzeDiffWithDiffGuard, runDiffGuard } from './static/diffguard.js';
 import { runStaticAnalysisOnChangedDetailed } from './static/runner.js';
+import { buildReviewerSystemContext } from './systemContext.js';
 import type { ReviewerToolContext } from './tools/types.js';
 import {
   type DegradedMode,
@@ -38,7 +37,6 @@ import {
   type FindingCategory,
   type FindingConfidence,
   type FindingSeverity,
-  type FixSuggestion,
   type GuidanceItem,
   type KnowledgePolicy,
   type KnowledgeRetrievalStatus,
@@ -248,21 +246,6 @@ function buildResult(input: Omit<ReviewOutput, 'markdown'> & { markdown?: string
   } satisfies ReviewOutput;
   const markdown = renderReviewMarkdown(withMarkdown);
   return { ...input, markdown };
-}
-
-async function buildFixSuggestions(
-  findings: Finding[],
-  repoPath: string,
-  mcpCaller: ReviewMcpToolCaller | undefined,
-): Promise<FixSuggestion[]> {
-  const suggestions: FixSuggestion[] = [];
-
-  for (const finding of findings) {
-    const suggestion = await generateFixSuggestion(finding, repoPath, mcpCaller);
-    if (suggestion) suggestions.push(suggestion);
-  }
-
-  return suggestions;
 }
 
 function buildNoChangesResult(startTime: number, now: () => number): ReviewOutput {
@@ -488,7 +471,7 @@ export async function runReviewStageB(
   const knowledgePolicy = resolveKnowledgePolicy(req, 'best_effort');
   if (knowledgePolicy === 'required') {
     // Fast mode should not bypass required knowledge policy.
-    return runReviewStageC(req, deps);
+    return runReviewKnowledgeAware(req, deps);
   }
 
   const state = await buildReviewDiffState(
@@ -692,7 +675,7 @@ function buildRubricEvaluation(rubric: RubricCriterion[], findings: Finding[]): 
   });
 }
 
-export async function runReviewStageC(
+async function runReviewKnowledgeAware(
   req: ReviewRequest,
   deps: RunReviewDeps = {},
 ): Promise<ReviewOutput> {
@@ -884,29 +867,7 @@ export async function runReviewStageC(
   return withMarkdown;
 }
 
-export async function runReviewStageD(
-  req: ReviewRequest,
-  deps: RunReviewDeps = {},
-): Promise<ReviewOutput> {
-  const now = deps.now ?? Date.now;
-  const result = await runReviewStageC(req, deps);
-  const fixSuggestions = await buildFixSuggestions(result.findings, req.repoPath, deps.mcpCaller);
-  const reviewKpis = await calculateMetrics(
-    {
-      start: new Date(now() - 7 * 24 * 60 * 60 * 1000),
-      end: new Date(now()),
-    },
-    getProjectKey(req.repoPath),
-  );
-
-  return buildResult({
-    ...result,
-    fix_suggestions: fixSuggestions,
-    review_kpis: reviewKpis,
-  });
-}
-
-export async function runReviewStageE(
+async function runReviewAgenticCore(
   req: ReviewRequest,
   deps: RunReviewDeps = {},
 ): Promise<ReviewOutput> {
@@ -999,62 +960,12 @@ export async function runReviewStageE(
     webSearchFn: undefined,
   };
 
-  const rubricText =
-    rubric.length > 0
-      ? rubric
-          .map(
-            (item) =>
-              `- ${item.criterionId}: ${item.title} | sources=${item.sourceGuidanceIds.join(', ')}`,
-          )
-          .join('\n')
-      : '- (no rubric available)';
-
-  const systemPrompt = `
-You are a highly skilled software engineer and an expert code reviewer. Perform an autonomous, agentic code review for the following diff.
-
-### Gnosis Memory & Procedural Knowledge
-You have access to Gnosis, a sophisticated memory system. Before reaching conclusions:
-1. Use 'query_procedure' to fetch project-specific instructions and constraints. Pay special attention to "Golden Paths" (tasks with high confidence).
-2. Use 'recall_lessons' if you encounter patterns that might have caused issues in the past.
-3. Use 'query_graph' to understand the relationships and dependencies of the components you are auditing.
-4. Use 'lookup_failure_firewall_context' only when the diff suggests Golden Path deviation or recurrence risk. Treat it as bounded reference evidence, not as a mandatory preflight.
-
-Knowledge policy: ${knowledgePolicy}
-Knowledge retrieval status (pre-check): ${knowledgeRetrievalStatus}
-Rubric:
-${rubricText}
-
-Goal: ${req.taskGoal ?? 'Review the code changes for bugs, security issues, and maintainability.'}
-
-Return your final review in the following JSON format ONLY:
-{
-  "findings": [
-    {
-      "title": "Finding title",
-      "severity": "error|warning|info",
-      "confidence": "high|medium|low",
-      "file_path": "relative/path/to/file",
-      "line_new": 123,
-      "category": "bug|security|performance|design|maintainability",
-      "rationale": "Why this is an issue using evidence from Gnosis memory if applicable",
-      "suggested_fix": "How to fix it",
-      "evidence": "Code snippet or context",
-      "knowledge_refs": ["guidance-id-if-used"],
-      "knowledge_basis": "static_analysis|novel_issue|no_applicable_knowledge"
-    }
-  ],
-  "rubric_evaluation": [
-    {
-      "criterionId": "rubric-1",
-      "status": "passed|failed|not_applicable",
-      "evidence": "why",
-      "sourceGuidanceIds": ["guidance-id"]
-    }
-  ],
-  "summary": "Overall summary of the review, including how past lessons were applied",
-  "next_actions": ["Action 1", "Action 2"]
-}
-`;
+  const systemPrompt = buildReviewerSystemContext({
+    knowledgePolicy,
+    knowledgeRetrievalStatus,
+    rubric,
+    taskGoal: req.taskGoal,
+  });
 
   const messages: ChatMessage[] = [
     { role: 'system', content: systemPrompt },
@@ -1184,20 +1095,15 @@ Return your final review in the following JSON format ONLY:
   }
 }
 
-export async function runReviewStageBFromRepo(
-  repoPath: string,
-  options: Omit<ReviewRequest, 'repoPath'>,
+export async function runReviewAgentic(
+  req: ReviewRequest,
   deps: RunReviewDeps = {},
 ): Promise<ReviewOutput> {
-  return runReviewStageB({ ...options, repoPath }, deps);
-}
-
-export async function runReviewStageAFromRepo(
-  repoPath: string,
-  options: Omit<ReviewRequest, 'repoPath'>,
-  deps: RunReviewDeps = {},
-): Promise<ReviewOutput> {
-  return runReviewStageA({ ...options, repoPath }, deps);
+  // Preserve failure-firewall behavior after removing stage-based CLI routing.
+  if (isFailureFirewallGoal(req.taskGoal)) {
+    return runReviewKnowledgeAware(req, deps);
+  }
+  return runReviewAgenticCore(req, deps);
 }
 
 export async function resolveCurrentBranch(repoPath: string): Promise<string> {

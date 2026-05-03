@@ -1,3 +1,4 @@
+import { runAgenticToolLoop } from '../../agenticCore/toolLoop.js';
 import { ReviewError } from '../errors.js';
 import { createDefaultReviewerToolRegistry } from '../tools/index.js';
 import type { ReviewerToolContext } from '../tools/types.js';
@@ -24,42 +25,47 @@ async function reviewWithNativeTools(
   const registry = createDefaultReviewerToolRegistry();
   const tools = registry.toLLMToolDefinitions();
   const maxRounds = ctx.maxToolRounds ?? 5;
-  const history = [...messages];
 
   if (!llm.generateMessagesStructured) {
     throw new ReviewError('E007', 'LLM service does not support structured tool calls');
   }
+  const generateMessagesStructured = llm.generateMessagesStructured;
 
-  for (let round = 0; round < maxRounds; round++) {
-    const result = await llm.generateMessagesStructured(history, { tools });
-    const content = result.text.trim();
-
-    if (content) {
-      history.push({ role: 'assistant', content });
-    }
-
-    if (!result.toolCalls || result.toolCalls.length === 0) {
-      // Final answer
-      return content;
-    }
-
-    // Execute tool calls
-    const toolResults: ChatMessage[] = [];
-    for (const tc of result.toolCalls) {
-      const output = await registry.execute(tc.name, tc.arguments, ctx);
-      // For some providers, we might need to include tool_call_id
-      // For now we just feed it back as content in a user message or specific role if supported
-      // Gnosis cloudProvider expects tool results in a specific way if we were to support it natively
-      // For simplicity in Stage E, we append as 'user' role with a clear marker if role='tool' is not handled
-      history.push({
-        role: 'user',
-        content: `[Tool Result for ${tc.name}]:\n${output}`,
-      });
-    }
+  try {
+    const result = await runAgenticToolLoop({
+      initialMessages: messages,
+      tools,
+      maxLoops: maxRounds,
+      generate: async (history) => {
+        const generated = await generateMessagesStructured(history as ChatMessage[], { tools });
+        return {
+          text: generated.text,
+          toolCalls: (generated.toolCalls ?? []).map((call) => ({
+            id: call.id,
+            name: call.name,
+            arguments: call.arguments as Record<string, unknown>,
+          })),
+          rawAssistantContent: generated.rawAssistantContent,
+          usage: generated.usage,
+        };
+      },
+      executeTool: async (toolCall) => {
+        const output = await registry.execute(toolCall.name, toolCall.arguments, ctx);
+        return {
+          toolCallId: toolCall.id,
+          toolName: toolCall.name,
+          ok: true,
+          output: { text: output },
+        };
+      },
+    });
+    return result.finalText.trim();
+  } catch (error) {
+    throw new ReviewError(
+      'E012',
+      error instanceof Error
+        ? error.message
+        : `Reached maximum agentic rounds (${maxRounds}) without final answer.`,
+    );
   }
-
-  throw new ReviewError(
-    'E012',
-    `Reached maximum agentic rounds (${maxRounds}) without final answer.`,
-  );
 }

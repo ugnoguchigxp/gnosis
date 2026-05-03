@@ -1,13 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { getReviewLLMService } from './llm/reviewer.js';
-import {
-  runReviewStageA,
-  runReviewStageB,
-  runReviewStageC,
-  runReviewStageD,
-  runReviewStageE,
-} from './orchestrator.js';
+import { runReviewAgentic } from './orchestrator.js';
 import {
   KnowledgePolicySchema,
   ReviewModeSchema,
@@ -28,7 +22,7 @@ type CliArgs = {
   knowledgePolicy?: 'off' | 'best_effort' | 'required';
   exitPolicy: 'strict' | 'balanced' | 'permissive';
   json: boolean;
-  stage: 'a' | 'b' | 'c' | 'd' | 'e';
+  stage: 'agentic';
   enableStaticAnalysis: boolean;
 };
 
@@ -75,8 +69,14 @@ function parseArgs(argv: string[]): CliArgs {
   const exitPolicy =
     exitPolicyArg === 'strict' || exitPolicyArg === 'balanced' ? exitPolicyArg : 'permissive';
   const stageArg = getArg(argv, '--stage');
-  const stage =
-    stageArg === 'a' || stageArg === 'c' || stageArg === 'd' || stageArg === 'e' ? stageArg : 'b';
+  if (stageArg && stageArg.trim().length > 0) {
+    emitReviewDebugLog({
+      event: 'cli_stage_flag_ignored',
+      requestedStage: stageArg,
+      effectiveStage: 'agentic',
+    });
+  }
+  const stage: CliArgs['stage'] = 'agentic';
   const enableStaticAnalysis = argv.includes('--enable-static-analysis');
 
   return {
@@ -138,25 +138,7 @@ export async function runReviewCli(argv = process.argv.slice(2)): Promise<void> 
 
   let result: ReviewOutput;
   try {
-    switch (args.stage) {
-      case 'a':
-        result = await runReviewStageA(request, { llmService });
-        break;
-      case 'b':
-        result = await runReviewStageB(request, { llmService });
-        break;
-      case 'c':
-        result = await runReviewStageC(request, { llmService });
-        break;
-      case 'd':
-        result = await runReviewStageD(request, { llmService });
-        break;
-      case 'e':
-        result = await runReviewStageE(request, { llmService });
-        break;
-      default:
-        result = await runReviewStageB(request, { llmService });
-    }
+    result = await runReviewAgentic(request, { llmService });
   } catch (error) {
     emitReviewDebugLog({
       event: 'cli_review_error',

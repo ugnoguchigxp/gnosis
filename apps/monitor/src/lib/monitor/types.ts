@@ -277,6 +277,8 @@ export type SessionDistillationListItem = {
   keptCount: number;
   droppedCount: number;
   error: string | null;
+  summaryPreview?: string | null;
+  metadata?: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;

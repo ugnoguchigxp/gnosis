@@ -3,11 +3,28 @@
 import { closeDbPool } from '../db/index.js';
 import { PgJsonbQueueRepository } from '../services/knowflow/queue/pgJsonbRepository.js';
 import {
+  filterSessionKnowledgeCandidates,
   findLatestSessionDistillation,
   getCandidatesByDistillationId,
   getDistillationById,
   listDistillations,
 } from '../services/sessionSummary/repository.js';
+
+function buildSummaryPreview(
+  candidates: Array<{
+    keep: boolean;
+    title: string;
+    statement: string;
+  }>,
+): string | null {
+  const lines = candidates
+    .filter((candidate) => candidate.keep)
+    .map((candidate) => candidate.statement.trim() || candidate.title.trim())
+    .filter((line, index, list) => line.length > 0 && list.indexOf(line) === index)
+    .slice(0, 3);
+  if (lines.length === 0) return null;
+  return lines.join('\n');
+}
 
 function getArg(argv: string[], key: string): string | undefined {
   const index = argv.indexOf(key);
@@ -86,7 +103,22 @@ async function run(argv: string[]) {
 
   if (command === 'list') {
     const rows = await listDistillations();
-    console.log(asJson ? JSON.stringify(rows, null, 2) : rows.map((row) => row.id).join('\n'));
+    const rowsWithSummary = await Promise.all(
+      rows.map(async (row) => {
+        const candidates = filterSessionKnowledgeCandidates(
+          await getCandidatesByDistillationId(row.id),
+        );
+        return {
+          ...row,
+          summaryPreview: buildSummaryPreview(candidates),
+        };
+      }),
+    );
+    console.log(
+      asJson
+        ? JSON.stringify(rowsWithSummary, null, 2)
+        : rowsWithSummary.map((row) => row.id).join('\n'),
+    );
     return;
   }
 
@@ -94,7 +126,9 @@ async function run(argv: string[]) {
     const distillationId = requireArg(argv, '--distillation-id');
     const record = await getDistillationById(distillationId);
     if (!record) throw new Error(`distillation not found: ${distillationId}`);
-    const candidates = await getCandidatesByDistillationId(distillationId);
+    const candidates = filterSessionKnowledgeCandidates(
+      await getCandidatesByDistillationId(distillationId),
+    );
     console.log(
       asJson ? JSON.stringify({ record, candidates }, null, 2) : `${record.id} ${record.status}`,
     );
@@ -108,7 +142,9 @@ async function run(argv: string[]) {
       console.log(asJson ? JSON.stringify(null, null, 2) : 'not_found');
       return;
     }
-    const candidates = await getCandidatesByDistillationId(record.id);
+    const candidates = filterSessionKnowledgeCandidates(
+      await getCandidatesByDistillationId(record.id),
+    );
     console.log(
       asJson
         ? JSON.stringify({ record, candidates }, null, 2)

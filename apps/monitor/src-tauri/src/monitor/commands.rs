@@ -47,6 +47,18 @@ fn validate_project_root(raw: &str) -> anyhow::Result<PathBuf> {
     Ok(canonical)
 }
 
+fn resolve_required_param(
+    primary: Option<String>,
+    fallback: Option<String>,
+    name: &str,
+) -> Result<String, String> {
+    primary
+        .or(fallback)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("missing required parameter: {name}"))
+}
+
 #[tauri::command]
 pub fn monitor_config(state: State<'_, MonitorRuntime>) -> MonitorConfigResponse {
     MonitorConfigResponse {
@@ -303,8 +315,10 @@ pub async fn monitor_list_session_knowledge(
 #[tauri::command]
 pub async fn monitor_approve_session_knowledge(
     state: State<'_, MonitorRuntime>,
-    candidate_id: String,
+    candidate_id: Option<String>,
+    #[allow(non_snake_case)] candidateId: Option<String>,
 ) -> Result<serde_json::Value, String> {
+    let candidate_id = resolve_required_param(candidate_id, candidateId, "candidate_id")?;
     cli::approve_session_knowledge(&state.project_root, &candidate_id)
         .await
         .map_err(|error| error.to_string())
@@ -313,9 +327,11 @@ pub async fn monitor_approve_session_knowledge(
 #[tauri::command]
 pub async fn monitor_reject_session_knowledge(
     state: State<'_, MonitorRuntime>,
-    candidate_id: String,
+    candidate_id: Option<String>,
+    #[allow(non_snake_case)] candidateId: Option<String>,
     reason: String,
 ) -> Result<serde_json::Value, String> {
+    let candidate_id = resolve_required_param(candidate_id, candidateId, "candidate_id")?;
     cli::reject_session_knowledge(&state.project_root, &candidate_id, &reason)
         .await
         .map_err(|error| error.to_string())
@@ -324,8 +340,10 @@ pub async fn monitor_reject_session_knowledge(
 #[tauri::command]
 pub async fn monitor_record_session_knowledge(
     state: State<'_, MonitorRuntime>,
-    candidate_id: String,
+    candidate_id: Option<String>,
+    #[allow(non_snake_case)] candidateId: Option<String>,
 ) -> Result<serde_json::Value, String> {
+    let candidate_id = resolve_required_param(candidate_id, candidateId, "candidate_id")?;
     cli::record_session_knowledge(&state.project_root, &candidate_id)
         .await
         .map_err(|error| error.to_string())

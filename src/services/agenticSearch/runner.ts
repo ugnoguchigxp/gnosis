@@ -1,3 +1,4 @@
+import { type AgenticLoopMessage, runAgenticToolLoop } from '../agenticCore/toolLoop.js';
 import { AgenticSearchLlmAdapter } from './llmAdapter.js';
 import { saveAgenticAnswer } from './saveAnswer.js';
 import { buildInitialSystemContext } from './systemContext.js';
@@ -6,6 +7,7 @@ import {
   type AgenticSearchToolExecutorRegistry,
   createDefaultAgenticSearchExecutors,
   executeToolCall,
+  listAgenticSearchToolSpecs,
 } from './toolRegistry.js';
 import type { AgenticSearchMessage, AgenticSearchTrace } from './types.js';
 
@@ -45,7 +47,7 @@ export class AgenticSearchRunner {
   ) {}
 
   async run(input: AgenticSearchRunnerInput): Promise<AgenticSearchRunnerOutput> {
-    const messages: AgenticSearchMessage[] = [
+    const messages: AgenticLoopMessage[] = [
       { role: 'system', content: buildInitialSystemContext() },
       { role: 'user', content: buildUserTaskMessage(input) },
     ];
@@ -63,20 +65,6 @@ export class AgenticSearchRunner {
         arguments: { query: input.userRequest, count: 5 },
       },
     ];
-
-    // First round: always gather both internal knowledge and web results.
-    messages.push({
-      role: 'assistant',
-      content: '',
-      toolCalls: prefetchCalls,
-      raw: {
-        tool_calls: prefetchCalls.map((call) => ({
-          id: call.id,
-          type: 'function',
-          function: { name: call.name, arguments: JSON.stringify(call.arguments) },
-        })),
-      },
-    });
 
     const prefetchResults = await Promise.all(
       prefetchCalls.map((call) => executeToolCall(this.executors, call)),
@@ -105,75 +93,79 @@ export class AgenticSearchRunner {
       ].join('\n'),
     });
 
-    for (let loop = 0; loop < this.maxLoops; loop++) {
-      trace.loopCount = loop + 1;
-      const generated = await this.adapter.generate(messages);
-      usage = generated.usage;
-      messages.push({
-        role: 'assistant',
-        content: generated.text,
-        toolCalls: generated.toolCalls,
-        raw: generated.raw,
+    try {
+      const loopResult = await runAgenticToolLoop({
+        initialMessages: messages,
+        tools: listAgenticSearchToolSpecs().map((tool) => ({
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.inputSchema,
+        })),
+        maxLoops: this.maxLoops,
+        generate: async (history) => {
+          const generated = await this.adapter.generate(history as AgenticSearchMessage[]);
+          return {
+            text: generated.text,
+            toolCalls: generated.toolCalls,
+            rawAssistantContent: generated.raw,
+            usage: generated.usage,
+          };
+        },
+        executeTool: async (call) => {
+          const result = await executeToolCall(this.executors, {
+            id: call.id,
+            name: call.name as 'knowledge_search' | 'brave_search' | 'fetch',
+            arguments: call.arguments,
+          });
+          trace.toolCalls.push({
+            toolCallId: call.id,
+            toolName: call.name as 'knowledge_search' | 'brave_search' | 'fetch',
+            arguments: call.arguments,
+            ok: result.ok,
+            errorCode: result.error?.code,
+          });
+          return result;
+        },
+        onToolBatchComplete: (toolCalls) =>
+          toolCalls
+            .map((call) =>
+              buildToolFollowupContext(call.name as 'knowledge_search' | 'brave_search' | 'fetch'),
+            )
+            .join('\n\n'),
       });
 
-      if (generated.toolCalls.length === 0) {
-        const answer = generated.text.trim();
-        if (answer.length > 0) {
-          let savedMemoryId: string | undefined;
-          try {
-            savedMemoryId = await saveAgenticAnswer({
-              input,
-              answer,
-              trace,
-            });
-          } catch {
-            // Do not fail agentic_search when persistence fails.
-            savedMemoryId = undefined;
-          }
-          return { answer, toolTrace: trace, usage, savedMemoryId };
+      usage = loopResult.usage;
+      trace.loopCount = loopResult.loopCount;
+      const answer = loopResult.finalText.trim();
+      if (answer.length > 0) {
+        let savedMemoryId: string | undefined;
+        try {
+          savedMemoryId = await saveAgenticAnswer({
+            input,
+            answer,
+            trace,
+          });
+        } catch {
+          savedMemoryId = undefined;
         }
-        return {
-          answer: '結果が見つかりませんでした。',
-          toolTrace: trace,
-          degraded: { code: 'EMPTY_ASSISTANT_RESPONSE', message: 'No text and no tool calls' },
-          usage,
-        };
+        return { answer, toolTrace: trace, usage, savedMemoryId };
       }
-
-      const followupContexts: string[] = [];
-      for (const call of generated.toolCalls) {
-        const result = await executeToolCall(this.executors, call);
-        trace.toolCalls.push({
-          toolCallId: call.id,
-          toolName: call.name,
-          arguments: call.arguments,
-          ok: result.ok,
-          errorCode: result.error?.code,
-        });
-        messages.push({
-          role: 'tool',
-          toolCallId: result.toolCallId,
-          toolName: result.toolName,
-          content: JSON.stringify(result.ok ? result.output : { error: result.error }),
-        });
-        followupContexts.push(buildToolFollowupContext(call.name));
-      }
-      if (followupContexts.length > 0) {
-        messages.push({
-          role: 'system',
-          content: followupContexts.join('\n\n'),
-        });
-      }
+      return {
+        answer: '結果が見つかりませんでした。',
+        toolTrace: trace,
+        degraded: { code: 'EMPTY_ASSISTANT_RESPONSE', message: 'No text and no tool calls' },
+        usage,
+      };
+    } catch (error) {
+      return {
+        answer: '結果が見つかりませんでした。',
+        toolTrace: trace,
+        degraded: {
+          code: 'MAX_TOOL_LOOPS_REACHED',
+          message: error instanceof Error ? error.message : `Reached max loops (${this.maxLoops})`,
+        },
+        usage,
+      };
     }
-
-    return {
-      answer: '結果が見つかりませんでした。',
-      toolTrace: trace,
-      degraded: {
-        code: 'MAX_TOOL_LOOPS_REACHED',
-        message: `Reached max loops (${this.maxLoops})`,
-      },
-      usage,
-    };
   }
 }

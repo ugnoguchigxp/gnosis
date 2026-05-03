@@ -75,8 +75,8 @@ Failure Firewall は、開発者の手元のリポジトリ、ローカル DB、
 ### 3.1 手動実行
 
 ```bash
-bun run review --stage c --mode worktree --goal "failure_firewall: Golden Path 逸脱と過去失敗の再発だけを検知する"
-bun run review --stage c --mode worktree --goal "failure_firewall --knowledge-source dedicated"
+bun run review --mode worktree --goal "failure_firewall: Golden Path 逸脱と過去失敗の再発だけを検知する"
+bun run review --mode worktree --goal "failure_firewall --knowledge-source dedicated"
 ```
 
 最終的には専用 CLI alias を追加する。
@@ -299,7 +299,7 @@ GNOSIS_FAILURE_FIREWALL_KNOWLEDGE_SOURCE=dedicated
 GNOSIS_FAILURE_FIREWALL_KNOWLEDGE_SOURCE=hybrid
 
 bun run failure-firewall --mode worktree --knowledge-source dedicated
-bun run review --stage c --mode worktree --goal "failure_firewall --knowledge-source hybrid"
+bun run review --mode worktree --goal "failure_firewall --knowledge-source hybrid"
 ```
 
 ```text
@@ -419,7 +419,7 @@ language=TypeScript
 framework=SvelteKit
 files=src/services/review/orchestrator.ts
 riskSignals=cache_invalidation,input_validation
-changedSymbols=runReviewStageC, retrieveGuidance
+changedSymbols=runReviewAgentic, retrieveGuidance
 addedCalls=retrieveGuidance, searchSimilarFindings
 removedCalls=
 addedBehavior=state-changing mutation without invalidation
@@ -1015,7 +1015,7 @@ verify 後の候補生成 service が、採用済み review finding や手戻り
 ### 13.3 Integration Test
 
 - `bun test src/services/failureFirewall/*.spec.ts`
-- `bun run review --stage c --mode worktree --goal "failure_firewall --knowledge-source dedicated"`
+- `bun run review --mode worktree --goal "failure_firewall --knowledge-source dedicated"`
 - DB なしの場合の degraded mode
 - embedding service 失敗時の fallback
 

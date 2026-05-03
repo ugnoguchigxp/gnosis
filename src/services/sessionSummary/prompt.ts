@@ -1,6 +1,6 @@
 import type { KnowledgeCandidate, SessionTurnBlock } from './types.js';
 
-export const SESSION_DISTILLATION_PROMPT_VERSION = 'session-distill-v1';
+export const SESSION_DISTILLATION_PROMPT_VERSION = 'session-distill-v2';
 
 function safeJson<T>(value: T): string {
   return JSON.stringify(value, null, 2);
@@ -11,6 +11,12 @@ export function buildTurnCandidatePrompt(
   candidates: KnowledgeCandidate[],
 ): string {
   const payload = {
+    systemContext: {
+      policy: [
+        'コマンド実行ログ（例: /shell, bun run, npm, pnpm, git, rg など）を知識候補として推奨しない。',
+        '操作ログの言い換えではなく、再利用可能な判断基準・教訓・手順の質を優先する。',
+      ],
+    },
     userIntent: turn.deterministicIntent,
     userContent: turn.userContent,
     messages: turn.messages.map((message) => ({
@@ -19,7 +25,8 @@ export function buildTurnCandidatePrompt(
     })),
     deterministicActions: turn.deterministicActions,
     deterministicEvidence: turn.deterministicEvidence,
-    deterministicCandidates: candidates.map((candidate) => ({
+    deterministicCandidates: candidates.map((candidate, index) => ({
+      index: index + 1,
       kind: candidate.kind,
       title: candidate.title,
       statement: candidate.statement,
@@ -30,23 +37,14 @@ export function buildTurnCandidatePrompt(
   };
 
   return [
-    '以下の turn 情報から知識候補を圧縮してください。',
-    '出力は JSON のみ。日本語。推測禁止。',
-    '候補は最大8件。keep=false も理由を付与する。',
-    'schema:',
-    safeJson({
-      candidates: [
-        {
-          kind: 'lesson|rule|procedure|candidate',
-          title: 'string',
-          statement: 'string',
-          keep: true,
-          keepReason: 'string',
-          confidence: 0.0,
-          evidence: [{ kind: 'result', text: 'string' }],
-        },
-      ],
-    }),
+    '以下の turn 情報から、既存候補の confidence だけを再評価してください。',
+    '候補の kind/title/statement/keep は変更しないでください。',
+    '出力はプレーンテキストのみ。JSON禁止。推測禁止。',
+    '形式:',
+    '1: confidence=0.78 reason=短い理由',
+    '2: confidence=0.32 reason=短い理由',
+    '...',
+    'confidence は 0.00-1.00 の範囲。',
     'input:',
     safeJson(payload),
   ].join('\n');

@@ -12,7 +12,7 @@ import {
   runFailureFirewall,
 } from '../src/services/failureFirewall/index.js';
 import { loadFailureKnowledge } from '../src/services/failureFirewall/patternStore.js';
-import { runReviewStageC } from '../src/services/review/orchestrator.js';
+import { runReviewAgentic } from '../src/services/review/orchestrator.js';
 
 const envBackup = {
   GNOSIS_ALLOWED_ROOTS: process.env.GNOSIS_ALLOWED_ROOTS,
@@ -197,10 +197,10 @@ describe('failure firewall', () => {
     expect(present.matches).toEqual([]);
   });
 
-  test('review stage C routes failure_firewall goals to the local firewall', async () => {
+  test('review agentic routes failure_firewall goals to the local firewall', async () => {
     process.env.GNOSIS_ALLOWED_ROOTS = '/tmp';
 
-    const result = await runReviewStageC(
+    const result = await runReviewAgentic(
       {
         taskId: 'task-ff',
         repoPath: '/tmp',
@@ -224,7 +224,7 @@ describe('failure firewall', () => {
   test('with_llm mode reports degraded local LLM adjudication without blocking fast findings', async () => {
     process.env.GNOSIS_ALLOWED_ROOTS = '/tmp';
 
-    const result = await runReviewStageC(
+    const result = await runReviewAgentic(
       {
         taskId: 'task-ff-llm',
         repoPath: '/tmp',

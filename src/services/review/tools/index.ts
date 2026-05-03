@@ -19,7 +19,7 @@ import { listDirToolEntry, readFileToolEntry } from './readFile.js';
 import { searchCodeToolEntry } from './searchCode.js';
 import { runLintToolEntry, runTypecheckToolEntry } from './staticAnalysis.js';
 import type { ReviewerToolContext, ReviewerToolEntry } from './types.js';
-import { webSearchToolEntry } from './webSearch.js';
+import { braveSearchToolEntry, fetchToolEntry, webSearchToolEntry } from './webSearch.js';
 
 /** LLM tool definition format as expected by cloud providers */
 export type LLMToolDefinition = {
@@ -89,5 +89,7 @@ export function createDefaultReviewerToolRegistry(): ReviewerToolRegistry {
   registry.register(queryGraphToolEntry);
   registry.register(lookupFailureFirewallContextToolEntry);
   registry.register(webSearchToolEntry);
+  registry.register(braveSearchToolEntry);
+  registry.register(fetchToolEntry);
   return registry;
 }

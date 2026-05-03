@@ -34,6 +34,7 @@ async function main() {
 
   const runLogger = await createRunLogger({ runId: `worker-daemon-${Date.now()}` });
   let healthReportTimer: ReturnType<typeof setInterval> | undefined;
+  let queueRecoveryTimer: ReturnType<typeof setInterval> | undefined;
   let shutdownRequested = false;
   let shutdownReason = 'normal';
 
@@ -70,6 +71,10 @@ async function main() {
   const runtimeLockTimeoutAlertThreshold = Math.max(
     1,
     envNumber(process.env.KNOWFLOW_RUNTIME_LOCK_TIMEOUT_ALERT_THRESHOLD, 3),
+  );
+  const queueRecoveryIntervalMs = Math.max(
+    30_000,
+    envNumber(process.env.KNOWFLOW_QUEUE_RECOVERY_INTERVAL_MS, 120_000),
   );
   const runtimeMonitor = new WorkerRuntimeMonitor({
     windowMs: runtimeMetricsWindowMs,
@@ -191,6 +196,38 @@ async function main() {
   }, healthCheckReportIntervalMs);
   healthReportTimer.unref?.();
 
+  const runQueueRecovery = async (trigger: 'startup' | 'interval') => {
+    try {
+      const staleCleared = await queueRepository.clearStaleTasks(
+        config.knowflow.worker.cronRunWindowMs,
+      );
+      const orphanCleared = await queueRepository.clearOrphanedRunningTasks([
+        `daemon-${process.pid}-`,
+      ]);
+      if (staleCleared > 0 || orphanCleared > 0) {
+        logger({
+          event: 'worker.queue.recovered',
+          trigger,
+          staleCleared,
+          orphanCleared,
+          level: 'warn',
+        });
+      }
+    } catch (error) {
+      logger({
+        event: 'worker.queue.recovery_error',
+        trigger,
+        message: error instanceof Error ? error.message : String(error),
+        level: 'error',
+      });
+    }
+  };
+
+  queueRecoveryTimer = setInterval(() => {
+    void runQueueRecovery('interval');
+  }, queueRecoveryIntervalMs);
+  queueRecoveryTimer.unref?.();
+
   let fatalError: unknown;
   try {
     // ワーカーは並列に走らせ、空きスロットがあれば pending を即時処理する。
@@ -241,6 +278,9 @@ async function main() {
     runtimeMonitor.emitIfDue();
     if (healthReportTimer) {
       clearInterval(healthReportTimer);
+    }
+    if (queueRecoveryTimer) {
+      clearInterval(queueRecoveryTimer);
     }
     await notifyTaskEnd().catch(() => {});
     console.error(

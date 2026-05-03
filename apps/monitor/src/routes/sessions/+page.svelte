@@ -43,6 +43,7 @@ let messageOrder = $state<MessageOrder>('asc');
 // biome-ignore lint/style/useConst: Svelte bind:this assigns the element reference at runtime.
 let messagesElement = $state<HTMLElement | null>(null);
 const SIDEBAR_TITLE_LENGTH = 25;
+const SESSION_KNOWLEDGE_MIN_CONFIDENCE = 0.7;
 
 const filteredSessions = $derived.by(() => {
   const query = filters.searchQuery.trim().toLowerCase();
@@ -79,6 +80,12 @@ const renderedMessages = $derived.by(() =>
 
 const selectedSessionSummaries = $derived.by(() =>
   sessionSummaries.filter((summary) => summary.sessionKey === selectedSessionId),
+);
+
+const filteredDistillationCandidates = $derived.by(() =>
+  (distillationResult?.candidates ?? []).filter(
+    (candidate) => candidate.confidence >= SESSION_KNOWLEDGE_MIN_CONFIDENCE,
+  ),
 );
 
 function messageTimestamp(value: string): number {
@@ -154,7 +161,6 @@ async function selectSession(session: SessionSummary): Promise<void> {
   try {
     const detail = await invoke<SessionDetail>('monitor_session_detail', {
       sessionId: session.id,
-      session_id: session.id,
     });
     if (requestSeq === detailRequestSeq) {
       selectedDetail = detail;
@@ -179,11 +185,10 @@ async function loadDistillationStatus(sessionId: string): Promise<void> {
       'monitor_session_distillation',
       {
         sessionId,
-        session_id: sessionId,
       },
     );
     distillationStatus = payload?.record ?? null;
-    if (payload?.candidates && payload.candidates.length > 0) {
+    if (payload?.record) {
       distillationResult = {
         distillationId: payload.record.id,
         sessionKey: payload.record.sessionKey,
@@ -201,12 +206,15 @@ async function loadDistillationStatus(sessionId: string): Promise<void> {
             ? payload.record.modelProvider
             : 'deterministic',
         modelName: payload.record.modelName ?? undefined,
-        candidates: payload.candidates,
+        candidates: payload.candidates ?? [],
         error: payload.record.error ?? undefined,
       };
+    } else {
+      distillationResult = null;
     }
   } catch {
     distillationStatus = null;
+    distillationResult = null;
   }
 }
 
@@ -220,7 +228,6 @@ async function runDistillation(promote: boolean): Promise<void> {
       'monitor_distill_session_knowledge',
       {
         sessionId: selectedDetail.summary.id,
-        session_id: selectedDetail.summary.id,
         force: true,
         promote,
       },
@@ -238,12 +245,11 @@ async function refreshKnowledgeCandidates(): Promise<void> {
   if (!selectedDetail) return;
   const payload = await invoke<SessionKnowledgeListPayload>('monitor_list_session_knowledge', {
     sessionId: selectedDetail.summary.id,
-    session_id: selectedDetail.summary.id,
   });
   if (payload.distillation) {
     distillationStatus = payload.distillation;
   }
-  if (payload.candidates.length > 0 && payload.distillation) {
+  if (payload.distillation) {
     distillationResult = {
       distillationId: payload.distillation.id,
       sessionKey: payload.distillation.sessionKey,
@@ -264,6 +270,8 @@ async function refreshKnowledgeCandidates(): Promise<void> {
       candidates: payload.candidates,
       error: payload.distillation.error ?? undefined,
     };
+  } else {
+    distillationResult = null;
   }
 }
 
@@ -271,7 +279,10 @@ async function approveCandidate(candidateId: string): Promise<void> {
   candidateActionLoading = true;
   distillationError = null;
   try {
-    await invoke('monitor_approve_session_knowledge', { candidateId, candidate_id: candidateId });
+    await invoke('monitor_approve_session_knowledge', {
+      candidateId,
+      candidate_id: candidateId,
+    });
     await refreshKnowledgeCandidates();
     await loadSessionSummaries();
   } catch (error) {
@@ -282,8 +293,16 @@ async function approveCandidate(candidateId: string): Promise<void> {
 }
 
 async function rejectCandidate(candidateId: string): Promise<void> {
-  const reason = prompt('却下理由を入力してください');
-  if (!reason || reason.trim().length === 0) return;
+  const promptFn =
+    typeof globalThis !== 'undefined' && 'prompt' in globalThis
+      ? (globalThis.prompt as ((message?: string, _default?: string) => string | null) | undefined)
+      : undefined;
+  const typed = promptFn?.('却下理由を入力してください', 'monitor manual reject');
+  if (promptFn) {
+    if (typed === null) return;
+    if (typed.trim().length === 0) return;
+  }
+  const reason = typed?.trim() || 'monitor manual reject (prompt_unavailable)';
   candidateActionLoading = true;
   distillationError = null;
   try {
@@ -305,7 +324,10 @@ async function recordCandidate(candidateId: string): Promise<void> {
   candidateActionLoading = true;
   distillationError = null;
   try {
-    await invoke('monitor_record_session_knowledge', { candidateId, candidate_id: candidateId });
+    await invoke('monitor_record_session_knowledge', {
+      candidateId,
+      candidate_id: candidateId,
+    });
     await refreshKnowledgeCandidates();
     await loadSessionSummaries();
   } catch (error) {
@@ -598,9 +620,25 @@ onMount(() => {
                     <span>id: {summary.id}</span>
                     <span>keep: {summary.keptCount}</span>
                     <span>drop: {summary.droppedCount}</span>
+                    {#if summary.metadata && typeof summary.metadata === 'object'}
+                      {#if typeof summary.metadata.llmSucceededTurns === 'number'}
+                        <span>llm_ok: {summary.metadata.llmSucceededTurns}</span>
+                      {/if}
+                      {#if typeof summary.metadata.llmFailedTurns === 'number'}
+                        <span>llm_fail: {summary.metadata.llmFailedTurns}</span>
+                      {/if}
+                      {#if typeof summary.metadata.llmParsedConfidenceTotal === 'number'}
+                        <span>llm_conf: {summary.metadata.llmParsedConfidenceTotal}</span>
+                      {/if}
+                    {/if}
                     <span>created: {formatDateTime(summary.createdAt)}</span>
                     <span>updated: {formatDateTime(summary.updatedAt)}</span>
                   </div>
+                  {#if summary.summaryPreview}
+                    <div class="summary-preview">
+                      {summary.summaryPreview}
+                    </div>
+                  {/if}
                   {#if summary.error}
                     <div class="candidate-foot">
                       <span>error: {summary.error}</span>
@@ -613,7 +651,7 @@ onMount(() => {
 
           {#if distillationResult}
             <div class="distillation-candidates">
-              {#each distillationResult.candidates as candidate, idx (`${candidate.turnIndex}-${idx}-${candidate.title}`)}
+              {#each filteredDistillationCandidates as candidate, idx (`${candidate.turnIndex}-${idx}-${candidate.title}`)}
                 <article class="candidate-item" class:drop={!candidate.keep}>
                   <div class="candidate-head">
                     <span class="candidate-kind">{candidate.kind}</span>
@@ -920,6 +958,14 @@ onMount(() => {
   border-radius: 8px;
   padding: 0.6rem 0.75rem;
   background: rgba(15, 23, 42, 0.45);
+}
+
+.summary-preview {
+  margin-top: 0.45rem;
+  white-space: pre-wrap;
+  color: #e2e8f0;
+  font-size: 0.83rem;
+  line-height: 1.45;
 }
 
 .distillation-meta {

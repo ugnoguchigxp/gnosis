@@ -61,6 +61,9 @@ export async function distillSessionKnowledge(input: {
   const turns = splitSessionTurns(messageInputs).map(buildDeterministicEvidenceAndActions);
 
   let allCandidates: KnowledgeCandidate[] = [];
+  let llmSucceededTurns = 0;
+  let llmFailedTurns = 0;
+  let llmParsedConfidenceTotal = 0;
   for (const turn of turns) {
     const deterministic = buildDeterministicCandidates(turn);
     if (provider === 'deterministic') {
@@ -68,6 +71,12 @@ export async function distillSessionKnowledge(input: {
       continue;
     }
     const refined = await refineCandidatesWithLlm(turn, deterministic);
+    if (refined.status === 'llm_succeeded') {
+      llmSucceededTurns += 1;
+      llmParsedConfidenceTotal += refined.diagnostics?.parsedConfidenceCount ?? 0;
+    } else {
+      llmFailedTurns += 1;
+    }
     allCandidates = allCandidates.concat(refined.candidates);
   }
 
@@ -116,6 +125,9 @@ export async function distillSessionKnowledge(input: {
       droppedCount,
       metadata: {
         promotedCount,
+        llmSucceededTurns,
+        llmFailedTurns,
+        llmParsedConfidenceTotal,
       },
     });
 

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { runReviewStageE } from '../src/services/review/orchestrator.js';
+import { runReviewAgentic } from '../src/services/review/orchestrator.js';
 import type { GuidanceItem } from '../src/services/review/types.js';
 
 const envBackup = {
@@ -40,7 +40,7 @@ afterEach(() => {
   process.env.GNOSIS_REVIEW_EMPTY_KNOWLEDGE_MODE = envBackup.GNOSIS_REVIEW_EMPTY_KNOWLEDGE_MODE;
 });
 
-describe('review stage E (knowledge policy)', () => {
+describe('review agentic (knowledge policy)', () => {
   it('fails when required knowledge retrieval raises an error', async () => {
     const retrieveGuidanceFn = async () => {
       throw new Error('database unavailable');
@@ -48,7 +48,7 @@ describe('review stage E (knowledge policy)', () => {
     const reviewWithToolsFn = async () => '{"findings":[],"summary":"ok","next_actions":[]}';
 
     await expect(
-      runReviewStageE(baseRequest, {
+      runReviewAgentic(baseRequest, {
         diffProvider: async () => DIFF,
         llmService: fakeCloudLlm as never,
         retrieveGuidanceFn,
@@ -92,7 +92,7 @@ describe('review stage E (knowledge policy)', () => {
         next_actions: [],
       });
 
-    const result = await runReviewStageE(baseRequest, {
+    const result = await runReviewAgentic(baseRequest, {
       diffProvider: async () => DIFF,
       llmService: fakeCloudLlm as never,
       retrieveGuidanceFn,
@@ -117,7 +117,7 @@ describe('review stage E (knowledge policy)', () => {
     const reviewWithToolsFn = async () => '{"findings":[],"summary":"ok","next_actions":[]}';
 
     await expect(
-      runReviewStageE(baseRequest, {
+      runReviewAgentic(baseRequest, {
         diffProvider: async () => DIFF,
         llmService: fakeCloudLlm as never,
         retrieveGuidanceFn,
@@ -153,7 +153,7 @@ describe('review stage E (knowledge policy)', () => {
         next_actions: [],
       });
 
-    const result = await runReviewStageE(baseRequest, {
+    const result = await runReviewAgentic(baseRequest, {
       diffProvider: async () => DIFF,
       llmService: fakeCloudLlm as never,
       retrieveGuidanceFn,
