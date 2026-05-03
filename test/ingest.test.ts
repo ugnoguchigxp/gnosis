@@ -132,8 +132,8 @@ describe('ingest service', () => {
       const result = await ingestClaudeLogs();
       expect(result.ok).toBe(true);
       expect(result.messages).toHaveLength(2);
-      expect(result.messages[0]).toEqual({ role: 'user', content: 'hello' });
-      expect(result.messages[1]).toEqual({ role: 'assistant', content: 'hi' });
+      expect(result.messages[0]).toMatchObject({ role: 'user', content: 'hello' });
+      expect(result.messages[1]).toMatchObject({ role: 'assistant', content: 'hi' });
       expect(result.cursor[logFile].offset).toBeGreaterThan(0);
     });
 

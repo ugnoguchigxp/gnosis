@@ -11,6 +11,7 @@ export const LlmTaskNameSchema = z.enum([
   'frontier_selection',
   'summarize',
   'extract_evidence',
+  'registration_decision',
 ]);
 
 export type LlmTaskName = z.infer<typeof LlmTaskNameSchema>;
@@ -175,6 +176,14 @@ export const ExtractEvidenceOutputSchema = z
   })
   .passthrough();
 
+export const RegistrationDecisionOutputSchema = z
+  .object({
+    allow: z.boolean(),
+    reason: z.string().min(1),
+    confidence: z.number().min(0).max(1),
+  })
+  .passthrough();
+
 export type HypothesisOutput = z.infer<typeof HypothesisOutputSchema>;
 export type QueryGenerationOutput = z.infer<typeof QueryGenerationOutputSchema>;
 export type SearchResultSelectionOutput = z.infer<typeof SearchResultSelectionOutputSchema>;
@@ -196,6 +205,7 @@ export type LlmTaskOutputMap = {
   frontier_selection: FrontierSelectionOutput;
   summarize: SummarizeOutput;
   extract_evidence: z.infer<typeof ExtractEvidenceOutputSchema>;
+  registration_decision: z.infer<typeof RegistrationDecisionOutputSchema>;
 };
 
 const schemaMap: Record<LlmTaskName, z.ZodTypeAny> = {
@@ -209,6 +219,7 @@ const schemaMap: Record<LlmTaskName, z.ZodTypeAny> = {
   frontier_selection: FrontierSelectionOutputSchema,
   summarize: SummarizeOutputSchema,
   extract_evidence: ExtractEvidenceOutputSchema,
+  registration_decision: RegistrationDecisionOutputSchema,
 };
 
 export const parseLlmTaskOutput = <T extends LlmTaskName>(
@@ -240,6 +251,8 @@ export const getTaskOutputHint = (task: LlmTaskName): string => {
       return '{"summary":"...","findings":["..."]}';
     case 'extract_evidence':
       return '{"claims":[{"text":"...","confidence":0.8}],"relations":[{"type":"related_to","targetTopic":"...","confidence":0.7}]}';
+    case 'registration_decision':
+      return '{"allow":false,"reason":"insufficient independent evidence quality","confidence":0.8}';
     default:
       return '{}';
   }

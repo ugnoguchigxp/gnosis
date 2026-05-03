@@ -1,4 +1,5 @@
 <script lang="ts">
+import MonitorTable from '$lib/components/MonitorTable.svelte';
 import { createDetailRequestGuard } from '$lib/monitor/detailRequestGuard';
 import type { TaskDetailPayload, TaskHistoryEntry } from '$lib/monitor/types';
 import { invoke } from '@tauri-apps/api/core';
@@ -58,6 +59,92 @@ const truncate = (value: string | null, max = 72): string => {
   return value.length > max ? `${value.slice(0, max)}...` : value;
 };
 
+const truncateMiddle = (value: string, max = 100): string => {
+  if (value.length <= max) return value;
+  const head = Math.floor((max - 3) * 0.62);
+  const tail = max - 3 - head;
+  return `${value.slice(0, head)}...${value.slice(-tail)}`;
+};
+
+const lastPathToken = (value: string): string => {
+  const normalized = value.replace(/\\/g, '/').replace(/\/+$/g, '');
+  const index = normalized.lastIndexOf('/');
+  if (index === -1) return normalized;
+  return normalized.slice(index + 1) || normalized;
+};
+
+const formatSessionDistillationBody = (sessionId: string): string => {
+  if (!sessionId) return 'session summary';
+  if (sessionId.startsWith('/')) {
+    return `session ${lastPathToken(sessionId)}`;
+  }
+  if (sessionId.startsWith('memory:')) {
+    return `session ${sessionId.replace(/^memory:/, '')}`;
+  }
+  return `session ${sessionId}`;
+};
+
+const formatSystemTopic = (topic: string): { tag: string; text: string; fullText: string } => {
+  if (topic === '__system__/embedding_batch') {
+    return { tag: 'embedding', text: 'batch embedding update', fullText: topic };
+  }
+  if (topic === '__system__/synthesis') {
+    return { tag: 'synthesis', text: 'knowledge synthesis', fullText: topic };
+  }
+  if (topic.startsWith('__system__/session_distillation/')) {
+    const sessionId = topic.replace('__system__/session_distillation/', '');
+    return {
+      tag: 'session',
+      text: formatSessionDistillationBody(sessionId),
+      fullText: topic,
+    };
+  }
+  if (topic.startsWith('__system__/')) {
+    const systemName = topic.replace('__system__/', '') || 'system';
+    return { tag: 'system', text: systemName, fullText: topic };
+  }
+  return { tag: 'task', text: topic, fullText: topic };
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null;
+
+const isKnowflowFrontierTask = (task: TaskHistoryEntry): boolean => {
+  const payload = isRecord(task.payload) ? task.payload : {};
+  const requestedBy = typeof payload.requestedBy === 'string' ? payload.requestedBy : '';
+  const expansion = isRecord(payload.expansion) ? payload.expansion : null;
+  const expansionAxis =
+    expansion && typeof expansion.expansionAxis === 'string' ? expansion.expansionAxis : '';
+  return (
+    expansionAxis === 'frontier' ||
+    requestedBy === 'knowflow-frontier' ||
+    requestedBy === 'background-frontier-seed'
+  );
+};
+
+const topicDisplay = (
+  task: TaskHistoryEntry,
+): { tag: string | null; text: string; fullText: string } => {
+  const raw = (task.topic ?? '').trim();
+  if (!raw) return { tag: null, text: '(no topic)', fullText: '(no topic)' };
+  if (isKnowflowFrontierTask(task)) {
+    return {
+      tag: 'frontier',
+      text: truncateMiddle(raw, 100),
+      fullText: raw,
+    };
+  }
+  if (raw.startsWith('__system__/')) {
+    const formatted = formatSystemTopic(raw);
+    return {
+      tag: formatted.tag,
+      text: truncateMiddle(formatted.text, 100),
+      fullText: formatted.fullText,
+    };
+  }
+  return { tag: null, text: truncateMiddle(raw, 100), fullText: raw };
+};
+
 const isStaleRunning = (task: TaskHistoryEntry): boolean => {
   if (task.status !== 'running') return false;
   const updated = Date.parse(task.updatedAt);
@@ -101,6 +188,52 @@ const closeDetail = () => {
 
 const canRetry = (task: TaskHistoryEntry): boolean => ['failed', 'deferred'].includes(task.status);
 const canDefer = (task: TaskHistoryEntry): boolean => ['pending', 'deferred'].includes(task.status);
+
+const columns = [
+  {
+    id: 'topic',
+    label: 'topic',
+    sortable: true,
+    sortValue: (item: TaskHistoryEntry) => item.topic,
+  },
+  {
+    id: 'status',
+    label: 'status',
+    sortable: true,
+    sortValue: (item: TaskHistoryEntry) => item.status,
+  },
+  {
+    id: 'priority',
+    label: 'priority',
+    sortable: true,
+    sortValue: (item: TaskHistoryEntry) => item.priority,
+  },
+  {
+    id: 'source',
+    label: 'source',
+    sortable: true,
+    sortValue: (item: TaskHistoryEntry) => item.source ?? '',
+  },
+  {
+    id: 'resultOrError',
+    label: 'result / error',
+    sortable: true,
+    sortValue: (item: TaskHistoryEntry) => item.resultSummary ?? item.errorReason ?? '',
+  },
+  {
+    id: 'nextRunAt',
+    label: 'next run',
+    sortable: true,
+    sortValue: (item: TaskHistoryEntry) => item.nextRunAt ?? 0,
+  },
+  {
+    id: 'updatedAt',
+    label: 'updated at',
+    sortable: true,
+    sortValue: (item: TaskHistoryEntry) => item.updatedAt ?? '',
+  },
+  { id: 'actions', label: 'actions' },
+];
 
 const handleRetry = async (task: TaskHistoryEntry) => {
   actionLoadingTaskId = task.id;
@@ -186,59 +319,48 @@ onMount(() => {
         </div>
     {/if}
 
-    <section class="panel">
-        <table>
-            <thead>
-                <tr>
-                    <th>topic</th>
-                    <th>status</th>
-                    <th>priority</th>
-                    <th>source</th>
-                    <th>result</th>
-                    <th>error</th>
-                    <th>lock owner</th>
-                    <th>next run</th>
-                    <th>created at</th>
-                    <th>updated at</th>
-                    <th>actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                {#if loading && tasks.length === 0}
-                    <tr><td colspan="11" style="text-align: center; color: var(--text-muted); padding: 2rem;">Loading tasks...</td></tr>
-                {:else if displayTasks.length === 0}
-                    <tr><td colspan="11" style="text-align: center; color: var(--text-muted); padding: 2rem;">No tasks in this category</td></tr>
-                {:else}
-                    {#each displayTasks as task (task.id)}
-                        <tr class="clickable-row">
-                            <td class="topic-cell">{task.topic || '(no topic)'}</td>
-                            <td>
-                                <span class={`status-badge ${task.status}`}>{task.status}</span>
-                                {#if isStaleRunning(task)}
-                                    <span class="stale-badge">stale</span>
-                                {/if}
-                            </td>
-                            <td>{task.priority}</td>
-                            <td>{task.source || '-'}</td>
-                            <td title={task.resultSummary || ''}>{truncate(task.resultSummary)}</td>
-                            <td title={task.errorReason || ''}>{truncate(task.errorReason)}</td>
-                            <td>{task.lockOwner || '-'}</td>
-                            <td>{formatEpochMs(task.nextRunAt)}</td>
-                            <td>{formatTime(task.createdAt)}</td>
-                            <td>{formatTime(task.updatedAt)}</td>
-                            <td>
-                                <div style="display:flex; gap:6px;">
-                                    <button type="button" class="small-btn" onclick={() => void openDetail(task)}>Detail</button>
-                                    <button type="button" class="small-btn" disabled={!canRetry(task) || actionLoadingTaskId === task.id} onclick={() => void handleRetry(task)}>Retry</button>
-                                    <button type="button" class="small-btn" disabled={!canDefer(task) || actionLoadingTaskId === task.id} onclick={() => void handleDefer(task)}>Defer 15m</button>
-                                </div>
-                            </td>
-                        </tr>
-                    {/each}
-                {/if}
-            </tbody>
-        </table>
-    </section>
+    <MonitorTable
+      {columns}
+      items={displayTasks}
+      {loading}
+      keyOf={(item) => item.id}
+      emptyText="No tasks in this category"
+      loadingText="Loading tasks..."
+      infoText={`all: ${tasks.length} / showing: ${displayTasks.length}`}
+    >
+      {#snippet row(task: TaskHistoryEntry)}
+        <td class="cell-topic">
+          <div class="topic-content" title={topicDisplay(task).fullText}>
+            {#if topicDisplay(task).tag}
+              <span class="topic-tag">[{topicDisplay(task).tag}]</span>
+            {/if}
+            <span class="cell-ellipsis">{topicDisplay(task).text}</span>
+          </div>
+        </td>
+        <td>
+          <span class={`status-badge ${task.status}`}>{task.status}</span>
+          {#if isStaleRunning(task)}
+            <span class="stale-badge">stale</span>
+          {/if}
+        </td>
+        <td>{task.priority}</td>
+        <td class="cell-source">{task.source || '-'}</td>
+        <td class="cell-result">
+          <span class="cell-ellipsis" title={task.resultSummary || task.errorReason || '-'}>
+            {truncate(task.resultSummary || task.errorReason, 120)}
+          </span>
+        </td>
+        <td class="cell-next-run">{formatEpochMs(task.nextRunAt)}</td>
+        <td class="cell-updated-at">{formatTime(task.updatedAt)}</td>
+        <td class="cell-actions">
+          <div class="actions-cell">
+            <button type="button" class="small-btn" onclick={() => void openDetail(task)}>Detail</button>
+            <button type="button" class="small-btn" disabled={!canRetry(task) || actionLoadingTaskId === task.id} onclick={() => void handleRetry(task)}>Retry</button>
+            <button type="button" class="small-btn" disabled={!canDefer(task) || actionLoadingTaskId === task.id} onclick={() => void handleDefer(task)}>Defer 15m</button>
+          </div>
+        </td>
+      {/snippet}
+    </MonitorTable>
 </main>
 
 {#if detailOpen}
@@ -355,9 +477,70 @@ onMount(() => {
         border-radius: 4px;
     }
 
-    .topic-cell {
+    .cell-ellipsis {
+        display: inline-block;
+        width: 100%;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        vertical-align: bottom;
+    }
+    .cell-topic {
+        width: 320px;
+        min-width: 320px;
+        max-width: 320px;
         font-weight: 500;
         color: var(--text-primary);
+    }
+    .topic-content {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        min-width: 0;
+    }
+    .topic-tag {
+        flex: 0 0 auto;
+        font-size: 0.72rem;
+        line-height: 1.1;
+        color: #93c5fd;
+        background: rgba(59, 130, 246, 0.14);
+        border: 1px solid rgba(59, 130, 246, 0.3);
+        padding: 2px 6px;
+        border-radius: 999px;
+        text-transform: lowercase;
+    }
+    .cell-topic .cell-ellipsis {
+        white-space: normal;
+        overflow: visible;
+        text-overflow: unset;
+        line-height: 1.35;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+    }
+    .cell-result {
+        width: 200px;
+        min-width: 200px;
+        max-width: 200px;
+    }
+    .cell-source {
+        width: 84px;
+        min-width: 84px;
+        max-width: 84px;
+    }
+    .cell-next-run {
+        width: 132px;
+        min-width: 132px;
+        max-width: 132px;
+    }
+    .cell-updated-at {
+        width: 150px;
+        min-width: 150px;
+        max-width: 150px;
+    }
+    .cell-actions {
+        width: 188px;
+        min-width: 188px;
+        max-width: 188px;
     }
 
     .status-badge {
@@ -392,6 +575,11 @@ onMount(() => {
     .small-btn:disabled {
         opacity: 0.45;
         cursor: not-allowed;
+    }
+    .actions-cell {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
     }
 
     .detail-header {

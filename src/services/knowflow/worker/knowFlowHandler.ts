@@ -38,6 +38,7 @@ const MIN_USEFULNESS_SCORE = 0.65;
 const MIN_EMERGENT_TOPIC_SCORE = 0.6;
 const MIN_EMERGENT_DIMENSION_SCORE = 0.45;
 const HIGH_IMPORTANCE_PRIORITY = 80;
+const WITHHELD_REGISTRATION_RETRY_MS = 60 * 24 * 60 * 60 * 1000;
 
 type SystemTaskType = 'synthesis' | 'embedding_batch' | 'session_distillation';
 
@@ -635,24 +636,34 @@ export const buildTopicExplorationOutcome = (input: {
     now: now.getTime(),
   });
   const flowResult = input.result?.phases.flowExecution.data;
+  const registrationDecision = flowResult?.registrationDecision;
+  const registrationAllowed = registrationDecision?.allow ?? verification.acceptedClaims.length > 0;
+  const knowledgeWithheldByGate =
+    usefulPageCount >= requiredUsefulPageCount &&
+    verification.acceptedClaims.length > 0 &&
+    registrationDecision?.allow === false;
   const status =
     input.result && !input.result.ok
       ? 'failed'
-      : usefulPageCount >= requiredUsefulPageCount
-        ? 'explored'
-        : 'exhausted';
+      : knowledgeWithheldByGate
+        ? 'exhausted'
+        : usefulPageCount >= requiredUsefulPageCount
+          ? 'explored'
+          : 'exhausted';
   const outcome =
     status === 'failed'
       ? 'pipeline_failed'
-      : usefulPageCount >= requiredUsefulPageCount && verification.acceptedClaims.length > 0
+      : usefulPageCount >= requiredUsefulPageCount && registrationAllowed
         ? 'claims_recorded'
-        : usefulPageCount >= requiredUsefulPageCount
-          ? 'useful_pages_without_accepted_claims'
-          : fetchedPageCount === 0
-            ? input.evidence.diagnostics?.outcome ?? 'no_evidence_collected'
-            : usefulPageCount === 0
-              ? 'no_useful_pages'
-              : 'insufficient_independent_sources';
+        : usefulPageCount >= requiredUsefulPageCount && verification.acceptedClaims.length > 0
+          ? 'claims_withheld_by_registration_gate'
+          : usefulPageCount >= requiredUsefulPageCount
+            ? 'useful_pages_without_accepted_claims'
+            : fetchedPageCount === 0
+              ? input.evidence.diagnostics?.outcome ?? 'no_evidence_collected'
+              : usefulPageCount === 0
+                ? 'no_useful_pages'
+                : 'insufficient_independent_sources';
 
   const stateId = generateTopicStateEntityId(input.task.topic);
   const acceptedClaimSamples = uniqueStrings(
@@ -688,13 +699,19 @@ export const buildTopicExplorationOutcome = (input: {
     `gaps=${flowResult?.gaps.length ?? 0}`,
     `fetched=${fetchedPageCount}`,
     `useful=${usefulPageCount}/${requiredUsefulPageCount}`,
-  ].join(', ');
-  const heading =
-    status === 'explored'
-      ? 'KnowFlow explored this frontier topic and recorded the attempt.'
+    registrationDecision
+      ? `registration=${registrationDecision.allow ? 'allow' : 'skip'}`
+      : undefined,
+  ]
+    .filter((part): part is string => Boolean(part))
+    .join(', ');
+  const heading = knowledgeWithheldByGate
+    ? 'KF_NO_KNOWLEDGE_RECORDED'
+    : status === 'explored'
+      ? 'KF_KNOWLEDGE_RECORDED'
       : status === 'failed'
-        ? 'KnowFlow attempted this frontier topic but the pipeline failed before useful knowledge was recorded.'
-        : 'KnowFlow attempted this frontier topic but did not record enough useful knowledge.';
+        ? 'KF_PIPELINE_FAILED'
+        : 'KF_NO_KNOWLEDGE';
   const descriptionParts = [
     heading,
     `Outcome: ${outcome}; ${countLine}.`,
@@ -744,6 +761,10 @@ export const buildTopicExplorationOutcome = (input: {
     searchQueries,
     resultSummary,
     acceptedClaimCount: verification.acceptedClaims.length,
+    registrationAllowed,
+    noKnowledgeRecorded: knowledgeWithheldByGate,
+    registrationDecisionReason: registrationDecision?.reason,
+    registrationDecisionConfidence: registrationDecision?.confidence,
     rejectedClaimCount: verification.rejectedClaims.length,
     conflictCount: verification.conflicts.length,
     gapCount: flowResult?.gaps.length ?? 0,
@@ -762,16 +783,23 @@ export const buildTopicExplorationOutcome = (input: {
       ? {
           exhaustedAt: nowIso,
           exhaustedReason:
-            outcome === 'insufficient_independent_sources'
-              ? 'Useful evidence was found, but the required independent source count was not met within fetch budget.'
-              : outcome === 'no_useful_pages'
-                ? 'Fetched pages were not useful enough for this topic.'
-                : 'No evidence was collected for this topic.',
+            outcome === 'claims_withheld_by_registration_gate'
+              ? 'LLM registration gate judged this topic not ready for persistent knowledge.'
+              : outcome === 'insufficient_independent_sources'
+                ? 'Useful evidence was found, but the required independent source count was not met within fetch budget.'
+                : outcome === 'no_useful_pages'
+                  ? 'Fetched pages were not useful enough for this topic.'
+                  : 'No evidence was collected for this topic.',
           exhaustedQueryHash: hashSearchAttempt({
             topic: input.task.topic,
             queries: searchQueries,
           }),
-          retryAfter: isoAfter(now, EXHAUSTED_RETRY_MS),
+          retryAfter: isoAfter(
+            now,
+            outcome === 'claims_withheld_by_registration_gate'
+              ? WITHHELD_REGISTRATION_RETRY_MS
+              : EXHAUSTED_RETRY_MS,
+          ),
         }
       : status === 'failed'
         ? {
@@ -1245,13 +1273,78 @@ export const createKnowFlowTaskHandler = (
       metrics,
       now: () => options.now?.() ?? Date.now(),
       signal,
+      evaluateRegistration: async (input) => {
+        try {
+          const decision = await runLlmTask(
+            {
+              task: 'registration_decision',
+              context: {
+                topic: input.topic,
+                verifierSummary: input.verifierSummary,
+                acceptedClaims: input.acceptedClaims.slice(0, 8),
+                sourceCount: input.sources.length,
+                uniqueDomainCount: new Set(
+                  input.sources
+                    .map((source) => source.domain?.trim().toLowerCase())
+                    .filter((domain): domain is string => Boolean(domain && domain.length > 0)),
+                ).size,
+              },
+              requestId: task.id,
+            },
+            {
+              config: options.llmConfig,
+              deps: options.llmLogger ? { logger: options.llmLogger } : undefined,
+              signal,
+            },
+          );
+          logger({
+            event: 'knowflow.registration.decision',
+            taskId: task.id,
+            topic: task.topic,
+            allow: decision.output.allow,
+            confidence: decision.output.confidence,
+            reason: decision.output.reason,
+            level: decision.output.allow ? 'info' : 'warn',
+          });
+          return decision.output;
+        } catch (error) {
+          const fallback = {
+            allow: input.acceptedClaims.length > 0,
+            reason: 'registration_decision_unavailable',
+            confidence: 0.4,
+          };
+          logger({
+            event: 'knowflow.registration.decision_fallback',
+            taskId: task.id,
+            topic: task.topic,
+            allow: fallback.allow,
+            reason: fallback.reason,
+            message: error instanceof Error ? error.message : String(error),
+            level: 'warn',
+          });
+          return fallback;
+        }
+      },
     });
 
     const result = await orchestrator.run();
+    const registrationDecision = result.phases.flowExecution.data?.registrationDecision;
+    const noKnowledgeRecorded = registrationDecision?.allow === false;
 
     const evidence = result.phases.evidenceCollection.data ?? EMPTY_EVIDENCE;
 
     if (result.ok) {
+      if (noKnowledgeRecorded) {
+        logger({
+          event: 'knowflow.knowledge.not_recorded',
+          taskId: task.id,
+          topic: task.topic,
+          reason: registrationDecision.reason,
+          confidence: registrationDecision.confidence,
+          level: 'info',
+        });
+        result.summary = `${result.summary}; no_knowledge_recorded`;
+      }
       try {
         const planned = await enqueueEmergentTopics({
           task,

@@ -2,6 +2,7 @@ import { detectGaps } from '../gap/detector';
 import type { Knowledge } from '../knowledge/types';
 import { type MergeRepository, mergeVerifiedKnowledge } from '../merge';
 import { buildVerificationSummary, verifyEvidence } from '../verifier';
+import type { EvidenceSource } from '../verifier';
 import type { FlowEvidence } from './types';
 
 import type { FlowResult } from './result';
@@ -18,6 +19,12 @@ export type RunCronFlowInput = {
   cronRunBudget: number;
   cronRunConsumed: number;
   now?: number;
+  evaluateRegistration?: (input: {
+    topic: string;
+    acceptedClaims: Array<{ text: string; confidence: number; sourceIds: string[] }>;
+    sources: EvidenceSource[];
+    verifierSummary: string;
+  }) => Promise<{ allow: boolean; reason: string; confidence: number }>;
 };
 
 export type RunCronFlowResult = FlowResult;
@@ -53,15 +60,40 @@ export const runCronFlow = async (input: RunCronFlowInput): Promise<RunCronFlowR
     now,
   });
 
-  const mergeResult = await mergeVerifiedKnowledge(input.repository, {
-    topic: input.topic,
-    acceptedClaims: verification.acceptedClaims,
-    relations: input.evidence.relations ?? [],
-    sources: input.evidence.normalizedSources ?? [],
-  });
+  const defaultDecision = {
+    allow: verification.acceptedClaims.length > 0,
+    reason:
+      verification.acceptedClaims.length > 0
+        ? 'accepted claims exist'
+        : 'no accepted claims from verifier',
+    confidence: verification.acceptedClaims.length > 0 ? 0.55 : 0.9,
+  };
+  const decision = input.evaluateRegistration
+    ? await input.evaluateRegistration({
+        topic: input.topic,
+        acceptedClaims: verification.acceptedClaims.map((claim) => ({
+          text: claim.text,
+          confidence: claim.confidence,
+          sourceIds: claim.sourceIds ?? [],
+        })),
+        sources: input.evidence.sources,
+        verifierSummary: buildVerificationSummary(verification),
+      })
+    : defaultDecision;
+
+  const mergeResult = decision.allow
+    ? await mergeVerifiedKnowledge(input.repository, {
+        topic: input.topic,
+        acceptedClaims: verification.acceptedClaims,
+        relations: input.evidence.relations ?? [],
+        sources: input.evidence.normalizedSources ?? [],
+      })
+    : { changed: false };
 
   return {
-    summary: buildVerificationSummary(verification),
+    summary: `${buildVerificationSummary(verification)}; registration=${
+      decision.allow ? 'allow' : 'skip'
+    } (${decision.reason})`,
     changed: mergeResult.changed,
     usedBudget,
     runConsumedBudget: input.cronRunConsumed + usedBudget,
@@ -69,5 +101,6 @@ export const runCronFlow = async (input: RunCronFlowInput): Promise<RunCronFlowR
     rejectedClaims: verification.rejectedClaims.length,
     conflicts: verification.conflicts.length,
     gaps: gaps.gaps,
+    registrationDecision: decision,
   };
 };

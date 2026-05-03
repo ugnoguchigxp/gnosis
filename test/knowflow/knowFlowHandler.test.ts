@@ -415,7 +415,7 @@ describe('buildTopicExplorationOutcome', () => {
 
     expect(outcome.status).toBe('exhausted');
     expect(outcome.outcome).toBe('llm_degraded');
-    expect(outcome.description).toContain('did not record enough useful knowledge');
+    expect(outcome.description).toContain('KF_NO_KNOWLEDGE');
     expect(outcome.description).toContain('LLM degraded during query generation');
     expect(outcome.metadata.retryAfter).toBeDefined();
     expect(outcome.metadata.knowflowStatus).toBe('exhausted');
@@ -457,7 +457,7 @@ describe('buildTopicExplorationOutcome', () => {
 
     expect(outcome.status).toBe('failed');
     expect(outcome.outcome).toBe('pipeline_failed');
-    expect(outcome.description).toContain('pipeline failed');
+    expect(outcome.description).toContain('KF_PIPELINE_FAILED');
     expect(outcome.metadata.failureReason).toBe('Evidence collection failed: network error');
     expect(outcome.metadata.knowflowStatus).toBe('failed');
   });

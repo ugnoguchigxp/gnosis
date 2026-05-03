@@ -487,6 +487,21 @@ export const parseLlmTaskOutputText = <T extends LlmTaskName>(
       }));
       return { claims, relations: [] } as unknown as LlmTaskOutputMap[T];
     }
+    case 'registration_decision': {
+      const merged = lines.join(' ').toLowerCase();
+      const allow =
+        /\b(allow|approve|register|store|accept)\b/i.test(merged) &&
+        !/\b(reject|deny|skip|hold|defer|insufficient)\b/i.test(merged);
+      const confidence = extractScore(
+        lines.find((line) => /confidence|score/i.test(line)) ?? '',
+        allow ? 0.6 : 0.75,
+      );
+      return {
+        allow,
+        reason: firstLine || 'Parsed from plain-text registration decision output.',
+        confidence,
+      } as LlmTaskOutputMap[T];
+    }
     default:
       return {} as LlmTaskOutputMap[T];
   }
@@ -605,6 +620,11 @@ const degradedOutputBuilders: {
   extract_evidence: () => ({
     claims: [],
     relations: [],
+  }),
+  registration_decision: () => ({
+    allow: false,
+    reason: 'Registration decision degraded due to LLM output failure.',
+    confidence: 0.9,
   }),
 };
 

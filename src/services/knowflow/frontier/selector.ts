@@ -13,6 +13,37 @@ const EXCLUDED_TYPES = new Set(['task_trace', 'knowflow_topic_state']);
 const DEFAULT_MAX_PER_COMMUNITY = 2;
 const LLM_SHORTLIST_MULTIPLIER = 4;
 const LLM_SHORTLIST_MIN = 20;
+const FRONTIER_INDICATOR_KEYWORDS = [
+  'programming',
+  'coding',
+  'software',
+  'development',
+  'developer',
+  'engineering',
+  'typescript',
+  'javascript',
+  'node',
+  'bun',
+  'react',
+  'next.js',
+  'api',
+  'backend',
+  'frontend',
+  'database',
+  'sql',
+  'postgres',
+  'testing',
+  'test',
+  'ci',
+  'cd',
+  'refactor',
+  'architecture',
+  'design pattern',
+  'security',
+  'performance',
+  'observability',
+  'debug',
+];
 
 type RunFrontierSelection = (
   input: {
@@ -187,11 +218,14 @@ export const rerankFrontierCandidatesWithLlm = async (
       context: {
         maxTopics: input.limit,
         criteria: [
+          'focus on software engineering and daily programming usefulness first',
           'prioritize reusable rules, procedures, risks, decisions, lessons, and constraints',
           'prefer important but under-connected graph entities',
           'prefer entities whose uncertainty or sparse relations suggest useful follow-up research',
-          'avoid broad generic concepts unless they are actionable',
+          'avoid broad generic concepts unless they are actionable for coding/development work',
+          'deprioritize non-software domains unless clearly useful for engineering decisions',
         ],
+        indicatorKeywords: FRONTIER_INDICATOR_KEYWORDS,
         candidates: candidates.map((candidate) => ({
           entityId: candidate.entityId,
           name: candidate.name,
@@ -406,7 +440,7 @@ export const enqueueFrontierCandidates = async (
         id: stateId,
         type: 'knowflow_topic_state',
         name: candidate.name,
-        description: `KnowFlow frontier topic selected from ${candidate.type} ${candidate.entityId}: ${candidate.reason}`,
+        description: `KF_FRONTIER_QUEUED ${candidate.type} ${candidate.entityId}`,
         communityId: candidate.communityId,
         metadata: {
           kind: 'knowflow_frontier_topic',

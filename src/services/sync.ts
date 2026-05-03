@@ -12,7 +12,6 @@ import {
 } from './ingest.js';
 import { PgJsonbQueueRepository } from './knowflow/queue/pgJsonbRepository.js';
 
-const SYNC_SESSION_ID = 'sync-agent-logs';
 const DEFAULT_MAX_MESSAGES_PER_CHUNK = 120;
 const DEFAULT_MAX_CHARS_PER_CHUNK = 12000;
 
@@ -93,6 +92,31 @@ function mergeMessageMetadata(messages: ChatMessage[]): Record<string, unknown> 
   };
 }
 
+function buildMemorySessionId(sourceId: string, message: ChatMessage): string {
+  const sessionId = message.metadata?.sessionId;
+  if (typeof sessionId === 'string' && sessionId.trim().length > 0) {
+    return `${sourceId}:${sessionId.trim()}`;
+  }
+  const sessionFile = message.metadata?.sessionFile;
+  if (typeof sessionFile === 'string' && sessionFile.trim().length > 0) {
+    const digest = createHash('sha256').update(sessionFile).digest('hex').slice(0, 16);
+    return `${sourceId}:file:${digest}`;
+  }
+  return `${sourceId}:fallback`;
+}
+
+function buildDistillationSessionId(
+  sourceId: string,
+  memorySessionId: string,
+  message: ChatMessage,
+) {
+  const sessionFile = message.metadata?.sessionFile;
+  if (typeof sessionFile === 'string' && sessionFile.trim().length > 0) {
+    return sessionFile.trim();
+  }
+  return `memory:${sourceId}:${memorySessionId}`;
+}
+
 async function upsertSyncState(
   sourceId: string,
   stateExists: boolean,
@@ -128,6 +152,7 @@ export async function syncAllAgentLogs() {
   ];
 
   const summary = { imported: 0, sources: [] as string[], queuedTasks: [] as string[] };
+  const insertedDistillationSessionIds = new Set<string>();
   const maxMessagesPerChunk = positiveIntFromEnv(
     'GNOSIS_SYNC_MAX_MESSAGES_PER_CHUNK',
     DEFAULT_MAX_MESSAGES_PER_CHUNK,
@@ -173,37 +198,59 @@ export async function syncAllAgentLogs() {
 
     // 3. Raw conversation chunks are saved first. Scheduled reflection/background
     // synthesis is responsible for promoting reusable knowledge into entities.
-    const chunks = chunkMessages(messages, maxMessagesPerChunk, maxCharsPerChunk);
+    const messagesBySession = new Map<string, ChatMessage[]>();
+    for (const message of messages) {
+      const memorySessionId = buildMemorySessionId(source.id, message);
+      const bucket = messagesBySession.get(memorySessionId);
+      if (bucket) {
+        bucket.push(message);
+      } else {
+        messagesBySession.set(memorySessionId, [message]);
+      }
+    }
 
     // 4. Gnosis への登録 + 同期状態の更新
     const insertedMemories = { count: 0 };
     await db.transaction(async (tx) => {
-      for (const [index, chunk] of chunks.entries()) {
-        const content = buildTranscript(chunk);
-        const dedupeKey = createHash('sha256')
-          .update(`${source.id}\n${index}\n${content}`)
-          .digest('hex');
-        const inserted = await tx
-          .insert(vibeMemories)
-          .values({
-            sessionId: SYNC_SESSION_ID,
-            content,
-            dedupeKey,
-            metadata: {
-              ...mergeMessageMetadata(chunk),
-              source: source.label,
-              sourceId: source.id,
-              chunkIndex: index,
+      for (const [memorySessionId, sessionMessages] of messagesBySession.entries()) {
+        const firstMessage = sessionMessages[0];
+        if (!firstMessage) {
+          continue;
+        }
+        const chunks = chunkMessages(sessionMessages, maxMessagesPerChunk, maxCharsPerChunk);
+        const distillationSessionId = buildDistillationSessionId(
+          source.id,
+          memorySessionId,
+          firstMessage,
+        );
+        for (const [index, chunk] of chunks.entries()) {
+          const content = buildTranscript(chunk);
+          const dedupeKey = createHash('sha256')
+            .update(`${memorySessionId}\n${index}\n${content}`)
+            .digest('hex');
+          const inserted = await tx
+            .insert(vibeMemories)
+            .values({
+              sessionId: memorySessionId,
+              content,
               dedupeKey,
-            },
-          })
-          .onConflictDoNothing({
-            target: [vibeMemories.sessionId, vibeMemories.dedupeKey],
-          })
-          .returning({ id: vibeMemories.id });
+              metadata: {
+                ...mergeMessageMetadata(chunk),
+                source: source.label,
+                sourceId: source.id,
+                chunkIndex: index,
+                dedupeKey,
+              },
+            })
+            .onConflictDoNothing({
+              target: [vibeMemories.sessionId, vibeMemories.dedupeKey],
+            })
+            .returning({ id: vibeMemories.id });
 
-        if (inserted.length > 0) {
-          insertedMemories.count += 1;
+          if (inserted.length > 0) {
+            insertedMemories.count += 1;
+            insertedDistillationSessionIds.add(distillationSessionId);
+          }
         }
       }
 
@@ -260,6 +307,28 @@ export async function syncAllAgentLogs() {
         },
       });
       summary.queuedTasks.push(embeddingTask.task.id);
+      for (const sessionId of insertedDistillationSessionIds) {
+        const sessionTask = await queue.enqueue({
+          topic: `__system__/session_distillation/${sessionId}`,
+          mode: 'directed',
+          source: 'cron',
+          requestedBy: 'sync',
+          sourceGroup: `system/session_distillation/${sessionId}`,
+          priority: 92,
+          metadata: {
+            systemTask: {
+              type: 'session_distillation',
+              payload: {
+                sessionId,
+                force: false,
+                promote: false,
+                provider: 'auto',
+              },
+            },
+          },
+        });
+        summary.queuedTasks.push(sessionTask.task.id);
+      }
       console.log(
         `[sync] queued follow-up tasks: ${summary.queuedTasks.join(', ')} (imported=${
           summary.imported

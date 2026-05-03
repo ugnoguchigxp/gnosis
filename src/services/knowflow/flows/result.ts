@@ -23,4 +23,9 @@ export type FlowResult = {
 
   // cronFlow 固有
   runConsumedBudget?: number;
+  registrationDecision?: {
+    allow: boolean;
+    reason: string;
+    confidence: number;
+  };
 };

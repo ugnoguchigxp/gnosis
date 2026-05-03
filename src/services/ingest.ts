@@ -87,7 +87,7 @@ function isIgnorableOptionalFileError(error: unknown): boolean {
   return hasFsErrorCode(error, 'ENOENT') || hasFsErrorCode(error, 'ENOTDIR');
 }
 
-function parseClaudeJsonLine(line: string): ChatMessage | null {
+function parseClaudeJsonLine(line: string, filePath: string): ChatMessage | null {
   try {
     const data = JSON.parse(line) as {
       type?: unknown;
@@ -101,6 +101,11 @@ function parseClaudeJsonLine(line: string): ChatMessage | null {
     return {
       role: data.type,
       content: filterSensitiveData(textContent),
+      metadata: {
+        source: 'Claude Code',
+        sourceId: 'claude_logs',
+        sessionFile: filePath,
+      },
     };
   } catch {
     return null;
@@ -144,6 +149,7 @@ function parseCodexJsonLine(line: string, filePath: string): ChatMessage | null 
 }
 
 function processClaudeJsonlDelta(
+  filePath: string,
   content: string,
   startOffset: number,
 ): { messages: ChatMessage[]; nextOffset: number } {
@@ -168,7 +174,7 @@ function processClaudeJsonlDelta(
   if (completeSegment) {
     const lines = completeSegment.split('\n').filter((line) => line.trim());
     for (const line of lines) {
-      const parsed = parseClaudeJsonLine(line);
+      const parsed = parseClaudeJsonLine(line, filePath);
       if (parsed) messages.push(parsed);
     }
   }
@@ -179,7 +185,7 @@ function processClaudeJsonlDelta(
     if (!trailingTrimmed) {
       consumedBytes += Buffer.byteLength(trailingSegment, 'utf8');
     } else {
-      const parsedTrailing = parseClaudeJsonLine(trailingSegment);
+      const parsedTrailing = parseClaudeJsonLine(trailingSegment, filePath);
       if (parsedTrailing) {
         messages.push(parsedTrailing);
         consumedBytes += Buffer.byteLength(trailingSegment, 'utf8');
@@ -335,7 +341,7 @@ export async function ingestClaudeLogs(
           }
 
           const content = await readTextDelta(filePath, startOffset);
-          const deltaResult = processClaudeJsonlDelta(content, startOffset);
+          const deltaResult = processClaudeJsonlDelta(filePath, content, startOffset);
           messages.push(...deltaResult.messages);
           nextCursor[filePath] = { offset: deltaResult.nextOffset, mtimeMs: fStat.mtimeMs };
         } catch (error) {
@@ -408,7 +414,15 @@ export async function ingestAntigravityLogs(
         const content = await readTextDelta(logPath, startOffset);
         // Antigravity の overview.txt は通常、エージェントとユーザーの対話記録
         // フォーマットに合わせてパース（ここでは簡易的に不純物を取り除くのみ）
-        messages.push({ role: 'assistant', content: filterSensitiveData(content) });
+        messages.push({
+          role: 'assistant',
+          content: filterSensitiveData(content),
+          metadata: {
+            source: 'Antigravity',
+            sourceId: 'antigravity_logs',
+            sessionFile: logPath,
+          },
+        });
         nextCursor[logPath] = { offset: stat.size, mtimeMs: stat.mtimeMs };
       } catch (error) {
         if (isIgnorableOptionalFileError(error)) {

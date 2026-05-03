@@ -46,6 +46,18 @@ export type PipelineOptions = {
   metrics: MetricsCollector;
   now: () => number;
   signal?: AbortSignal;
+  evaluateRegistration?: (input: {
+    topic: string;
+    acceptedClaims: Array<{ text: string; confidence: number; sourceIds: string[] }>;
+    sources: Array<{
+      id: string;
+      url?: string;
+      domain?: string;
+      fetchedAt?: number;
+      publishedAt?: number;
+    }>;
+    verifierSummary: string;
+  }) => Promise<{ allow: boolean; reason: string; confidence: number }>;
 };
 
 /**
@@ -117,6 +129,7 @@ export class PipelineOrchestrator {
             cronRunBudget: this.options.budget.cronRunBudget,
             cronRunConsumed: this.options.cronRunConsumed,
             now: now(),
+            evaluateRegistration: this.options.evaluateRegistration,
           });
         }
 

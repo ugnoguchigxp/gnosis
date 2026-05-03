@@ -78,43 +78,45 @@ const toggleSort = (column: ColumnDef<T>) => {
   {#if infoText}
     <div class="table-info">{infoText}</div>
   {/if}
-  <table>
-    <thead>
-      <tr>
-        {#each columns as column}
-          <th>
-            {#if column.sortable}
-              <button class="sort-btn" type="button" onclick={() => toggleSort(column)}>
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr>
+          {#each columns as column}
+            <th>
+              {#if column.sortable}
+                <button class="sort-btn" type="button" onclick={() => toggleSort(column)}>
+                  {column.label}
+                  {#if activeSortBy === column.id}
+                    {sortDirection === 'asc' ? ' ↑' : ' ↓'}
+                  {/if}
+                </button>
+              {:else}
                 {column.label}
-                {#if activeSortBy === column.id}
-                  {sortDirection === 'asc' ? ' ↑' : ' ↓'}
-                {/if}
-              </button>
-            {:else}
-              {column.label}
-            {/if}
-          </th>
-        {/each}
-      </tr>
-    </thead>
-    <tbody>
-      {#if loading && items.length === 0}
-        <tr>
-          <td colspan={columns.length} class="state-cell">{loadingText}</td>
+              {/if}
+            </th>
+          {/each}
         </tr>
-      {:else if items.length === 0}
-        <tr>
-          <td colspan={columns.length} class="state-cell">{emptyText}</td>
-        </tr>
-      {:else}
-        {#each pagedItems as item, index (keyOf(item, index))}
+      </thead>
+      <tbody>
+        {#if loading && items.length === 0}
           <tr>
-            {@render row(item)}
+            <td colspan={columns.length} class="state-cell">{loadingText}</td>
           </tr>
-        {/each}
-      {/if}
-    </tbody>
-  </table>
+        {:else if items.length === 0}
+          <tr>
+            <td colspan={columns.length} class="state-cell">{emptyText}</td>
+          </tr>
+        {:else}
+          {#each pagedItems as item, index (keyOf(item, index))}
+            <tr>
+              {@render row(item)}
+            </tr>
+          {/each}
+        {/if}
+      </tbody>
+    </table>
+  </div>
   <div class="pager">
     <div class="pager-meta">rows: {items.length} / page {safePage} of {totalPages}</div>
     <div class="pager-actions">
@@ -157,6 +159,14 @@ const toggleSort = (column: ColumnDef<T>) => {
     text-align: center;
     color: var(--text-muted);
     padding: 2rem;
+  }
+  .table-scroll {
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .table-scroll table {
+    width: max-content;
+    min-width: 100%;
   }
   .sort-btn {
     all: unset;

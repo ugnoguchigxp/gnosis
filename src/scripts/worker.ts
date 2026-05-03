@@ -125,7 +125,7 @@ async function main() {
   }
 
   let healthCheckInFlight = false;
-  const runHealthCheck = async (trigger: 'startup' | 'interval') => {
+  const runHealthCheck = async (trigger: 'startup' | 'interval'): Promise<boolean> => {
     if (healthCheckInFlight) {
       logger({
         event: 'worker.health_check.skipped',
@@ -133,7 +133,7 @@ async function main() {
         reason: 'in_flight',
         level: 'warn',
       });
-      return;
+      return false;
     }
     healthCheckInFlight = true;
     const startedAt = Date.now();
@@ -153,6 +153,7 @@ async function main() {
           '--- Critical: LLM Health Check Failed. Checking configuration and environment... ---',
         );
       }
+      return health.ok;
     } catch (error) {
       logger({
         event: 'worker.health_check.error',
@@ -166,12 +167,25 @@ async function main() {
           '--- Critical: LLM Health Check Failed. Checking configuration and environment... ---',
         );
       }
+      return false;
     } finally {
       healthCheckInFlight = false;
     }
   };
 
-  await runHealthCheck('startup');
+  const startupHealthOk = await runHealthCheck('startup');
+  if (!startupHealthOk) {
+    logger({
+      event: 'worker.startup.blocked_by_health',
+      reason: 'local_llm_unhealthy',
+      level: 'error',
+    });
+    await notifyTaskEnd().catch(() => {});
+    await runLogger.flush();
+    process.exit(1);
+    return;
+  }
+
   healthReportTimer = setInterval(() => {
     void runHealthCheck('interval');
   }, healthCheckReportIntervalMs);
