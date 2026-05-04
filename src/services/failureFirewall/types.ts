@@ -129,6 +129,7 @@ export interface FailureFirewallContext {
   reason: string;
   riskSignals: string[];
   changedFiles: string[];
+  lessonCandidates: FailureFirewallLessonCandidate[];
   goldenPathCandidates: Array<{
     id: string;
     title: string;
@@ -152,6 +153,22 @@ export interface FailureFirewallContext {
   degradedReasons: string[];
 }
 
+export interface FailureFirewallLessonCandidate {
+  id: string;
+  title: string;
+  kind: string;
+  category?: string;
+  content: string;
+  tags: string[];
+  files: string[];
+  evidence: string[];
+  riskSignals: string[];
+  score: number;
+  reason: string;
+  source: 'entity' | 'experience';
+  blocking: false;
+}
+
 export interface LookupFailureFirewallContextInput {
   repoPath?: string;
   rawDiff?: string;
@@ -161,6 +178,7 @@ export interface LookupFailureFirewallContextInput {
   technologies?: string[];
   maxGoldenPaths?: number;
   maxFailurePatterns?: number;
+  maxLessonCandidates?: number;
   knowledgeSource?: FailureKnowledgeSourceMode;
 }
 

@@ -41,6 +41,14 @@ export const lookupFailureFirewallContextToolEntry: ReviewerToolEntry = {
         suggestedUse: context.suggestedUse,
         riskSignals: context.riskSignals,
         changedFiles: context.changedFiles,
+        lessonCandidates: context.lessonCandidates.map((candidate) => ({
+          id: candidate.id,
+          title: candidate.title,
+          kind: candidate.kind,
+          reason: candidate.reason,
+          score: candidate.score,
+          blocking: candidate.blocking,
+        })),
         goldenPathCandidates: context.goldenPathCandidates.map((candidate) => ({
           id: candidate.id,
           title: candidate.title,

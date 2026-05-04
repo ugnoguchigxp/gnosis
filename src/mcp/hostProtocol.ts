@@ -61,6 +61,7 @@ export type LookupFailureFirewallContextHostInput = {
   technologies?: string[];
   maxGoldenPaths?: number;
   maxFailurePatterns?: number;
+  maxLessonCandidates?: number;
   knowledgeSource?: FailureKnowledgeSourceMode;
 };
 

@@ -1,4 +1,8 @@
 import { type AgenticLoopMessage, runAgenticToolLoop } from '../agenticCore/toolLoop.js';
+import {
+  lookupFailureFirewallContext,
+  renderFailureFirewallContextForPrompt,
+} from '../failureFirewall/context.js';
 import { AgenticSearchLlmAdapter } from './llmAdapter.js';
 import { saveAgenticAnswer } from './saveAnswer.js';
 import { buildInitialSystemContext } from './systemContext.js';
@@ -39,11 +43,24 @@ function buildUserTaskMessage(input: AgenticSearchRunnerInput): string {
   ].join('\n');
 }
 
+function shouldPrefetchFailureFirewallContext(input: AgenticSearchRunnerInput): boolean {
+  const intent = input.intent ?? 'edit';
+  if (intent === 'finish') return false;
+  if (
+    (input.changeTypes ?? []).length > 0 &&
+    (input.changeTypes ?? []).every((type) => type === 'docs')
+  ) {
+    return false;
+  }
+  return true;
+}
+
 export class AgenticSearchRunner {
   constructor(
     private readonly adapter = new AgenticSearchLlmAdapter(),
     private readonly executors: AgenticSearchToolExecutorRegistry = createDefaultAgenticSearchExecutors(),
     private readonly maxLoops = 6,
+    private readonly failureFirewallContextFn = lookupFailureFirewallContext,
   ) {}
 
   async run(input: AgenticSearchRunnerInput): Promise<AgenticSearchRunnerOutput> {
@@ -83,6 +100,30 @@ export class AgenticSearchRunner {
         toolName: result.toolName,
         content: JSON.stringify(result.ok ? result.output : { error: result.error }),
       });
+    }
+    if (shouldPrefetchFailureFirewallContext(input)) {
+      try {
+        const context = await this.failureFirewallContextFn({
+          taskGoal: input.userRequest,
+          files: input.files ?? [],
+          changeTypes: input.changeTypes ?? [],
+          technologies: input.technologies ?? [],
+          maxGoldenPaths: 3,
+          maxFailurePatterns: 3,
+          maxLessonCandidates: 5,
+        });
+        if (context.shouldUse) {
+          messages.push({
+            role: 'system',
+            content: [
+              renderFailureFirewallContextForPrompt(context),
+              'Use this only as task-specific review/reference context. Keep the final answer natural-language and do not expose a separate Firewall schema.',
+            ].join('\n\n'),
+          });
+        }
+      } catch {
+        // Failure Firewall context is best-effort; normal search results remain usable.
+      }
     }
     messages.push({
       role: 'system',

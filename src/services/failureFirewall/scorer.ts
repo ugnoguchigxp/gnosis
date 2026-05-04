@@ -20,7 +20,8 @@ function languageMatches(patternLanguages: string[], features: FailureDiffFeatur
 function frameworkMatches(patternFrameworks: string[], features: FailureDiffFeatures): boolean {
   if (patternFrameworks.length === 0) return true;
   if (features.frameworks.length === 0) return true;
-  return patternFrameworks.some((framework) => features.frameworks.includes(framework));
+  const frameworks = features.frameworks.map((framework) => framework.toLowerCase());
+  return patternFrameworks.some((framework) => frameworks.includes(framework.toLowerCase()));
 }
 
 function joinedAdded(features: FailureDiffFeatures): string {

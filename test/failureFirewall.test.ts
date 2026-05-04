@@ -75,9 +75,11 @@ function makeFailureKnowledgeDb(
     entityFails?: boolean;
     dedicatedPatternId?: string;
     dedicatedPatternFalsePositiveCount?: number;
+    frameworks?: string[];
     reviewOutcomeGuidanceIds?: string[][];
   } = {},
 ) {
+  const frameworks = options.frameworks ?? ['React'];
   return {
     select: () => ({
       from: (table: unknown) => {
@@ -106,7 +108,7 @@ function makeFailureKnowledgeDb(
               severityWhenMissing: 'warning',
               riskSignals: ['cache_invalidation'],
               languages: ['typescript'],
-              frameworks: ['React'],
+              frameworks,
               tags: ['failure-firewall', 'golden-path'],
               status: 'active',
             },
@@ -122,7 +124,7 @@ function makeFailureKnowledgeDb(
               severity: 'error',
               riskSignals: ['cache_invalidation'],
               languages: ['typescript'],
-              frameworks: ['React'],
+              frameworks,
               matchHints: ['mutation without cache update'],
               requiredEvidence: [
                 'mutation-like code changed',
@@ -293,6 +295,17 @@ describe('failure firewall', () => {
     expect(result.goldenPathsEvaluated).toBe(1);
     expect(result.patternsEvaluated).toBe(1);
     expect(result.matches[0]?.failurePattern?.source).toBe('dedicated');
+    expect(result.matches[0]?.failurePattern?.id).toBe('dedicated-ff-cache');
+  });
+
+  test('matches dedicated framework names case-insensitively', async () => {
+    const result = await runFailureFirewall({
+      rawDiff: cacheMissingDiff,
+      mode: 'fast',
+      knowledgeSource: 'dedicated',
+      database: makeFailureKnowledgeDb({ frameworks: ['react'] }) as never,
+    });
+
     expect(result.matches[0]?.failurePattern?.id).toBe('dedicated-ff-cache');
   });
 

@@ -9,6 +9,7 @@ import {
 } from '../../db/schema.js';
 import { seedKnowledge } from './seedPatterns.js';
 import type {
+  FailureFirewallLessonCandidate,
   FailureKnowledgeSource,
   FailureKnowledgeSourceMode,
   FailurePattern,
@@ -47,8 +48,175 @@ function asSourceMode(value: string | undefined): FailureKnowledgeSourceMode {
   return 'entities';
 }
 
+function asNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
 function metadataObject(metadata: Metadata, key: string): Metadata | undefined {
   return asRecord(metadata[key]) ?? asRecord(metadata[`metadata.${key}`]);
+}
+
+function asEvidenceStrings(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (typeof item === 'string' && item.trim().length > 0) return [item];
+    const record = asRecord(item);
+    if (!record) return [];
+    const parts = [record.type, record.value, record.uri].filter(
+      (part): part is string => typeof part === 'string' && part.trim().length > 0,
+    );
+    return parts.length > 0 ? [parts.join(': ')] : [];
+  });
+}
+
+function normalizeToken(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function uniqueStrings(items: string[]): string[] {
+  return [...new Set(items.map(normalizeToken).filter(Boolean))];
+}
+
+function overlapScore(left: string[], right: string[]): number {
+  if (left.length === 0 || right.length === 0) return 0;
+  const rightSet = new Set(right.map(normalizeToken));
+  const matches = left.map(normalizeToken).filter((item) => rightSet.has(item)).length;
+  return matches / Math.max(left.length, 1);
+}
+
+function weakTextOverlapScore(leftText: string, rightTerms: string[]): number {
+  const terms = uniqueStrings(
+    rightTerms
+      .flatMap((item) => item.split(/[^a-z0-9_\-/\u3040-\u30ff\u3400-\u9fff]+/iu))
+      .filter((item) => item.length >= 2),
+  );
+  if (terms.length === 0) return 0;
+  const text = leftText.toLowerCase();
+  const matches = terms.filter((term) => text.includes(term)).length;
+  return Math.min(1, matches / Math.min(terms.length, 5));
+}
+
+function entityKind(rowType: string, metadata: Metadata): string {
+  return typeof metadata.kind === 'string' && metadata.kind.trim().length > 0
+    ? metadata.kind
+    : rowType;
+}
+
+function entityCategory(metadata: Metadata): string | undefined {
+  return typeof metadata.category === 'string' && metadata.category.trim().length > 0
+    ? metadata.category
+    : undefined;
+}
+
+function lessonKindWeight(kind: string): number {
+  if (kind === 'procedure' || kind === 'rule' || kind === 'skill') return 1;
+  if (kind === 'lesson' || kind === 'risk') return 0.85;
+  if (kind === 'decision' || kind === 'command_recipe') return 0.4;
+  return 0;
+}
+
+const LESSON_ENTITY_TYPE_VALUES = [
+  'lesson',
+  'rule',
+  'procedure',
+  'risk',
+  'skill',
+  'command_recipe',
+  'decision',
+] as const;
+
+const LESSON_ENTITY_TYPES = new Set<string>(LESSON_ENTITY_TYPE_VALUES);
+
+function toLessonCandidate(
+  row: {
+    id: string;
+    name: string;
+    description: string | null;
+    type: string;
+    metadata: unknown;
+    confidence?: number | null;
+  },
+  input: {
+    riskSignals: string[];
+    changedFiles: string[];
+    languages: string[];
+    technologies: string[];
+    taskGoal?: string;
+  },
+): FailureFirewallLessonCandidate | undefined {
+  const metadata = asRecord(row.metadata) ?? {};
+  const firewallMetadata = metadataObject(metadata, 'failureFirewall');
+  if (firewallMetadata?.status === 'deprecated') return undefined;
+
+  const kind = entityKind(row.type, metadata);
+  if (!LESSON_ENTITY_TYPES.has(row.type) && !LESSON_ENTITY_TYPES.has(kind)) return undefined;
+
+  const title =
+    typeof metadata.title === 'string' && metadata.title.trim().length > 0
+      ? metadata.title
+      : row.name;
+  const category = entityCategory(metadata);
+  const content =
+    typeof metadata.content === 'string' && metadata.content.trim().length > 0
+      ? metadata.content
+      : row.description ?? '';
+  const tags = uniqueStrings(asStringArray(metadata.tags));
+  const files = asStringArray(metadata.files);
+  const evidence = asEvidenceStrings(metadata.evidence);
+  const riskSignals = uniqueStrings([
+    ...asStringArray(metadata.riskSignals),
+    ...asStringArray(firewallMetadata?.riskSignals),
+    ...tags.filter((tag) => input.riskSignals.map(normalizeToken).includes(tag)),
+  ]);
+
+  const riskOverlap = overlapScore(input.riskSignals, [...riskSignals, ...tags]);
+  const fileOverlap = overlapScore(
+    input.changedFiles.flatMap((file) => [file, ...file.split('/')]),
+    files.flatMap((file) => [file, ...file.split('/')]),
+  );
+  const kindScore = lessonKindWeight(kind);
+  const firewallBonus = firewallMetadata ? 1 : 0;
+  const textScore = weakTextOverlapScore([title, content, tags.join(' ')].join('\n'), [
+    ...input.riskSignals,
+    ...input.changedFiles,
+    ...input.languages,
+    ...input.technologies,
+    input.taskGoal ?? '',
+  ]);
+  const confidence = asNumber(row.confidence) ?? 0.5;
+  const score =
+    0.45 * riskOverlap +
+    0.25 * fileOverlap +
+    0.15 * kindScore +
+    0.1 * firewallBonus +
+    0.05 * textScore +
+    0.05 * Math.min(1, Math.max(0, confidence));
+
+  if (score < 0.25) return undefined;
+
+  const reasons = [
+    riskOverlap > 0 ? `risk_signal_overlap=${riskOverlap.toFixed(2)}` : undefined,
+    fileOverlap > 0 ? `file_overlap=${fileOverlap.toFixed(2)}` : undefined,
+    kindScore > 0 ? `kind=${kind}` : undefined,
+    firewallMetadata ? 'failureFirewall_metadata' : undefined,
+    textScore > 0 ? `text_overlap=${textScore.toFixed(2)}` : undefined,
+  ].filter((reason): reason is string => Boolean(reason));
+
+  return {
+    id: row.id,
+    title,
+    kind,
+    ...(category ? { category } : {}),
+    content: content.slice(0, 1200),
+    tags,
+    files,
+    evidence,
+    riskSignals,
+    score: Number(Math.min(1, score).toFixed(3)),
+    reason: reasons.join(', ') || 'entity lesson candidate',
+    source: 'entity',
+    blocking: false,
+  };
 }
 
 function toGoldenPath(row: {
@@ -362,6 +530,45 @@ async function loadDedicatedKnowledge(database: typeof db): Promise<FailureKnowl
       .map(toDedicatedFailurePattern)
       .filter((pattern) => pattern.status !== 'deprecated'),
   };
+}
+
+export async function loadFailureLessonEvidence(
+  deps: FailurePatternStoreDeps & {
+    riskSignals: string[];
+    changedFiles: string[];
+    languages: string[];
+    technologies?: string[];
+    taskGoal?: string;
+    limit?: number;
+  },
+): Promise<FailureFirewallLessonCandidate[]> {
+  const database = deps.database ?? db;
+  const rows = await database
+    .select({
+      id: entities.id,
+      name: entities.name,
+      description: entities.description,
+      type: entities.type,
+      metadata: entities.metadata,
+      confidence: entities.confidence,
+    })
+    .from(entities)
+    .where(inArray(entities.type, LESSON_ENTITY_TYPE_VALUES));
+
+  const limit = Math.max(0, Math.min(10, deps.limit ?? 5));
+  return rows
+    .flatMap((row) => {
+      const candidate = toLessonCandidate(row, {
+        riskSignals: deps.riskSignals,
+        changedFiles: deps.changedFiles,
+        languages: deps.languages,
+        technologies: deps.technologies ?? [],
+        taskGoal: deps.taskGoal,
+      });
+      return candidate ? [candidate] : [];
+    })
+    .sort((left, right) => right.score - left.score)
+    .slice(0, limit);
 }
 
 export async function loadFailureKnowledge(

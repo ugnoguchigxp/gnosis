@@ -3,6 +3,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { simpleGit } from 'simple-git';
 import { sha256 } from '../../utils/crypto.js';
+import {
+  lookupFailureFirewallContext,
+  renderFailureFirewallContextForPrompt,
+} from '../failureFirewall/context.js';
 import { runFailureFirewallReview } from '../failureFirewall/index.js';
 import { deduplicateFindings, mergeFindings, validateFindingsFull } from './diff/merge.js';
 import { countAddedLines, countRemovedLines, normalizeDiff } from './diff/normalizer.js';
@@ -75,6 +79,9 @@ type RunReviewDeps = {
   retrieveGuidanceFn?: typeof retrieveGuidance;
   searchSimilarFindingsFn?: typeof searchSimilarFindings;
   reviewWithToolsFn?: typeof reviewWithTools;
+  failureFirewallContextFn?: typeof lookupFailureFirewallContext;
+  persistReviewCaseFn?: typeof persistReviewCase;
+  recordReviewResultFn?: typeof recordReviewResult;
 };
 
 function countChangedFiles(rawDiff: string): number {
@@ -585,6 +592,39 @@ function isFailureFirewallGoal(goal: string | undefined): boolean {
   return /\bfailure[-_ ]firewall\b/i.test(goal ?? '');
 }
 
+async function buildFailureFirewallPromptContext(input: {
+  rawDiff: string;
+  taskGoal?: string;
+  files?: string[];
+  technologies?: string[];
+  lookupContext?: typeof lookupFailureFirewallContext;
+}): Promise<string | undefined> {
+  try {
+    const lookupContext = input.lookupContext ?? lookupFailureFirewallContext;
+    const context = await lookupContext({
+      rawDiff: input.rawDiff,
+      ...(input.taskGoal ? { taskGoal: input.taskGoal } : {}),
+      ...(input.files ? { files: input.files } : {}),
+      changeTypes: ['review'],
+      ...(input.technologies ? { technologies: input.technologies } : {}),
+      maxGoldenPaths: 3,
+      maxFailurePatterns: 3,
+      maxLessonCandidates: 5,
+    });
+    if (!context.shouldUse) return undefined;
+    if (
+      context.lessonCandidates.length === 0 &&
+      context.goldenPathCandidates.length === 0 &&
+      context.failurePatternCandidates.length === 0
+    ) {
+      return undefined;
+    }
+    return renderFailureFirewallContextForPrompt(context);
+  } catch {
+    return undefined;
+  }
+}
+
 function isEmptyKnowledgeModeFail(): boolean {
   return process.env.GNOSIS_REVIEW_EMPTY_KNOWLEDGE_MODE?.trim().toLowerCase() === 'fail';
 }
@@ -777,13 +817,20 @@ async function runReviewKnowledgeAware(
     }
   }
 
+  const failureFirewallPromptContext = await buildFailureFirewallPromptContext({
+    rawDiff,
+    ...(req.taskGoal ? { taskGoal: req.taskGoal } : {}),
+    files: state.diffs.map((diff) => diff.filePath),
+    technologies: [framework, language].filter((item): item is string => Boolean(item)),
+    ...(deps.failureFirewallContextFn ? { lookupContext: deps.failureFirewallContextFn } : {}),
+  });
   const {
     findings: llmFindings,
     summary,
     next_actions,
   } = await reviewWithLLM(
     {
-      instruction: req.taskGoal ?? '',
+      instruction: [req.taskGoal ?? '', failureFirewallPromptContext].filter(Boolean).join('\n\n'),
       projectInfo: {
         language,
         framework,
@@ -860,7 +907,7 @@ async function runReviewKnowledgeAware(
 
   const withMarkdown = buildResult(result);
 
-  await persistReviewCase(req, withMarkdown).catch((error) => {
+  await (deps.persistReviewCaseFn ?? persistReviewCase)(req, withMarkdown).catch((error) => {
     console.warn(`Stage C persistence failed (non-fatal): ${error}`);
   });
 
@@ -951,6 +998,13 @@ async function runReviewAgenticCore(
 
   const llmService = deps.llmService ?? (await getReviewLLMService());
   const reviewerAlias = resolveReviewerAlias();
+  const failureFirewallPromptContext = await buildFailureFirewallPromptContext({
+    rawDiff,
+    ...(req.taskGoal ? { taskGoal: req.taskGoal } : {}),
+    files: normalizedForSignals.map((diff) => diff.filePath),
+    technologies: [framework, language].filter((item): item is string => Boolean(item)),
+    ...(deps.failureFirewallContextFn ? { lookupContext: deps.failureFirewallContextFn } : {}),
+  });
 
   const ctx: ReviewerToolContext = {
     repoPath: req.repoPath,
@@ -969,6 +1023,9 @@ async function runReviewAgenticCore(
 
   const messages: ChatMessage[] = [
     { role: 'system', content: systemPrompt },
+    ...(failureFirewallPromptContext
+      ? [{ role: 'system' as const, content: failureFirewallPromptContext }]
+      : []),
     { role: 'user', content: `The diff to review:\n\n${rawDiff}` },
   ];
 
@@ -1084,12 +1141,16 @@ async function runReviewAgenticCore(
     });
 
     const withMarkdown = buildResult(result);
-    await persistReviewCase(req, withMarkdown).catch((error) => {
+    await (deps.persistReviewCaseFn ?? persistReviewCase)(req, withMarkdown).catch((error) => {
       console.warn(`Agentic review persistence failed (non-fatal): ${error}`);
     });
 
     // Background call to record outcome in Gnosis memory
-    void recordReviewResultWithRetry(result);
+    if (deps.recordReviewResultFn) {
+      void deps.recordReviewResultFn(result);
+    } else {
+      void recordReviewResultWithRetry(result);
+    }
 
     return withMarkdown;
   } catch (error) {

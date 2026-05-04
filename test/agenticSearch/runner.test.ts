@@ -1,6 +1,18 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 
 const mockSaveAgenticAnswer = mock(async () => 'mem-1');
+const emptyFirewallContext = () => ({
+  shouldUse: false,
+  reason: 'skip',
+  riskSignals: [] as string[],
+  changedFiles: [] as string[],
+  lessonCandidates: [] as unknown[],
+  goldenPathCandidates: [] as unknown[],
+  failurePatternCandidates: [] as unknown[],
+  suggestedUse: 'skip',
+  degradedReasons: [] as string[],
+});
+const mockLookupFailureFirewallContext = mock(async (): Promise<unknown> => emptyFirewallContext());
 mock.module('../../src/services/agenticSearch/saveAnswer.js', () => ({
   saveAgenticAnswer: mockSaveAgenticAnswer,
 }));
@@ -10,17 +22,24 @@ import { AgenticSearchRunner } from '../../src/services/agenticSearch/runner.js'
 describe('AgenticSearchRunner', () => {
   beforeEach(() => {
     mockSaveAgenticAnswer.mockClear();
+    mockLookupFailureFirewallContext.mockClear();
+    mockLookupFailureFirewallContext.mockResolvedValue(emptyFirewallContext());
   });
 
   it('returns direct final answer when no tool calls', async () => {
     const adapter = {
       generate: mock(async () => ({ text: 'final answer', toolCalls: [] })),
     };
-    const runner = new AgenticSearchRunner(adapter as never, {
-      knowledge_search: async () => ({}),
-      brave_search: async () => ({}),
-      fetch: async () => ({}),
-    });
+    const runner = new AgenticSearchRunner(
+      adapter as never,
+      {
+        knowledge_search: async () => ({}),
+        brave_search: async () => ({}),
+        fetch: async () => ({}),
+      },
+      6,
+      mockLookupFailureFirewallContext as never,
+    );
     const result = await runner.run({ userRequest: 'q' });
     expect(result.answer).toBe('final answer');
     expect(result.toolTrace.toolCalls.length).toBe(2);
@@ -38,11 +57,16 @@ describe('AgenticSearchRunner', () => {
         })
         .mockResolvedValueOnce({ text: 'done', toolCalls: [] }),
     };
-    const runner = new AgenticSearchRunner(adapter as never, {
-      knowledge_search: async () => ({ items: [{ id: '1' }] }),
-      brave_search: async () => ({}),
-      fetch: async () => ({}),
-    });
+    const runner = new AgenticSearchRunner(
+      adapter as never,
+      {
+        knowledge_search: async () => ({ items: [{ id: '1' }] }),
+        brave_search: async () => ({}),
+        fetch: async () => ({}),
+      },
+      6,
+      mockLookupFailureFirewallContext as never,
+    );
     const result = await runner.run({ userRequest: 'q' });
     expect(result.answer).toBe('done');
     expect(result.toolTrace.toolCalls.length).toBe(3);
@@ -68,11 +92,16 @@ describe('AgenticSearchRunner', () => {
         })
         .mockResolvedValueOnce({ text: 'Use bun test --watch for local TDD.', toolCalls: [] }),
     };
-    const runner = new AgenticSearchRunner(adapter as never, {
-      knowledge_search: async () => ({}),
-      brave_search: async () => ({ results: [{ url: 'https://example.com/doc' }] }),
-      fetch: async () => ({ text: 'bun test --watch ...' }),
-    });
+    const runner = new AgenticSearchRunner(
+      adapter as never,
+      {
+        knowledge_search: async () => ({}),
+        brave_search: async () => ({ results: [{ url: 'https://example.com/doc' }] }),
+        fetch: async () => ({ text: 'bun test --watch ...' }),
+      },
+      6,
+      mockLookupFailureFirewallContext as never,
+    );
     const result = await runner.run({ userRequest: 'bun test の最新Tips' });
     expect(result.answer).toContain('bun test --watch');
     expect(result.toolTrace.toolCalls.length).toBe(4);
@@ -97,11 +126,16 @@ describe('AgenticSearchRunner', () => {
         return { text: 'done', toolCalls: [] };
       }),
     };
-    const runner = new AgenticSearchRunner(adapter as never, {
-      knowledge_search: async () => ({ items: [] }),
-      brave_search: async () => ({}),
-      fetch: async () => ({}),
-    });
+    const runner = new AgenticSearchRunner(
+      adapter as never,
+      {
+        knowledge_search: async () => ({ items: [] }),
+        brave_search: async () => ({}),
+        fetch: async () => ({}),
+      },
+      6,
+      mockLookupFailureFirewallContext as never,
+    );
     await runner.run({ userRequest: 'q' });
     const secondTurnRoles = seenMessageRoles[1] ?? [];
     const tail = secondTurnRoles.slice(-3);
@@ -115,15 +149,81 @@ describe('AgenticSearchRunner', () => {
     const adapter = {
       generate: mock(async () => ({ text: 'done', toolCalls: [] })),
     };
-    const runner = new AgenticSearchRunner(adapter as never, {
-      knowledge_search: knowledgeSearch,
-      brave_search: braveSearch,
-      fetch: fetchTool,
-    });
+    const runner = new AgenticSearchRunner(
+      adapter as never,
+      {
+        knowledge_search: knowledgeSearch,
+        brave_search: braveSearch,
+        fetch: fetchTool,
+      },
+      6,
+      mockLookupFailureFirewallContext as never,
+    );
     await runner.run({ userRequest: 'q' });
     expect(knowledgeSearch).toHaveBeenCalledTimes(1);
     expect(braveSearch).toHaveBeenCalledTimes(1);
     expect(fetchTool).not.toHaveBeenCalled();
+  });
+
+  it('adds Failure Firewall context to the first LLM turn when relevant lessons exist', async () => {
+    mockLookupFailureFirewallContext.mockResolvedValueOnce({
+      shouldUse: true,
+      reason: 'Matched raw lesson evidence for risk signals: auth',
+      riskSignals: ['auth'],
+      changedFiles: ['src/auth/middleware.ts'],
+      lessonCandidates: [
+        {
+          id: 'note/auth-lesson',
+          title: 'Keep auth guard boundaries explicit',
+          kind: 'lesson',
+          content: 'Preserve authorization checks when middleware changes.',
+          tags: ['auth'],
+          files: ['src/auth/middleware.ts'],
+          evidence: [],
+          riskSignals: ['auth'],
+          score: 0.9,
+          reason: 'risk_signal_overlap=1.00',
+          source: 'entity',
+          blocking: false,
+        },
+      ],
+      goldenPathCandidates: [],
+      failurePatternCandidates: [],
+      suggestedUse: 'review_reference',
+      degradedReasons: [],
+    });
+    const adapter = {
+      generate: mock(async (messages) => {
+        expect(
+          messages.some(
+            (message: { role: string; content: string }) =>
+              message.role === 'system' && message.content.includes('note/auth-lesson'),
+          ),
+        ).toBe(true);
+        return { text: 'done', toolCalls: [] };
+      }),
+    };
+    const runner = new AgenticSearchRunner(
+      adapter as never,
+      {
+        knowledge_search: async () => ({ items: [] }),
+        brave_search: async () => ({ results: [] }),
+        fetch: async () => ({}),
+      },
+      6,
+      mockLookupFailureFirewallContext as never,
+    );
+
+    const result = await runner.run({
+      userRequest: 'Review auth middleware change',
+      files: ['src/auth/middleware.ts'],
+      changeTypes: ['auth'],
+      intent: 'review',
+    });
+
+    expect(result.answer).toBe('done');
+    expect(result.toolTrace.toolCalls.length).toBe(2);
+    expect(mockLookupFailureFirewallContext).toHaveBeenCalledTimes(1);
   });
 
   it('does not fail even when answer persistence fails', async () => {
@@ -133,11 +233,16 @@ describe('AgenticSearchRunner', () => {
     const adapter = {
       generate: mock(async () => ({ text: 'final answer', toolCalls: [] })),
     };
-    const runner = new AgenticSearchRunner(adapter as never, {
-      knowledge_search: async () => ({ items: [] }),
-      brave_search: async () => ({ results: [] }),
-      fetch: async () => ({}),
-    });
+    const runner = new AgenticSearchRunner(
+      adapter as never,
+      {
+        knowledge_search: async () => ({ items: [] }),
+        brave_search: async () => ({ results: [] }),
+        fetch: async () => ({}),
+      },
+      6,
+      mockLookupFailureFirewallContext as never,
+    );
     const result = await runner.run({ userRequest: 'q' });
     expect(result.answer).toBe('final answer');
     expect(result.savedMemoryId).toBeUndefined();
