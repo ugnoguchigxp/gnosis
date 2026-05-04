@@ -4,7 +4,7 @@ import type { LlmLogEvent } from '../../adapters/llm.js';
 import { createLocalLlmRetriever } from '../../adapters/retriever/mcpRetriever.js';
 import { type LlmClientConfig, config } from '../../config.js';
 import { db as defaultDb } from '../../db/index.js';
-import { searchKnowledgeClaims } from '../knowledge.js';
+import { getKnowledgeByTopic, searchKnowledgeClaims } from '../knowledge.js';
 import { runKeywordSeederOnce } from './cron/keywordSeeder';
 import { type TaskMode, type TaskSource, createTask } from './domain/task';
 import { runEvalSuite } from './eval/runner';
@@ -362,8 +362,7 @@ const run = async () => {
         throw new Error('--topic is required for get-knowledge');
       }
 
-      const knowledgeRepository = new PgKnowledgeRepository({}, defaultDb);
-      const result = await knowledgeRepository.getByTopic(topic);
+      const result = await getKnowledgeByTopic(topic);
       writeResult({
         command,
         runId: runLogger.runId,

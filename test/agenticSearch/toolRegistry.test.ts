@@ -54,6 +54,26 @@ describe('agenticSearch toolRegistry', () => {
     expect(executors.fetch).not.toHaveBeenCalled();
   });
 
+  it('accepts concept entity knowledge searches', async () => {
+    const executors: AgenticSearchToolExecutorRegistry = {
+      knowledge_search: mock(async () => ({ items: [{ id: 'concept/property-based-testing' }] })),
+      brave_search: mock(async () => ({ results: [] })),
+      fetch: mock(async () => ({ text: 'ok' })),
+    };
+
+    const result = await executeToolCall(executors, {
+      id: 'call-concept',
+      name: 'knowledge_search',
+      arguments: { query: 'Property-Based Testing', type: 'concept' },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(executors.knowledge_search).toHaveBeenCalledWith({
+      query: 'Property-Based Testing',
+      type: 'concept',
+    });
+  });
+
   it('returns invalid arguments error on schema mismatch', async () => {
     const executors: AgenticSearchToolExecutorRegistry = {
       knowledge_search: mock(async () => ({ items: [] })),

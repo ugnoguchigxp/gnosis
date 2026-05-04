@@ -142,7 +142,7 @@ export async function fetchContent(url: string): Promise<string> {
     const html = await res.text();
     const text = extractMainText(html);
     if (text.trim()) return cleanText(text);
-    return 'エラー: 本文を取得できませんでした。';
+    throw new Error('本文を取得できませんでした。');
   } catch (e) {
     try {
       const stripped = target.replace(/^https?:\/\//, '');
@@ -153,8 +153,8 @@ export async function fetchContent(url: string): Promise<string> {
         if (text.trim()) return cleanText(text);
       }
     } catch (fe) {
-      return `Error: 内容の取得に失敗しました (${e} / Fallback: ${fe})`;
+      throw new Error(`内容の取得に失敗しました (${e} / Fallback: ${fe})`);
     }
-    return `Error: 内容の取得に失敗しました (${e})`;
+    throw new Error(`内容の取得に失敗しました (${e})`);
   }
 }

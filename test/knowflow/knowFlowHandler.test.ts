@@ -124,6 +124,25 @@ describe('createMcpEvidenceProvider', () => {
     expect(evidence.researchNote).toBeUndefined();
     expect(evidence.diagnostics?.outcome).toBe('no_search_results');
   });
+
+  it('does not call LLM when fetched page fails', async () => {
+    const retriever = {
+      search: mock().mockResolvedValue(`- TS docs (https://typescriptlang.org/docs)
+  Compiler API documentation.`),
+      fetch: mock().mockRejectedValue(new Error('HTTP 403')),
+      disconnect: mock(),
+    };
+
+    const provider = createMcpEvidenceProvider(retriever, {
+      runLlmTask: mockRunLlmTask,
+    });
+    const evidence = await provider(makeTask());
+
+    expect(retriever.fetch).toHaveBeenCalledTimes(1);
+    expect(mockRunLlmTask).not.toHaveBeenCalled();
+    expect(evidence.researchNote).toBeUndefined();
+    expect(evidence.diagnostics?.outcome).toBe('fetch_failed');
+  });
 });
 
 describe('createKnowFlowTaskHandler', () => {

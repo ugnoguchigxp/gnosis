@@ -57,7 +57,7 @@ export class AgenticSearchRunner {
       {
         id: 'prefetch-knowledge',
         name: 'knowledge_search' as const,
-        arguments: { query: input.userRequest, type: 'lesson', limit: 5 },
+        arguments: { query: input.userRequest, type: 'all', limit: 5 },
       },
       {
         id: 'prefetch-web',

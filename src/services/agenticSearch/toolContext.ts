@@ -4,7 +4,7 @@ export function buildToolFollowupContext(toolName: AgenticSearchToolName): strin
   if (toolName === 'knowledge_search') {
     return [
       'knowledge_search結果を読んで次を判断する。',
-      'lesson は過去知見、rule は制約、procedure は実行手順として扱う。',
+      'lesson は過去知見、rule は制約、procedure は実行手順、concept は調査済み技術知識、all は通常の entity 横断検索として扱う。',
       '結果が空、または依頼に直接答えられない場合は brave_search に切り替える。',
       '一般技術質問ではプロジェクト固有語を検索語に含めず、一般化キーワードで検索する。',
     ].join('\n');

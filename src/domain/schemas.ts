@@ -233,7 +233,7 @@ export type DistilledKnowledge = z.infer<typeof DistilledKnowledgeSchema>;
 export const KnowledgeClaimResultSchema = z.object({
   topic: z.string(),
   text: z.string(),
-  confidence: z.number(),
+  confidence: z.number().nullable(),
   score: z.number(),
 });
 export type KnowledgeClaimResult = z.infer<typeof KnowledgeClaimResultSchema>;
@@ -241,12 +241,12 @@ export type KnowledgeClaimResult = z.infer<typeof KnowledgeClaimResultSchema>;
 export const DetailedKnowledgeSchema = z.object({
   topic: z.string(),
   aliases: z.array(z.string()),
-  confidence: z.number(),
+  confidence: z.number().nullable(),
   coverage: z.number(),
   claims: z.array(
     z.object({
       text: z.string(),
-      confidence: z.number(),
+      confidence: z.number().nullable(),
       sourceIds: z.array(z.string()),
     }),
   ),

@@ -1,6 +1,7 @@
-import { desc, eq, ilike, or, sql } from 'drizzle-orm';
+import { desc, eq, ilike, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import {
+  entities,
   knowledgeClaims,
   knowledgeRelations,
   knowledgeSources,
@@ -9,9 +10,33 @@ import {
 
 import { DetailedKnowledgeSchema, KnowledgeClaimResultSchema } from '../domain/schemas.js';
 import type { DetailedKnowledge, KnowledgeClaimResult } from '../domain/schemas.js';
+import { searchEntityKnowledge } from './entityKnowledge.js';
+
+const parseStringArray = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+
+const getMetadataRecord = (value: unknown): Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+
+const mapEntitySearchResults = (
+  results: Awaited<ReturnType<typeof searchEntityKnowledge>>,
+): KnowledgeClaimResult[] =>
+  results.map((result) =>
+    KnowledgeClaimResultSchema.parse({
+      topic: result.title,
+      text: result.content,
+      confidence: result.confidence,
+      score: result.score,
+    }),
+  );
 
 /**
- * knowFlow が書き込んだ knowledge_claims テーブルをテキスト検索します。
+ * Entity-first knowledge search.
+ *
+ * KnowFlow の Research Note は通常の entities として保存されるため、まず entities を検索します。
+ * 旧 knowledge_claims は過去データ互換のフォールバックとしてだけ扱います。
  */
 export async function searchKnowledgeClaims(
   query: string,
@@ -20,6 +45,15 @@ export async function searchKnowledgeClaims(
   const normalizedQuery = query.trim();
   if (normalizedQuery.length === 0) return [];
   const safeLimit = Math.max(1, Math.trunc(limit));
+
+  const entityResults = await searchEntityKnowledge({
+    query: normalizedQuery,
+    type: 'all',
+    limit: safeLimit,
+  });
+  if (entityResults.length > 0) {
+    return mapEntitySearchResults(entityResults);
+  }
 
   const tsvectorExpr = sql`to_tsvector('simple', ${knowledgeClaims.text})`;
   const tsqueryExpr = sql`websearch_to_tsquery('simple', ${normalizedQuery})`;
@@ -43,18 +77,10 @@ export async function searchKnowledgeClaims(
       return ftsResults.map((r) => KnowledgeClaimResultSchema.parse(r));
     }
   } catch {
-    // Fall through to LIKE fallback
+    // Fall through to direct text matching.
   }
 
-  const words = normalizedQuery
-    .split(/\s+/)
-    .filter((w) => w.length > 1)
-    .slice(0, 8);
-
-  if (words.length === 0) return [];
-
   try {
-    const conditions = words.map((w) => ilike(knowledgeClaims.text, `%${w}%`));
     const fallbackResults = await db
       .select({
         topic: knowledgeTopics.canonicalTopic,
@@ -64,7 +90,7 @@ export async function searchKnowledgeClaims(
       })
       .from(knowledgeClaims)
       .innerJoin(knowledgeTopics, eq(knowledgeClaims.topicId, knowledgeTopics.id))
-      .where(or(...conditions))
+      .where(ilike(knowledgeClaims.text, `%${normalizedQuery}%`))
       .orderBy(desc(knowledgeClaims.confidence))
       .limit(safeLimit);
     return fallbackResults.map((r) => KnowledgeClaimResultSchema.parse(r));
@@ -77,7 +103,7 @@ export async function searchKnowledgeClaims(
  * 特定のトピックに関する詳細な知識（クレーム、リレーション、ソース）を取得します。
  */
 export async function getKnowledgeByTopic(topicName: string): Promise<DetailedKnowledge | null> {
-  const canonicalTopic = topicName.trim().toLowerCase().replace(/\s+/g, ' ');
+  const canonicalTopic = topicName.trim().toLowerCase().split(' ').filter(Boolean).join(' ');
 
   try {
     const topicRows = await db
@@ -86,7 +112,9 @@ export async function getKnowledgeByTopic(topicName: string): Promise<DetailedKn
       .where(eq(knowledgeTopics.canonicalTopic, canonicalTopic))
       .limit(1);
 
-    if (topicRows.length === 0) return null;
+    if (topicRows.length === 0) {
+      return getEntityKnowledgeByTopic(topicName);
+    }
     const topic = topicRows[0];
     if (!topic) return null;
 
@@ -136,4 +164,46 @@ export async function getKnowledgeByTopic(topicName: string): Promise<DetailedKn
     console.error(`Error in getKnowledgeByTopic: ${error}`);
     return null;
   }
+}
+
+async function getEntityKnowledgeByTopic(topicName: string): Promise<DetailedKnowledge | null> {
+  const normalizedTopic = topicName.trim();
+  if (!normalizedTopic) return null;
+
+  const rows = await db
+    .select({
+      id: entities.id,
+      type: entities.type,
+      name: entities.name,
+      description: entities.description,
+      metadata: entities.metadata,
+      confidence: entities.confidence,
+    })
+    .from(entities)
+    .where(sql`lower(${entities.name}) = lower(${normalizedTopic})`)
+    .limit(1);
+  const entity = rows[0];
+  if (!entity?.description) return null;
+
+  const metadata = getMetadataRecord(entity.metadata);
+  const referenceUrls = parseStringArray(metadata.referenceUrls);
+  return DetailedKnowledgeSchema.parse({
+    topic: entity.name,
+    aliases: [],
+    confidence: entity.confidence,
+    coverage: 1,
+    claims: [
+      {
+        text: entity.description,
+        confidence: entity.confidence,
+        sourceIds: referenceUrls,
+      },
+    ],
+    relations: [],
+    sources: referenceUrls.map((url) => ({
+      url,
+      title: null,
+      domain: null,
+    })),
+  });
 }

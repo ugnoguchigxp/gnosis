@@ -7,7 +7,7 @@ import type { AgenticSearchToolName, AgenticToolCall, AgenticToolResult } from '
 
 const knowledgeSearchArgsSchema = z.object({
   query: z.string().min(1),
-  type: z.enum(['lesson', 'rule', 'procedure']),
+  type: z.enum(['lesson', 'rule', 'procedure', 'concept', 'reference', 'all']),
   limit: z.number().int().positive().max(20).optional(),
 });
 
