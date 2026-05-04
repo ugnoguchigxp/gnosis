@@ -1,4 +1,4 @@
-import { and, desc, ilike, inArray, isNotNull, or, sql } from 'drizzle-orm';
+import { and, desc, inArray, isNotNull, or, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { entities } from '../db/schema.js';
 
@@ -30,6 +30,12 @@ const typeFilterFor = (type: EntityKnowledgeSearchType): string[] | null => {
   if (type === 'concept') return ['concept', 'pattern', 'library', 'service', 'tool'];
   if (type === 'reference') return ['reference', 'project_doc'];
   return [type];
+};
+
+const normalizeLimit = (limit: number | undefined): number => {
+  const normalized = Math.trunc(limit ?? 5);
+  if (!Number.isFinite(normalized)) return 5;
+  return Math.max(1, normalized);
 };
 
 const baseConditions = (type: EntityKnowledgeSearchType) => {
@@ -73,7 +79,7 @@ export async function searchEntityKnowledge(input: {
 }): Promise<EntityKnowledgeSearchResult[]> {
   const query = input.query.trim();
   if (!query) return [];
-  const limit = Math.max(1, Math.trunc(input.limit ?? 5));
+  const limit = normalizeLimit(input.limit);
   const type = input.type ?? 'all';
   const searchableText = sql<string>`concat_ws(' ', ${entities.name}, ${entities.description})`;
   const tsvectorExpr = sql`to_tsvector('simple', ${searchableText})`;
@@ -105,7 +111,6 @@ export async function searchEntityKnowledge(input: {
     // Fall through to direct text matching. Some tsquery inputs are not portable across DB versions.
   }
 
-  const pattern = `%${query}%`;
   const rows = await db
     .select({
       id: entities.id,
@@ -123,7 +128,10 @@ export async function searchEntityKnowledge(input: {
     .where(
       and(
         ...baseConditions(type),
-        or(ilike(entities.name, pattern), ilike(entities.description, pattern)),
+        or(
+          sql`position(lower(${query}) in lower(${entities.name})) > 0`,
+          sql`position(lower(${query}) in lower(${entities.description})) > 0`,
+        ),
       ),
     )
     .orderBy(desc(entities.freshness), desc(entities.createdAt))

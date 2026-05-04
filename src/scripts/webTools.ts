@@ -127,7 +127,7 @@ function extractMainText(html: string): string {
 }
 
 export async function fetchContent(url: string): Promise<string> {
-  if (!url?.trim()) return 'Error: url parameter is required.';
+  if (!url?.trim()) throw new Error('url parameter is required.');
   let target = url.trim();
   if (!target.startsWith('http://') && !target.startsWith('https://')) {
     target = `https://${target}`;
@@ -145,8 +145,8 @@ export async function fetchContent(url: string): Promise<string> {
     throw new Error('本文を取得できませんでした。');
   } catch (e) {
     try {
-      const stripped = target.replace(/^https?:\/\//, '');
-      const readerUrl = `https://r.jina.ai/http://${stripped}`;
+      const targetUrl = new URL(target);
+      const readerUrl = `https://r.jina.ai/http://${targetUrl.host}${targetUrl.pathname}${targetUrl.search}`;
       const fallback = await fetch(readerUrl, { signal: AbortSignal.timeout(10000) });
       if (fallback.ok) {
         const text = await fallback.text();

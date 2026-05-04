@@ -20,6 +20,12 @@ const getMetadataRecord = (value: unknown): Record<string, unknown> =>
     ? (value as Record<string, unknown>)
     : {};
 
+const normalizeResultLimit = (limit: number): number => {
+  const normalized = Math.trunc(limit);
+  if (!Number.isFinite(normalized)) return 5;
+  return Math.max(1, normalized);
+};
+
 const mapEntitySearchResults = (
   results: Awaited<ReturnType<typeof searchEntityKnowledge>>,
 ): KnowledgeClaimResult[] =>
@@ -44,7 +50,7 @@ export async function searchKnowledgeClaims(
 ): Promise<KnowledgeClaimResult[]> {
   const normalizedQuery = query.trim();
   if (normalizedQuery.length === 0) return [];
-  const safeLimit = Math.max(1, Math.trunc(limit));
+  const safeLimit = normalizeResultLimit(limit);
 
   const entityResults = await searchEntityKnowledge({
     query: normalizedQuery,
@@ -106,15 +112,16 @@ export async function getKnowledgeByTopic(topicName: string): Promise<DetailedKn
   const canonicalTopic = topicName.trim().toLowerCase().split(' ').filter(Boolean).join(' ');
 
   try {
+    const entityKnowledge = await getEntityKnowledgeByTopic(topicName);
+    if (entityKnowledge) return entityKnowledge;
+
     const topicRows = await db
       .select()
       .from(knowledgeTopics)
       .where(eq(knowledgeTopics.canonicalTopic, canonicalTopic))
       .limit(1);
 
-    if (topicRows.length === 0) {
-      return getEntityKnowledgeByTopic(topicName);
-    }
+    if (topicRows.length === 0) return null;
     const topic = topicRows[0];
     if (!topic) return null;
 
