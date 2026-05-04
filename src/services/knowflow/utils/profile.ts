@@ -1,12 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import { z } from 'zod';
-import {
-  type BudgetConfig,
-  BudgetConfigSchema,
-  type LlmClientConfig,
-  LlmClientConfigSchema,
-} from '../../../config.js';
+import { type LlmClientConfig, LlmClientConfigSchema } from '../../../config.js';
 
 const parseScalar = (raw: string): unknown => {
   const value = raw.trim();
@@ -99,7 +94,6 @@ const ProfileSchema = z
     knowflow: z
       .object({
         llm: LlmClientConfigSchema.partial().optional(),
-        budget: BudgetConfigSchema.partial().optional(),
       })
       .strict()
       .optional(),
@@ -139,17 +133,6 @@ export const mergeLlmConfig = (
 ): LlmClientConfig => {
   if (!override) return base;
   return LlmClientConfigSchema.parse({
-    ...base,
-    ...override,
-  });
-};
-
-export const mergeBudgetConfig = (
-  base: BudgetConfig,
-  override?: Partial<BudgetConfig>,
-): BudgetConfig => {
-  if (!override) return base;
-  return BudgetConfigSchema.parse({
     ...base,
     ...override,
   });

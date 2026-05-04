@@ -36,7 +36,7 @@ describeIntegration('postgres queue integration', () => {
   });
 
   beforeEach(async () => {
-    await pool.query('TRUNCATE knowflow_keyword_evaluations, topic_tasks CASCADE');
+    await pool.query('TRUNCATE topic_tasks CASCADE');
   });
 
   afterAll(async () => {

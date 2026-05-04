@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { eq, sql } from 'drizzle-orm';
 import { db } from '../src/db/index';
-import { knowflowKeywordEvaluations, syncState, topicTasks } from '../src/db/schema';
+import { syncState, topicTasks } from '../src/db/schema';
 
 async function check() {
   const sqlite = new Database('data/gnosis-tasks.sqlite');
@@ -15,21 +15,11 @@ async function check() {
   const sync = await db.select().from(syncState);
   console.log('Sync State (Postgres):', sync);
 
-  const evalCount = await db.select({ count: sql`count(*)` }).from(knowflowKeywordEvaluations);
-  console.log('Keyword Evaluations Count:', evalCount);
-
   const taskCount = await db
     .select({ count: sql`count(*)`, status: topicTasks.status })
     .from(topicTasks)
     .groupBy(topicTasks.status);
   console.log('Topic Tasks by Status:', taskCount);
-
-  const recentEvals = await db
-    .select()
-    .from(knowflowKeywordEvaluations)
-    .orderBy(sql`created_at DESC`)
-    .limit(5);
-  console.log('Recent Evaluations:', recentEvals);
 
   const pendingTasks = await db
     .select()

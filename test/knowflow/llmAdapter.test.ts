@@ -17,13 +17,19 @@ mock.module('../../src/config.js', () => ({
         cliPromptMode: 'arg',
         cliPromptPlaceholder: '{{prompt}}',
       },
+      worker: {
+        maxQueriesPerTask: 3,
+        cronRunWindowMs: 3600000,
+      },
     },
     llm: {
       maxBuffer: 1024 * 1024,
+      concurrencyLimit: 1,
     },
   },
 }));
-import { extractJsonCandidate, parseLlmTaskOutputText, runLlmTask } from '../../src/adapters/llm';
+
+import { runLlmTask } from '../../src/adapters/llm';
 
 const noopLogger = () => {
   // no-op in test
@@ -34,31 +40,10 @@ describe('llm adapter', () => {
     mock.restore();
   });
 
-  it('extracts JSON from complex responses', () => {
-    expect(extractJsonCandidate('```json\n{"a":1}\n```')).toContain('{"a":1}');
-    expect(extractJsonCandidate('Sure, here is your JSON: {"c":3} and some more text.')).toContain(
-      '{"c":3}',
-    );
-    expect(extractJsonCandidate('')).toBeUndefined();
-    expect(extractJsonCandidate('No JSON here')).toBe('No JSON here');
-  });
-
-  it('tolerates non-structured outputs in parseLlmTaskOutputText', () => {
-    const raw = '{"gaps":[{"type":"uncertain"}]}';
-    const parsed = parseLlmTaskOutputText('gap_detection', raw);
-    expect(parsed.gaps.length).toBeGreaterThan(0);
-  });
-
-  it('tolerates malformed JSON-like text in parseLlmTaskOutputText', () => {
-    const raw = '{"bad": json}';
-    const parsed = parseLlmTaskOutputText('summarize', raw);
-    expect(parsed.summary.length).toBeGreaterThan(0);
-  });
-
-  it('returns API output when schema-valid', async () => {
+  it('returns API output as raw text', async () => {
     const result = await runLlmTask(
       {
-        task: 'query_generation',
+        task: 'research_note',
         context: { topic: 'TypeScript Compiler API' },
         requestId: 'req-api-success',
       },
@@ -68,24 +53,48 @@ describe('llm adapter', () => {
           enableCliFallback: true,
         },
         deps: {
-          loadPromptTemplate: async () => '{{context_json}}',
-          invokeApi: async () => '{"queries":["typescript compiler api docs"]}',
-          invokeCli: async () => '{"queries":["should not be used"]}',
+          loadPromptTemplate: async () => 'Topic: {{topic}}',
+          invokeApi: async () => '  TypeScript compiler API note.  ',
+          invokeCli: async () => 'should not be used',
           logger: noopLogger,
         },
       },
     );
 
     expect(result.backend).toBe('api');
-    expect(result.degraded).toBe(false);
-    expect(result.output.queries.length).toBeGreaterThan(0);
+    expect(result.text).toBe('TypeScript compiler API note.');
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it('unwraps local model response envelope without parsing LLM content', async () => {
+    const result = await runLlmTask(
+      {
+        task: 'phrase_scout',
+        context: { context: 'logs' },
+        requestId: 'req-envelope',
+      },
+      {
+        config: {
+          maxRetries: 1,
+          enableCliFallback: false,
+        },
+        deps: {
+          loadPromptTemplate: async () => '{{context}}',
+          invokeApi: async () => JSON.stringify({ response: 'MCP fetch retry budget' }),
+          invokeCli: async () => 'should not be used',
+          logger: noopLogger,
+        },
+      },
+    );
+
+    expect(result.text).toBe('MCP fetch retry budget');
   });
 
   it('falls back to CLI when API fails', async () => {
     const result = await runLlmTask(
       {
-        task: 'hypothesis',
-        context: { topic: 'Graph RAG' },
+        task: 'phrase_scout',
+        context: { context: 'Graph RAG logs' },
         requestId: 'req-cli-fallback',
       },
       {
@@ -94,73 +103,73 @@ describe('llm adapter', () => {
           enableCliFallback: true,
         },
         deps: {
-          loadPromptTemplate: async () => '{{context_json}}',
+          loadPromptTemplate: async () => '{{context}}',
           invokeApi: async () => {
             throw new Error('api down');
           },
-          invokeCli: async () =>
-            '{"hypotheses":[{"id":"h1","hypothesis":"Compare graph rag retrieval","priority":0.8}]}',
+          invokeCli: async () => 'Graph RAG retrieval drift',
           logger: noopLogger,
         },
       },
     );
 
     expect(result.backend).toBe('cli');
-    expect(result.degraded).toBe(false);
-    expect(result.output.hypotheses).toHaveLength(1);
+    expect(result.text).toBe('Graph RAG retrieval drift');
     expect(result.warnings.length).toBeGreaterThan(0);
   });
 
-  it('returns non-degraded plain-text parsed output when backends return text', async () => {
-    const result = await runLlmTask(
-      {
-        task: 'gap_detection',
-        context: { topic: 'Knowledge Graph' },
-        requestId: 'req-degraded',
-      },
-      {
-        config: {
-          maxRetries: 1,
-          enableCliFallback: true,
+  it('fails when the backend returns a tool or think block parse failure', async () => {
+    await expect(
+      runLlmTask(
+        {
+          task: 'research_note',
+          context: { topic: 'Boundary testing' },
+          requestId: 'req-control-error',
         },
-        deps: {
-          loadPromptTemplate: async () => '{{context_json}}',
-          invokeApi: async () => 'not json',
-          invokeCli: async () => 'still not json',
-          logger: noopLogger,
+        {
+          config: {
+            maxRetries: 1,
+            enableCliFallback: false,
+          },
+          deps: {
+            loadPromptTemplate: async () => 'Topic: {{topic}}',
+            invokeApi: async () =>
+              JSON.stringify({
+                response: '[System] Tool call or think block was generated but failed to parse.',
+              }),
+            invokeCli: async () => 'should not be used',
+            logger: noopLogger,
+          },
         },
-      },
-    );
-
-    expect(result.degraded).toBe(false);
-    expect(result.output.gaps[0]?.type).toBe('uncertain');
-    expect(result.warnings.length).toBe(0);
+      ),
+    ).rejects.toThrow('LLM task failed');
   });
 
-  it('respects maxRetries=1 (no retries)', async () => {
+  it('respects maxRetries=1', async () => {
     let apiCalls = 0;
-    const result = await runLlmTask(
-      { task: 'summarize', context: {} },
-      {
-        config: {
-          maxRetries: 1,
-          enableCliFallback: false,
-        },
-        deps: {
-          loadPromptTemplate: async () => 'template',
-          invokeApi: async () => {
-            apiCalls++;
-            throw new Error('fail');
+    await expect(
+      runLlmTask(
+        { task: 'research_note', context: {} },
+        {
+          config: {
+            maxRetries: 1,
+            enableCliFallback: false,
           },
-          invokeCli: async () => {
-            throw new Error('cli should not run');
+          deps: {
+            loadPromptTemplate: async () => 'template',
+            invokeApi: async () => {
+              apiCalls++;
+              throw new Error('fail');
+            },
+            invokeCli: async () => {
+              throw new Error('cli should not run');
+            },
+            logger: noopLogger,
           },
-          logger: noopLogger,
         },
-      },
-    );
+      ),
+    ).rejects.toThrow('LLM task failed');
 
-    expect(apiCalls).toBe(1); // 試行1回のみでリトライなし
-    expect(result.degraded).toBe(true);
+    expect(apiCalls).toBe(1);
   });
 });

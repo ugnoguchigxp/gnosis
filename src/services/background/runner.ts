@@ -7,7 +7,6 @@ import { db as defaultDb } from '../../db/index.js';
 import { withGlobalSemaphore } from '../../utils/lock.js';
 import { runKeywordSeederOnce } from '../knowflow/cron/keywordSeeder.js';
 import type { KeywordSeederRunResult } from '../knowflow/cron/types.js';
-import { enqueueFrontierCandidates } from '../knowflow/frontier/selector.js';
 import { PgKnowledgeRepository } from '../knowflow/knowledge/repository.js';
 import { PgJsonbQueueRepository } from '../knowflow/queue/pgJsonbRepository.js';
 import {
@@ -54,7 +53,6 @@ type ProcessQueueDeps = {
   database: typeof defaultDb;
   runWorkerOnce?: typeof runWorkerOnce;
   runKeywordSeederOnce?: typeof runKeywordSeederOnce;
-  enqueueFrontierCandidates?: typeof enqueueFrontierCandidates;
   recordBackgroundTaskRun?: (input: BackgroundTaskRunRecord) => Promise<void>;
 };
 
@@ -94,7 +92,6 @@ export async function runTask(
     database: typeof defaultDb;
     runWorkerOnce?: typeof runWorkerOnce;
     runKeywordSeederOnce?: typeof runKeywordSeederOnce;
-    enqueueFrontierCandidates?: typeof enqueueFrontierCandidates;
   } = {
     database: defaultDb,
   },
@@ -136,33 +133,12 @@ export async function runTask(
         deps.database,
         deps.runKeywordSeederOnce,
       );
-      const sourceFailures = readNonNegativeInt(result.sourceFailures) ?? 0;
-      const processed =
-        result.evaluated > 0 || result.enqueued > 0 || result.skipped > 0 || sourceFailures > 0;
-
-      return {
-        ok: sourceFailures === 0,
-        processed,
-        summary: `sources=${result.sources} evaluated=${result.evaluated} enqueued=${result.enqueued} skipped=${result.skipped} deduped=${result.deduped} sourceFailures=${sourceFailures}`,
-        partialFailures: sourceFailures,
-        error:
-          sourceFailures > 0
-            ? `${sourceFailures} source(s) failed during keyword seeding`
-            : undefined,
-        stats: result,
-      };
-    }
-
-    case 'knowflow_frontier_seed': {
-      const result = await runKnowFlowFrontierSeedIteration(
-        deps.database,
-        deps.enqueueFrontierCandidates,
-      );
+      const processed = result.phrases > 0 || result.enqueued > 0 || result.skipped > 0;
 
       return {
         ok: true,
-        processed: result.enqueued > 0 || result.deduped > 0 || result.candidates.length > 0,
-        summary: `candidates=${result.candidates.length} enqueued=${result.enqueued} deduped=${result.deduped}`,
+        processed,
+        summary: `sources=${result.sources} phrases=${result.phrases} enqueued=${result.enqueued} skipped=${result.skipped} deduped=${result.deduped}`,
         partialFailures: 0,
         stats: result,
       };
@@ -252,11 +228,10 @@ async function runKnowFlowIteration(
   try {
     const evidenceProvider = createMcpEvidenceProvider(retriever, {
       llmConfig: config.knowflow.llm,
+      getExistingKnowledge: (topic) => knowledgeRepository.getByTopic(topic),
     });
     const handler = createKnowFlowTaskHandler({
-      repository: knowledgeRepository,
       evidenceProvider,
-      budget: config.knowflow.budget,
     });
 
     const runOnce = customRunWorkerOnce ?? runWorkerOnce;
@@ -310,31 +285,6 @@ async function runKnowFlowKeywordSeedIteration(
 ): Promise<KeywordSeederRunResult> {
   const runSeeder = customRunKeywordSeederOnce ?? runKeywordSeederOnce;
   return await runSeeder({ database });
-}
-
-async function runKnowFlowFrontierSeedIteration(
-  database: typeof defaultDb = defaultDb,
-  customEnqueueFrontierCandidates?: typeof enqueueFrontierCandidates,
-): Promise<{
-  candidates: Awaited<ReturnType<typeof enqueueFrontierCandidates>>['candidates'];
-  enqueued: number;
-  deduped: number;
-}> {
-  if (!config.knowflow.frontier.enabled) {
-    return { candidates: [], enqueued: 0, deduped: 0 };
-  }
-
-  const queueRepository = new PgJsonbQueueRepository(database);
-  const enqueueFrontier = customEnqueueFrontierCandidates ?? enqueueFrontierCandidates;
-  return await enqueueFrontier({
-    database,
-    queueRepository,
-    limit: config.knowflow.frontier.maxTopics,
-    scanLimit: config.knowflow.frontier.scanLimit,
-    maxPerCommunity: config.knowflow.frontier.maxPerCommunity,
-    useLlm: config.knowflow.frontier.llmEnabled,
-    requestedBy: 'background-frontier-seed',
-  });
 }
 
 /**

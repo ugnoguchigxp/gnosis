@@ -12,7 +12,7 @@ export type WorkerSnapshot = {
 };
 
 export type EvalSnapshot = {
-  degradedRate: number;
+  passRate: number;
   passed: number;
   failed: number;
   updatedAtTs: number | null;
@@ -31,7 +31,6 @@ export type KnowFlowSnapshot = {
   lastWorkerSummary: string | null;
   lastSeedTs: number | null;
   lastSeedSummary: string | null;
-  lastFrontierSeedTs: number | null;
   lastKeywordSeedTs: number | null;
   lastFailureTs: number | null;
 };

@@ -100,7 +100,7 @@ export const createRunLogger = async (options: {
     (loggerOptions?: { verbose?: boolean }) =>
     (event: LlmLogEvent): void => {
       const level: StructuredLogLevel =
-        event.event === 'llm.task.degraded' || event.event === 'llm.task.retry' ? 'warn' : 'info';
+        event.event === 'llm.task.failed' || event.event === 'llm.task.retry' ? 'warn' : 'info';
 
       log(event.event, {
         kind: 'llm',

@@ -106,34 +106,11 @@ const formatSystemTopic = (topic: string): { tag: string; text: string; fullText
   return { tag: 'task', text: topic, fullText: topic };
 };
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null;
-
-const isKnowflowFrontierTask = (task: TaskHistoryEntry): boolean => {
-  const payload = isRecord(task.payload) ? task.payload : {};
-  const requestedBy = typeof payload.requestedBy === 'string' ? payload.requestedBy : '';
-  const expansion = isRecord(payload.expansion) ? payload.expansion : null;
-  const expansionAxis =
-    expansion && typeof expansion.expansionAxis === 'string' ? expansion.expansionAxis : '';
-  return (
-    expansionAxis === 'frontier' ||
-    requestedBy === 'knowflow-frontier' ||
-    requestedBy === 'background-frontier-seed'
-  );
-};
-
 const topicDisplay = (
   task: TaskHistoryEntry,
 ): { tag: string | null; text: string; fullText: string } => {
   const raw = (task.topic ?? '').trim();
   if (!raw) return { tag: null, text: '(no topic)', fullText: '(no topic)' };
-  if (isKnowflowFrontierTask(task)) {
-    return {
-      tag: 'frontier',
-      text: truncateMiddle(raw, 100),
-      fullText: raw,
-    };
-  }
   if (raw.startsWith('__system__/')) {
     const formatted = formatSystemTopic(raw);
     return {

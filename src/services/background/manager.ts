@@ -2,6 +2,10 @@ import { createLocalLlmRetriever } from '../../adapters/retriever/mcpRetriever.j
 import { config, envBoolean } from '../../config.js';
 import { GNOSIS_CONSTANTS } from '../../constants.js';
 import { withGlobalSemaphore } from '../../utils/lock.js';
+import {
+  createPhraseScoutLoopState,
+  runPhraseScoutSeedOnce,
+} from '../knowflow/cron/phraseScoutLoop.js';
 import { PgKnowledgeRepository } from '../knowflow/knowledge/repository.js';
 import { checkLlmHealth } from '../knowflow/ops/healthCheck.js';
 import { defaultStructuredLogger } from '../knowflow/ops/logger.js';
@@ -23,14 +27,13 @@ const retriever = createLocalLlmRetriever(config.localLlmPath);
 const evidenceProvider = createMcpEvidenceProvider(retriever, {
   llmConfig: config.knowflow.llm,
   logger: defaultStructuredLogger,
+  getExistingKnowledge: (topic) => knowledgeRepository.getByTopic(topic),
 });
 const handler = createKnowFlowTaskHandler({
-  repository: knowledgeRepository,
-  queueRepository,
   evidenceProvider,
-  budget: config.knowflow.budget,
   logger: defaultStructuredLogger,
 });
+const phraseScoutLoopState = createPhraseScoutLoopState();
 
 /**
  * すべてのバックグラウンドプロセスを管理するマネージャー。
@@ -73,6 +76,12 @@ export function startBackgroundWorkers(): void {
     const tick = async () => {
       try {
         await queueRepository.clearStaleTasks(config.knowflow.worker.cronRunWindowMs);
+        await runPhraseScoutSeedOnce({
+          trigger: 'background-manager',
+          state: phraseScoutLoopState,
+          queueRepository,
+          logger: defaultStructuredLogger,
+        });
 
         // topic_tasks に system task を投入（単一キュー運用）
         await queueRepository.enqueue({

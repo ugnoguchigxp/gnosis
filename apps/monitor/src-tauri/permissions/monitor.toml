@@ -15,7 +15,6 @@ commands.allow = [
     "monitor_sync_state",
     "monitor_sync_state_action",
     "monitor_knowflow_corpus",
-    "monitor_knowflow_evals",
     "monitor_communities",
     "monitor_task_detail",
     "monitor_graph_snapshot",

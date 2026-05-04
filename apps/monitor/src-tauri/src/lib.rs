@@ -32,7 +32,6 @@ pub fn run() {
             monitor::commands::monitor_sync_state,
             monitor::commands::monitor_sync_state_action,
             monitor::commands::monitor_knowflow_corpus,
-            monitor::commands::monitor_knowflow_evals,
             monitor::commands::monitor_communities,
             monitor::commands::monitor_task_detail,
             monitor::commands::monitor_graph_snapshot,

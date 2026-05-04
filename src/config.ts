@@ -37,16 +37,6 @@ export const LlmClientConfigSchema = z
 
 export type LlmClientConfig = z.infer<typeof LlmClientConfigSchema>;
 
-export const BudgetConfigSchema = z
-  .object({
-    userBudget: z.number().int().positive(),
-    cronBudget: z.number().int().positive(),
-    cronRunBudget: z.number().int().positive(),
-  })
-  .strict();
-
-export type BudgetConfig = z.infer<typeof BudgetConfigSchema>;
-
 export const WorkerConfigSchema = z
   .object({
     taskTimeoutMs: z.number().int().positive(),
@@ -61,35 +51,15 @@ export const WorkerConfigSchema = z
 
 export type WorkerConfig = z.infer<typeof WorkerConfigSchema>;
 
-export const KeywordEvalAliasSchema = z.enum(['bonsai', 'gemma4', 'bedrock', 'openai']);
-export type KeywordEvalAlias = z.infer<typeof KeywordEvalAliasSchema>;
-
 export const KeywordCronConfigSchema = z
   .object({
     enabled: z.boolean(),
     maxTopics: z.number().int().positive(),
-    minResearchScore: z.number().min(0).max(10),
     lookbackHours: z.number().int().positive(),
-    evalModelAlias: KeywordEvalAliasSchema,
-    evalFallbackAlias: KeywordEvalAliasSchema.optional(),
-    maxParallelEvaluations: z.number().int().positive().default(3),
-    maxRetries: z.number().int().nonnegative().default(2),
   })
   .strict();
 
 export type KeywordCronConfig = z.infer<typeof KeywordCronConfigSchema>;
-
-export const FrontierConfigSchema = z
-  .object({
-    enabled: z.boolean(),
-    llmEnabled: z.boolean(),
-    maxTopics: z.number().int().positive(),
-    scanLimit: z.number().int().positive(),
-    maxPerCommunity: z.number().int().positive(),
-  })
-  .strict();
-
-export type FrontierConfig = z.infer<typeof FrontierConfigSchema>;
 
 export const MemoryLoopConfigSchema = z
   .object({
@@ -229,14 +199,6 @@ export const config = {
       cliPromptMode: process.env.LOCAL_LLM_CLI_PROMPT_MODE === 'stdin' ? 'stdin' : 'arg',
       cliPromptPlaceholder: process.env.LOCAL_LLM_CLI_PROMPT_PLACEHOLDER ?? '{{prompt}}',
     }),
-    budget: BudgetConfigSchema.parse({
-      userBudget: envNumber(process.env.USER_BUDGET, GNOSIS_CONSTANTS.USER_BUDGET_DEFAULT),
-      cronBudget: envNumber(process.env.CRON_BUDGET, GNOSIS_CONSTANTS.CRON_BUDGET_DEFAULT),
-      cronRunBudget: envNumber(
-        process.env.CRON_RUN_BUDGET,
-        GNOSIS_CONSTANTS.CRON_RUN_BUDGET_DEFAULT,
-      ),
-    }),
     worker: WorkerConfigSchema.parse({
       taskTimeoutMs: envNumber(
         process.env.KNOWFLOW_WORKER_TASK_TIMEOUT_MS,
@@ -273,26 +235,7 @@ export const config = {
     keywordCron: KeywordCronConfigSchema.parse({
       enabled: envBoolean(process.env.KNOWFLOW_KEYWORD_CRON_ENABLED, true),
       maxTopics: Math.max(1, envNumber(process.env.KNOWFLOW_KEYWORD_CRON_MAX_TOPICS, 10)),
-      minResearchScore: envNumber(process.env.KNOWFLOW_KEYWORD_CRON_MIN_RESEARCH_SCORE, 6.5),
       lookbackHours: Math.max(1, envNumber(process.env.KNOWFLOW_KEYWORD_CRON_LOOKBACK_HOURS, 168)),
-      evalModelAlias: KeywordEvalAliasSchema.parse(
-        process.env.KNOWFLOW_KEYWORD_EVAL_MODEL_ALIAS ?? 'gemma4',
-      ),
-      evalFallbackAlias: process.env.KNOWFLOW_KEYWORD_EVAL_MODEL_FALLBACK_ALIAS
-        ? KeywordEvalAliasSchema.parse(process.env.KNOWFLOW_KEYWORD_EVAL_MODEL_FALLBACK_ALIAS)
-        : undefined,
-      maxParallelEvaluations: Math.max(
-        1,
-        envNumber(process.env.KNOWFLOW_KEYWORD_CRON_MAX_PARALLEL, 3),
-      ),
-      maxRetries: Math.max(0, envNumber(process.env.KNOWFLOW_KEYWORD_CRON_MAX_RETRIES, 2)),
-    }),
-    frontier: FrontierConfigSchema.parse({
-      enabled: envBoolean(process.env.KNOWFLOW_FRONTIER_ENABLED, true),
-      llmEnabled: envBoolean(process.env.KNOWFLOW_FRONTIER_LLM_ENABLED, true),
-      maxTopics: Math.max(1, envNumber(process.env.KNOWFLOW_FRONTIER_MAX_TOPICS, 5)),
-      scanLimit: Math.max(1, envNumber(process.env.KNOWFLOW_FRONTIER_SCAN_LIMIT, 300)),
-      maxPerCommunity: Math.max(1, envNumber(process.env.KNOWFLOW_FRONTIER_MAX_PER_COMMUNITY, 2)),
     }),
     healthCheck: {
       timeoutMs: envNumber(

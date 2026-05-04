@@ -18,7 +18,6 @@ type TimelineStatus =
   | 'done'
   | 'failed'
   | 'deferred'
-  | 'degraded'
   | 'pending'
   | 'running'
   | 'review'
@@ -48,7 +47,7 @@ const createInitialSnapshot = (): MonitorSnapshotData => ({
     consecutiveFailures: 0,
   },
   eval: {
-    degradedRate: 0,
+    passRate: 0,
     passed: 0,
     failed: 0,
     updatedAtTs: null,
@@ -65,7 +64,6 @@ const createInitialSnapshot = (): MonitorSnapshotData => ({
     lastWorkerSummary: null,
     lastSeedTs: null,
     lastSeedSummary: null,
-    lastFrontierSeedTs: null,
     lastKeywordSeedTs: null,
     lastFailureTs: null,
   },
@@ -133,7 +131,6 @@ const normalizeStatus = (kind: string): TimelineStatus => {
   if (kind === 'task.deferred') return 'deferred';
   if (kind === 'task.pending') return 'pending';
   if (kind === 'task.running') return 'running';
-  if (kind === 'llm.task.degraded') return 'degraded';
   if (kind === 'review.completed') return 'review';
   if (kind.startsWith('hook.')) return 'hook';
   return 'unknown';
@@ -472,7 +469,6 @@ onMount(() => {
 					<option value="done">done</option>
 					<option value="failed">failed</option>
 					<option value="deferred">deferred</option>
-					<option value="degraded">degraded</option>
 					<option value="review">review</option>
 					<option value="hook">hook</option>
 				</select>
@@ -520,7 +516,7 @@ onMount(() => {
 		<section class="panel">
 			<h2>Eval</h2>
 			<div class="stat-row">
-				<div class="metric"><div class="metric-label">degraded rate</div><div class="metric-value">{snapshot.eval.degradedRate.toFixed(2)}%</div></div>
+				<div class="metric"><div class="metric-label">pass rate</div><div class="metric-value">{snapshot.eval.passRate.toFixed(2)}%</div></div>
 				<div class="metric"><div class="metric-label">passed / failed</div><div class="metric-value">{snapshot.eval.passed} / {snapshot.eval.failed}</div></div>
 				<div class="metric" style="grid-column: span 2;"><div class="metric-label">updated</div><div class="metric-value" style="font-size: 0.92rem;">{formatTime(snapshot.eval.updatedAtTs)}</div></div>
 			</div>
@@ -543,8 +539,7 @@ onMount(() => {
 				<div class="metric"><div class="metric-label">last worker</div><div class="metric-value" style="font-size: 0.82rem;">{formatTime(snapshot.knowflow.lastWorkerTs)}</div></div>
 				<div class="metric"><div class="metric-label">last seed</div><div class="metric-value" style="font-size: 0.82rem;">{formatTime(snapshot.knowflow.lastSeedTs)}</div></div>
 				<div class="metric"><div class="metric-label">last failure</div><div class="metric-value" style="font-size: 0.82rem;">{formatTime(snapshot.knowflow.lastFailureTs)}</div></div>
-				<div class="metric"><div class="metric-label">frontier</div><div class="metric-value" style="font-size: 0.82rem;">{formatTime(snapshot.knowflow.lastFrontierSeedTs)}</div></div>
-				<div class="metric"><div class="metric-label">keyword</div><div class="metric-value" style="font-size: 0.82rem;">{formatTime(snapshot.knowflow.lastKeywordSeedTs)}</div></div>
+				<div class="metric"><div class="metric-label">phrase scout</div><div class="metric-value" style="font-size: 0.82rem;">{formatTime(snapshot.knowflow.lastKeywordSeedTs)}</div></div>
 				<div class="metric" style="grid-column: span 2;"><div class="metric-label">summary</div><div class="metric-value" style="font-size: 0.78rem;">{snapshot.knowflow.lastSeedSummary ?? snapshot.knowflow.lastWorkerSummary ?? '-'}</div></div>
 			</div>
 		</section>

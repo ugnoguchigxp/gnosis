@@ -18,11 +18,10 @@ use tokio::{
 
 use crate::monitor::{cli, models::TimelineEvent, now_millis, state::MonitorSharedState};
 
-const WATCH_EVENTS: [&str; 5] = [
+const WATCH_EVENTS: [&str; 4] = [
     "task.done",
     "task.failed",
     "task.deferred",
-    "llm.task.degraded",
     "review.completed",
 ];
 

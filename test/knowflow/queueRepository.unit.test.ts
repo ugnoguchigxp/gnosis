@@ -6,6 +6,7 @@ describe('PgJsonbQueueRepository (unit)', () => {
   // biome-ignore lint/suspicious/noExplicitAny: mock
   let mockDb: any;
   let repository: PgJsonbQueueRepository;
+  const updateSetMock = mock();
 
   // biome-ignore lint/suspicious/noExplicitAny: mock
   const createMockTask = (id: string, overrides: any = {}) => ({
@@ -41,10 +42,12 @@ describe('PgJsonbQueueRepository (unit)', () => {
   };
 
   beforeEach(() => {
+    updateSetMock.mockReset();
+    updateSetMock.mockImplementation(() => ({ where: mock(() => createMockChain([])) }));
     mockDb = {
       select: mock(() => ({ from: mock(() => createMockChain([])) })),
       insert: mock(() => ({ values: mock(() => createMockChain([])) })),
-      update: mock(() => ({ set: mock(() => ({ where: mock(() => createMockChain([])) })) })),
+      update: mock(() => ({ set: updateSetMock })),
       // biome-ignore lint/suspicious/noExplicitAny: mock
       transaction: mock(async (callback: any) => callback(mockDb)),
     };
@@ -117,5 +120,29 @@ describe('PgJsonbQueueRepository (unit)', () => {
 
     expect(count).toBe(1);
     expect(mockDb.update).toHaveBeenCalled();
+  });
+
+  it('persists nextRunAt when recovering orphaned running tasks', async () => {
+    const now = 1_700_000_000_000;
+    const task = createMockTask('t1', {
+      status: 'running',
+      lockOwner: 'worker-999999',
+      lockedAt: now - 10_000,
+    });
+    mockDb.select.mockReturnValueOnce({
+      from: () => createMockChain([{ id: 't1', payload: task }]),
+    });
+
+    const count = await repository.clearOrphanedRunningTasks(['daemon-'], now);
+    const updateArg = updateSetMock.mock.calls.at(-1)?.[0];
+
+    expect(count).toBe(1);
+    expect(updateArg).toMatchObject({
+      status: 'deferred',
+      nextRunAt: now,
+      lockOwner: null,
+      lockedAt: null,
+    });
+    expect(updateArg.payload.nextRunAt).toBe(now);
   });
 });

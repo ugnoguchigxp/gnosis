@@ -9,31 +9,6 @@ export type TaskMode = z.infer<typeof TaskModeSchema>;
 export type TaskSource = z.infer<typeof TaskSourceSchema>;
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 
-export const TaskExpansionSchema = z
-  .object({
-    seedEntityId: z.string().min(1).optional(),
-    seedCommunityId: z.string().min(1).optional(),
-    expansionAxis: z.string().min(1).optional(),
-    parentTaskId: z.string().min(1).optional(),
-    sourceUrl: z.string().min(1).optional(),
-    whyResearch: z.string().min(1).optional(),
-    relationType: z.string().min(1).optional(),
-  })
-  .strict();
-
-export type TaskExpansion = z.infer<typeof TaskExpansionSchema>;
-
-const EvaluationSchema = z
-  .object({
-    category: z.string().min(1),
-    whyResearch: z.string().min(1),
-    searchScore: z.number().min(0).max(10),
-    termDifficultyScore: z.number().min(0).max(10),
-    uncertaintyScore: z.number().min(0).max(10),
-    scoreEvaluatedAt: z.string().min(1),
-  })
-  .strict();
-
 export const TopicTaskSchema = z
   .object({
     id: z.string().min(1),
@@ -57,8 +32,6 @@ export const TopicTaskSchema = z
     nextRunAt: z.number().int().nonnegative().optional(),
 
     resultSummary: z.string().min(1).optional(),
-    evaluation: EvaluationSchema.optional(),
-    expansion: TaskExpansionSchema.optional(),
     metadata: z.record(z.unknown()).optional(),
   })
   .strict();
@@ -73,8 +46,6 @@ export const CreateTaskInputSchema = z
     priority: z.number().min(1).optional(),
     requestedBy: z.string().min(1).optional(),
     sourceGroup: z.string().min(1).optional(),
-    evaluation: EvaluationSchema.optional(),
-    expansion: TaskExpansionSchema.optional(),
     metadata: z.record(z.unknown()).optional(),
   })
   .strict();
@@ -110,8 +81,6 @@ export const createTask = (input: CreateTaskInput, now = Date.now()): TopicTask 
     status: 'pending',
     dedupeKey,
     requestedBy: parsed.requestedBy,
-    evaluation: parsed.evaluation,
-    expansion: parsed.expansion,
     metadata: parsed.metadata,
     attempts: 0,
     createdAt: now,

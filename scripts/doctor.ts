@@ -296,9 +296,11 @@ function checkLastKnowFlowRun(): CheckResult {
         record.event === 'task.done' ||
         record.event === 'task.failed' ||
         record.event === 'task.deferred';
-      const isManualSeed =
-        record.event === 'cli.result' && record.data?.command === 'seed-frontier';
-      if (!isKnowFlowBackground && !isKnowFlowWorker && !isManualSeed) continue;
+      const isManualSeed = record.event === 'cli.result' && record.data?.command === 'seed-phrases';
+      const isPhraseScoutSeed = record.event === 'knowflow.phrase_scout.completed';
+      if (!isKnowFlowBackground && !isKnowFlowWorker && !isManualSeed && !isPhraseScoutSeed) {
+        continue;
+      }
 
       const status =
         record.event === 'background.task.failed' ||
@@ -324,7 +326,7 @@ function checkLastKnowFlowRun(): CheckResult {
     name: 'last KnowFlow run',
     status: 'WARN',
     message: 'no KnowFlow run records found in recent logs.',
-    fix: 'Run: bun src/services/knowflow/cli.ts seed-frontier --limit 3 --dry-run --json',
+    fix: 'Run: bun src/services/knowflow/cli.ts seed-phrases --limit 3 --json',
   };
 }
 

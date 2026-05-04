@@ -6,8 +6,8 @@ export type RunMetricSample = {
   ok: boolean;
   changed?: boolean;
   retries: number;
-  acceptedClaims: number;
-  rejectedClaims: number;
+  recordedNotes: number;
+  missedNotes: number;
   conflicts: number;
   latestSourceAgeDays?: number;
 };
@@ -23,7 +23,7 @@ export type MetricsSnapshot = {
   kpi: {
     successRate: number;
     retryRate: number;
-    mergeAcceptance: number;
+    noteAcceptance: number;
     freshnessLagDays: number | null;
   };
 };
@@ -44,9 +44,9 @@ export class MetricsCollector {
     const retries = this.samples.reduce((sum, sample) => sum + sample.retries, 0);
     const mergeChanged = this.samples.filter((sample) => sample.changed).length;
 
-    const acceptedClaims = this.samples.reduce((sum, sample) => sum + sample.acceptedClaims, 0);
-    const totalReviewedClaims = this.samples.reduce(
-      (sum, sample) => sum + sample.acceptedClaims + sample.rejectedClaims,
+    const recordedNotes = this.samples.reduce((sum, sample) => sum + sample.recordedNotes, 0);
+    const totalNoteAttempts = this.samples.reduce(
+      (sum, sample) => sum + sample.recordedNotes + sample.missedNotes,
       0,
     );
     const freshnessValues = this.samples
@@ -64,7 +64,7 @@ export class MetricsCollector {
       kpi: {
         successRate: runs > 0 ? clamp(succeeded / runs) : 0,
         retryRate: runs > 0 ? retries / runs : 0,
-        mergeAcceptance: totalReviewedClaims > 0 ? clamp(acceptedClaims / totalReviewedClaims) : 0,
+        noteAcceptance: totalNoteAttempts > 0 ? clamp(recordedNotes / totalNoteAttempts) : 0,
         freshnessLagDays:
           freshnessValues.length > 0
             ? freshnessValues.reduce((sum, value) => sum + value, 0) / freshnessValues.length

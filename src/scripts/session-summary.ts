@@ -26,6 +26,116 @@ function buildSummaryPreview(
   return lines.join('\n');
 }
 
+function normalizeSummaryText(value: string | null | undefined): string {
+  if (!value) return '';
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function tokenizeSummary(value: string): Set<string> {
+  const normalized = value
+    .toLowerCase()
+    .replace(/[`"'.,:;!?()[\]{}<>/\\|_-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized) return new Set();
+  return new Set(normalized.split(' ').filter(Boolean));
+}
+
+function summarySimilarity(left: string, right: string): number {
+  if (!left || !right) return 0;
+  if (left === right) return 1;
+
+  const leftTokens = tokenizeSummary(left);
+  const rightTokens = tokenizeSummary(right);
+  if (leftTokens.size === 0 || rightTokens.size === 0) return 0;
+
+  let intersection = 0;
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) intersection += 1;
+  }
+  const union = leftTokens.size + rightTokens.size - intersection;
+  if (union === 0) return 0;
+  return intersection / union;
+}
+
+function buildSummaryListDedupKey(row: {
+  sessionKey: string;
+  status: string;
+  modelProvider: string | null;
+  modelName: string | null;
+  summaryPreview: string | null;
+  keptCount: number | null;
+  droppedCount: number | null;
+  error: string | null;
+}): string {
+  const normalizedPreview = normalizeSummaryText(row.summaryPreview);
+  if (normalizedPreview.length > 0) {
+    return [row.sessionKey, normalizedPreview].join('|');
+  }
+  return [
+    row.sessionKey,
+    row.status,
+    row.modelProvider ?? '',
+    row.modelName ?? '',
+    normalizedPreview,
+    String(row.keptCount ?? 0),
+    String(row.droppedCount ?? 0),
+    row.error ?? '',
+  ].join('|');
+}
+
+function dedupeSummaryList<
+  T extends {
+    sessionKey: string;
+    status: string;
+    modelProvider: string | null;
+    modelName: string | null;
+    summaryPreview: string | null;
+    keptCount: number | null;
+    droppedCount: number | null;
+    error: string | null;
+    createdAt: Date | string;
+  },
+>(rows: T[]): T[] {
+  const deduped = new Map<string, T>();
+  const dedupedBySession = new Map<string, T[]>();
+  for (const row of rows) {
+    const key = buildSummaryListDedupKey(row);
+    const existing = deduped.get(key);
+    if (!existing) {
+      deduped.set(key, row);
+      continue;
+    }
+    const rowTime = new Date(row.createdAt).getTime();
+    const existingTime = new Date(existing.createdAt).getTime();
+    if (rowTime >= existingTime) {
+      deduped.set(key, row);
+    }
+  }
+  const exactDeduped = Array.from(deduped.values()).sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+
+  // Near-duplicate suppression: treat >=95% similar summaries in the same session as same.
+  for (const row of exactDeduped) {
+    const existing = dedupedBySession.get(row.sessionKey) ?? [];
+    const rowPreview = normalizeSummaryText(row.summaryPreview);
+    const duplicated = existing.some((candidate) => {
+      const candidatePreview = normalizeSummaryText(candidate.summaryPreview);
+      if (!rowPreview || !candidatePreview) return false;
+      return summarySimilarity(rowPreview, candidatePreview) >= 0.95;
+    });
+    if (!duplicated) {
+      existing.push(row);
+      dedupedBySession.set(row.sessionKey, existing);
+    }
+  }
+
+  return Array.from(dedupedBySession.values())
+    .flat()
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+
 function getArg(argv: string[], key: string): string | undefined {
   const index = argv.indexOf(key);
   if (index === -1) return undefined;
@@ -114,10 +224,9 @@ async function run(argv: string[]) {
         };
       }),
     );
+    const dedupedRows = dedupeSummaryList(rowsWithSummary);
     console.log(
-      asJson
-        ? JSON.stringify(rowsWithSummary, null, 2)
-        : rowsWithSummary.map((row) => row.id).join('\n'),
+      asJson ? JSON.stringify(dedupedRows, null, 2) : dedupedRows.map((row) => row.id).join('\n'),
     );
     return;
   }

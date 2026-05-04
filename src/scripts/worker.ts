@@ -9,6 +9,11 @@ import { GNOSIS_CONSTANTS } from '../constants.js';
 process.env.GNOSIS_PROCESS_INFO = `Started:${new Date().toISOString()} | PPID:${
   process.ppid
 } | CMD:${process.argv.join(' ')}`;
+import {
+  createPhraseScoutLoopState,
+  resolvePhraseScoutIntervalMs,
+  runPhraseScoutSeedOnce,
+} from '../services/knowflow/cron/phraseScoutLoop.js';
 import { PgKnowledgeRepository } from '../services/knowflow/knowledge/repository.js';
 import { checkLlmHealth } from '../services/knowflow/ops/healthCheck.js';
 import { createRunLogger } from '../services/knowflow/ops/runLog.js';
@@ -35,6 +40,7 @@ async function main() {
   const runLogger = await createRunLogger({ runId: `worker-daemon-${Date.now()}` });
   let healthReportTimer: ReturnType<typeof setInterval> | undefined;
   let queueRecoveryTimer: ReturnType<typeof setInterval> | undefined;
+  let phraseScoutSeedTimer: ReturnType<typeof setInterval> | undefined;
   let shutdownRequested = false;
   let shutdownReason = 'normal';
 
@@ -76,6 +82,12 @@ async function main() {
     30_000,
     envNumber(process.env.KNOWFLOW_QUEUE_RECOVERY_INTERVAL_MS, 120_000),
   );
+  const phraseScoutSeedIntervalMs = resolvePhraseScoutIntervalMs({
+    backgroundIntervalMs: config.backgroundWorker.intervalMs,
+    llmTimeoutMs: config.knowflow.llm.timeoutMs,
+    envValue: process.env.KNOWFLOW_PHRASE_SCOUT_INTERVAL_MS,
+    parseNumber: envNumber,
+  });
   const runtimeMonitor = new WorkerRuntimeMonitor({
     windowMs: runtimeMetricsWindowMs,
     reportIntervalMs: runtimeMetricsReportIntervalMs,
@@ -97,13 +109,11 @@ async function main() {
     logger,
     llmConfig: config.knowflow.llm,
     llmLogger,
+    getExistingKnowledge: (topic) => knowledgeRepository.getByTopic(topic),
   });
 
   const handler = createKnowFlowTaskHandler({
-    repository: knowledgeRepository,
-    queueRepository,
     evidenceProvider,
-    budget: config.knowflow.budget,
     logger,
   });
 
@@ -228,6 +238,21 @@ async function main() {
   }, queueRecoveryIntervalMs);
   queueRecoveryTimer.unref?.();
 
+  const phraseScoutLoopState = createPhraseScoutLoopState();
+  const runPhraseScoutSeed = (trigger: 'startup' | 'interval') =>
+    runPhraseScoutSeedOnce({
+      trigger,
+      state: phraseScoutLoopState,
+      queueRepository,
+      logger,
+    });
+
+  void runPhraseScoutSeed('startup');
+  phraseScoutSeedTimer = setInterval(() => {
+    void runPhraseScoutSeed('interval');
+  }, phraseScoutSeedIntervalMs);
+  phraseScoutSeedTimer.unref?.();
+
   let fatalError: unknown;
   try {
     // ワーカーは並列に走らせ、空きスロットがあれば pending を即時処理する。
@@ -281,6 +306,9 @@ async function main() {
     }
     if (queueRecoveryTimer) {
       clearInterval(queueRecoveryTimer);
+    }
+    if (phraseScoutSeedTimer) {
+      clearInterval(phraseScoutSeedTimer);
     }
     await notifyTaskEnd().catch(() => {});
     console.error(

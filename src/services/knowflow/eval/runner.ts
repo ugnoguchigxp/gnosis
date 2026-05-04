@@ -80,7 +80,6 @@ export type EvalCaseResult = {
   id: string;
   task: LlmTaskName;
   ok: boolean;
-  degraded: boolean;
   backend?: 'api' | 'cli';
   warnings: string[];
   latencyMs: number;
@@ -93,9 +92,7 @@ export type EvalRunResult = {
   caseCount: number;
   passedCount: number;
   failedCount: number;
-  degradedCount: number;
-  degradedRate: number;
-  schemaValidRate: number;
+  passRate: number;
   warningCaseRate: number;
   latency: {
     minMs: number;
@@ -123,20 +120,10 @@ export const runEvalSuite = async (
     llmConfig?: Partial<LlmClientConfig>;
     requestPrefix?: string;
     llmLogger?: (event: LlmLogEvent) => void;
-    maxDegradedRate?: number;
     mode?: EvalRunMode;
   },
   deps: RunEvalSuiteDeps = {},
 ): Promise<EvalRunResult> => {
-  if (
-    options.maxDegradedRate !== undefined &&
-    (!Number.isFinite(options.maxDegradedRate) ||
-      options.maxDegradedRate < 0 ||
-      options.maxDegradedRate > 100)
-  ) {
-    throw new Error('--max-degraded-rate must be between 0 and 100');
-  }
-
   const suitePath = resolve(process.cwd(), 'eval', 'suites', `${options.suiteName}.json`);
   const raw = await (deps.readSuiteFile
     ? deps.readSuiteFile(options.suiteName)
@@ -154,7 +141,6 @@ export const runEvalSuite = async (
         id: item.id,
         task: item.task,
         ok: true,
-        degraded: false,
         backend: 'cli',
         warnings: [],
         latencyMs,
@@ -180,7 +166,6 @@ export const runEvalSuite = async (
         id: item.id,
         task: item.task,
         ok: true,
-        degraded: result.degraded,
         backend: result.backend,
         warnings: result.warnings,
         latencyMs,
@@ -191,7 +176,6 @@ export const runEvalSuite = async (
         id: item.id,
         task: item.task,
         ok: false,
-        degraded: false,
         warnings: [],
         latencyMs,
         error: error instanceof Error ? error.message : String(error),
@@ -202,7 +186,6 @@ export const runEvalSuite = async (
   const caseCount = cases.length;
   const passedCount = cases.filter((item) => item.ok).length;
   const failedCount = caseCount - passedCount;
-  const degradedCount = cases.filter((item) => item.ok && item.degraded).length;
   const warningCaseCount = cases.filter((item) => item.warnings.length > 0).length;
   const latencyValues = cases.map((item) => item.latencyMs);
   const sumLatency = latencyValues.reduce((sum, value) => sum + value, 0);
@@ -213,9 +196,7 @@ export const runEvalSuite = async (
     caseCount,
     passedCount,
     failedCount,
-    degradedCount,
-    degradedRate: calcPercent(degradedCount, caseCount),
-    schemaValidRate: calcPercent(passedCount, caseCount),
+    passRate: calcPercent(passedCount, caseCount),
     warningCaseRate: calcPercent(warningCaseCount, caseCount),
     latency: {
       minMs: latencyValues.length > 0 ? Math.min(...latencyValues) : 0,
@@ -229,12 +210,6 @@ export const runEvalSuite = async (
     },
     cases,
   };
-
-  if (options.maxDegradedRate !== undefined && result.degradedRate > options.maxDegradedRate) {
-    throw new Error(
-      `Eval degraded rate ${result.degradedRate}% exceeded threshold ${options.maxDegradedRate}% (${result.degradedCount}/${result.caseCount})`,
-    );
-  }
 
   return result;
 };

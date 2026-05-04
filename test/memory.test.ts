@@ -55,7 +55,6 @@ mock.module('../src/config.js', () => ({
         maxQueriesPerTask: 3,
         cronRunWindowMs: 3_600_000,
       },
-      budget: { userBudget: 12, cronBudget: 6, cronRunBudget: 30 },
       healthCheck: { timeoutMs: 5000 },
     },
     guidance: {

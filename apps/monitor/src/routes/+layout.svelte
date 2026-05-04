@@ -20,7 +20,6 @@ const { children } = $props();
 		<a href="/sessions" class="nav-link" class:active={$page.url.pathname === '/sessions'}>Sessions</a>
 		<a href="/failure-firewall" class="nav-link" class:active={$page.url.pathname === '/failure-firewall'}>Firewall</a>
 		<a href="/reviews" class="nav-link" class:active={$page.url.pathname === '/reviews'}>Reviews</a>
-		<a href="/knowflow-evals" class="nav-link" class:active={$page.url.pathname === '/knowflow-evals'}>Evals</a>
 		<a href="/ops" class="nav-link" class:active={$page.url.pathname.startsWith('/ops')}>Ops</a>
 	</nav>
 	<div class="app-content">

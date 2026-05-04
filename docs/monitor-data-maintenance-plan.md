@@ -41,7 +41,6 @@ Tauri Monitor で「運用上重要だが現在は保守・監視しづらいデ
 - `knowledge_claims`
 - `knowledge_relations`
 - `knowledge_sources`
-- `knowflow_keyword_evaluations`
 - `sync_state`
 - `communities`
 
@@ -166,23 +165,21 @@ Tauri Monitor で「運用上重要だが現在は保守・監視しづらいデ
 1. pending 長期滞留が抽出可能。
 2. case -> outcome -> 候補化が UI で追える。
 
-### Phase 6: KnowFlow Corpus と Evaluation
+### Phase 6: KnowFlow Corpus
 
-目的: 検索面で使われる corpus/eval の鮮度・偏りを保守可能にする。
+目的: 検索面で使われる corpus の鮮度・偏りを保守可能にする。
 
 対象:
 - `src/scripts/monitor-knowflow-corpus.ts`（新規）
-- `src/scripts/monitor-knowflow-evals.ts`（新規）
 - `apps/monitor/src/routes/knowflow-corpus/+page.svelte`（新規）
 
 実装:
 1. topic/claim/relation/source の topic 集約表示
 2. freshness/duplicate/dead source チェック
-3. eval decision/threshold/modelAlias の偏り可視化
 
 完了条件:
 1. `search_knowledge` の根拠データを Monitor で追跡可能。
-2. source freshness 劣化と eval 偏りを機械的に検知可能。
+2. source freshness 劣化を機械的に検知可能。
 
 ### Phase 7: Sync State と Communities
 

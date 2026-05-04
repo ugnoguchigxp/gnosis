@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   loadKnowflowProfile,
-  mergeBudgetConfig,
   mergeLlmConfig,
   resolveProfilePath,
 } from '../../src/services/knowflow/utils/profile';
@@ -23,8 +22,6 @@ const baseLlmConfig = {
   cliPromptMode: 'arg' as const,
   cliPromptPlaceholder: '{{prompt}}',
 };
-
-const baseBudgetConfig = { userBudget: 10, cronBudget: 5, cronRunBudget: 20 };
 
 describe('knowflow profile loader', () => {
   it('resolves named profile to profiles directory', () => {
@@ -62,9 +59,6 @@ localLlmPath = "/tmp/localLlm"
 [knowflow.llm]
 model = "test-model"
 maxRetries = 1
-
-[knowflow.budget]
-userBudget = 9
 `,
       'utf-8',
     );
@@ -73,7 +67,6 @@ userBudget = 9
     expect(loaded).not.toBeNull();
     expect(loaded?.profile.localLlmPath).toBe('/tmp/localLlm');
     expect(loaded?.profile.knowflow?.llm?.model).toBe('test-model');
-    expect(loaded?.profile.knowflow?.budget?.userBudget).toBe(9);
   });
 
   it('parses boolean and number values in TOML', async () => {
@@ -127,24 +120,5 @@ describe('mergeLlmConfig', () => {
   it('returns original base when override is undefined', () => {
     const result = mergeLlmConfig(baseLlmConfig, undefined);
     expect(result).toEqual(baseLlmConfig);
-  });
-});
-
-describe('mergeBudgetConfig', () => {
-  it('returns base config when no override', () => {
-    const result = mergeBudgetConfig(baseBudgetConfig);
-    expect(result).toEqual(baseBudgetConfig);
-  });
-
-  it('merges override fields into base', () => {
-    const result = mergeBudgetConfig(baseBudgetConfig, { userBudget: 20 });
-    expect(result.userBudget).toBe(20);
-    expect(result.cronBudget).toBe(baseBudgetConfig.cronBudget);
-    expect(result.cronRunBudget).toBe(baseBudgetConfig.cronRunBudget);
-  });
-
-  it('returns original base when override is undefined', () => {
-    const result = mergeBudgetConfig(baseBudgetConfig, undefined);
-    expect(result).toEqual(baseBudgetConfig);
   });
 });

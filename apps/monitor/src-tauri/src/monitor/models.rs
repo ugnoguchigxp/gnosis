@@ -41,7 +41,7 @@ impl Default for WorkerSnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct EvalSnapshot {
-    pub degraded_rate: f64,
+    pub pass_rate: f64,
     pub passed: u64,
     pub failed: u64,
     pub updated_at_ts: Option<i64>,
@@ -50,7 +50,7 @@ pub struct EvalSnapshot {
 impl Default for EvalSnapshot {
     fn default() -> Self {
         Self {
-            degraded_rate: 0.0,
+            pass_rate: 0.0,
             passed: 0,
             failed: 0,
             updated_at_ts: None,
@@ -86,7 +86,6 @@ pub struct KnowFlowSnapshot {
     pub last_worker_summary: Option<String>,
     pub last_seed_ts: Option<i64>,
     pub last_seed_summary: Option<String>,
-    pub last_frontier_seed_ts: Option<i64>,
     pub last_keyword_seed_ts: Option<i64>,
     pub last_failure_ts: Option<i64>,
 }
@@ -99,7 +98,6 @@ impl Default for KnowFlowSnapshot {
             last_worker_summary: None,
             last_seed_ts: None,
             last_seed_summary: None,
-            last_frontier_seed_ts: None,
             last_keyword_seed_ts: None,
             last_failure_ts: None,
         }

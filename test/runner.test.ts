@@ -13,18 +13,10 @@ const mockRunWorkerOnce = mock(async (): Promise<unknown> => ({ processed: false
 const mockRecordBackgroundTaskRun = mock(async () => {});
 const mockRunKeywordSeederOnce = mock(async () => ({
   runId: '00000000-0000-4000-8000-000000000000',
-  aliasUsed: 'gemma4',
-  threshold: 6.5,
   sources: 0,
-  evaluated: 0,
+  phrases: 0,
   enqueued: 0,
   skipped: 0,
-  deduped: 0,
-  sourceFailures: 0,
-}));
-const mockEnqueueFrontierCandidates = mock(async () => ({
-  candidates: [{ entityId: 'rule/test', name: 'Test rule', type: 'rule', score: 0.9 }],
-  enqueued: 1,
   deduped: 0,
 }));
 
@@ -55,20 +47,12 @@ mock.module('../src/config.js', () => ({
       maxConcurrency: 1,
     },
     knowflow: {
-      budget: { userBudget: 12, cronBudget: 6, cronRunBudget: 30 },
       worker: {
         maxQueriesPerTask: 3,
         cronRunWindowMs: 3600000,
       },
       llm: {
         timeoutMs: 5000,
-      },
-      frontier: {
-        enabled: true,
-        llmEnabled: true,
-        maxTopics: 5,
-        scanLimit: 300,
-        maxPerCommunity: 2,
       },
     },
     localLlmPath: '/tmp/local-llm',
@@ -99,7 +83,6 @@ describe('background runner', () => {
       database: mockDb,
       runWorkerOnce: mockRunWorkerOnce,
       runKeywordSeederOnce: mockRunKeywordSeederOnce,
-      enqueueFrontierCandidates: mockEnqueueFrontierCandidates,
       recordBackgroundTaskRun: mockRecordBackgroundTaskRun,
     };
 
@@ -108,7 +91,6 @@ describe('background runner', () => {
     mockRunWorkerOnce.mockClear();
     mockRecordBackgroundTaskRun.mockClear();
     mockRunKeywordSeederOnce.mockClear();
-    mockEnqueueFrontierCandidates.mockClear();
   });
 
   afterAll(() => {
@@ -137,21 +119,6 @@ describe('background runner', () => {
       const outcome = await runTask('knowflow_keyword_seed', {}, testDeps);
       expect(mockRunKeywordSeederOnce).toHaveBeenCalled();
       expect(outcome.ok).toBe(true);
-    });
-
-    it('executes knowflow_frontier_seed task', async () => {
-      const outcome = await runTask('knowflow_frontier_seed', {}, testDeps);
-      expect(mockEnqueueFrontierCandidates).toHaveBeenCalledWith(
-        expect.objectContaining({
-          limit: 5,
-          scanLimit: 300,
-          maxPerCommunity: 2,
-          useLlm: true,
-          requestedBy: 'background-frontier-seed',
-        }),
-      );
-      expect(outcome.ok).toBe(true);
-      expect(outcome.processed).toBe(true);
     });
 
     it('throws error for unknown task', async () => {

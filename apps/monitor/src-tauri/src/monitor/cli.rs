@@ -357,24 +357,6 @@ pub async fn fetch_knowflow_corpus(project_root: &Path) -> anyhow::Result<serde_
     serde_json::from_slice(&output.stdout).context("failed to parse knowflow corpus payload")
 }
 
-pub async fn fetch_knowflow_evals(project_root: &Path) -> anyhow::Result<serde_json::Value> {
-    let output = Command::new("bun")
-        .arg("run")
-        .arg("src/scripts/monitor-knowflow-evals.ts")
-        .arg("--json")
-        .current_dir(project_root)
-        .output()
-        .await
-        .context("failed to execute monitor-knowflow-evals command")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("monitor-knowflow-evals command failed: {stderr}");
-    }
-
-    serde_json::from_slice(&output.stdout).context("failed to parse knowflow eval payload")
-}
-
 pub async fn fetch_communities(project_root: &Path) -> anyhow::Result<serde_json::Value> {
     let output = Command::new("bun")
         .arg("run")

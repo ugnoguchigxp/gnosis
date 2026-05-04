@@ -176,14 +176,6 @@ const buildInventory = async (): Promise<InventoryPayload> => {
       maintenanceState: 'active',
     },
     {
-      category: 'knowflow_evals',
-      table: 'knowflow_keyword_evaluations',
-      rowCount: await countRows('knowflow_keyword_evaluations'),
-      latestUpdatedAt: await latestTimestamp('knowflow_keyword_evaluations', 'created_at'),
-      statusCounts: {},
-      maintenanceState: 'active',
-    },
-    {
       category: 'communities',
       table: 'communities',
       rowCount: await countRows('communities'),

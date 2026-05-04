@@ -1,11 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  BudgetConfigSchema,
-  LlmClientConfigSchema,
-  WorkerConfigSchema,
-  envBoolean,
-  envNumber,
-} from '../src/config.ts';
+import { LlmClientConfigSchema, WorkerConfigSchema, envBoolean, envNumber } from '../src/config.ts';
 
 describe('config helpers', () => {
   describe('envBoolean', () => {
@@ -69,19 +63,6 @@ describe('config schemas', () => {
 
     test('rejects invalid URL', () => {
       expect(() => LlmClientConfigSchema.parse({ apiBaseUrl: 'invalid' })).toThrow();
-    });
-  });
-
-  describe('BudgetConfigSchema', () => {
-    test('validates budget', () => {
-      const valid = { userBudget: 10, cronBudget: 5, cronRunBudget: 100 };
-      expect(BudgetConfigSchema.parse(valid)).toEqual(valid);
-    });
-
-    test('rejects negative numbers', () => {
-      expect(() =>
-        BudgetConfigSchema.parse({ userBudget: -1, cronBudget: 1, cronRunBudget: 1 }),
-      ).toThrow();
     });
   });
 

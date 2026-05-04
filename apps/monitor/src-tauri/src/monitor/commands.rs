@@ -226,15 +226,6 @@ pub async fn monitor_knowflow_corpus(
 }
 
 #[tauri::command]
-pub async fn monitor_knowflow_evals(
-    state: State<'_, MonitorRuntime>,
-) -> Result<serde_json::Value, String> {
-    cli::fetch_knowflow_evals(&state.project_root)
-        .await
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
 pub async fn monitor_communities(
     state: State<'_, MonitorRuntime>,
 ) -> Result<serde_json::Value, String> {

@@ -14,7 +14,7 @@ describe('metrics collector', () => {
 
     expect(snapshot.kpi.successRate).toBe(0);
     expect(snapshot.kpi.retryRate).toBe(0);
-    expect(snapshot.kpi.mergeAcceptance).toBe(0);
+    expect(snapshot.kpi.noteAcceptance).toBe(0);
     expect(snapshot.kpi.freshnessLagDays).toBeNull();
   });
 
@@ -27,8 +27,8 @@ describe('metrics collector', () => {
       ok: true,
       changed: true,
       retries: 0,
-      acceptedClaims: 2,
-      rejectedClaims: 1,
+      recordedNotes: 2,
+      missedNotes: 1,
       conflicts: 0,
       latestSourceAgeDays: 2,
     });
@@ -38,8 +38,8 @@ describe('metrics collector', () => {
       ok: false,
       changed: false,
       retries: 1,
-      acceptedClaims: 0,
-      rejectedClaims: 2,
+      recordedNotes: 0,
+      missedNotes: 2,
       conflicts: 1,
     });
     metrics.record({
@@ -47,8 +47,8 @@ describe('metrics collector', () => {
       source: 'cron',
       ok: true,
       retries: 2,
-      acceptedClaims: 1,
-      rejectedClaims: 0,
+      recordedNotes: 1,
+      missedNotes: 0,
       conflicts: 0,
       latestSourceAgeDays: 6,
     });
@@ -62,7 +62,7 @@ describe('metrics collector', () => {
 
     expect(snapshot.kpi.successRate).toBeCloseTo(2 / 3, 6);
     expect(snapshot.kpi.retryRate).toBe(1);
-    expect(snapshot.kpi.mergeAcceptance).toBe(0.5);
+    expect(snapshot.kpi.noteAcceptance).toBe(0.5);
     expect(snapshot.kpi.freshnessLagDays).toBe(4);
   });
 });

@@ -26,12 +26,11 @@ async function main() {
     logger,
     llmConfig: config.knowflow.llm,
     llmLogger,
+    getExistingKnowledge: (topic) => knowledgeRepository.getByTopic(topic),
   });
 
   const handler = createKnowFlowTaskHandler({
-    repository: knowledgeRepository,
     evidenceProvider,
-    budget: config.knowflow.budget,
     logger,
   });
 

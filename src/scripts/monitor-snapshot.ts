@@ -23,7 +23,7 @@ type WorkerSnapshot = {
 };
 
 type EvalSnapshot = {
-  degradedRate: number;
+  passRate: number;
   passed: number;
   failed: number;
   updatedAtTs: number | null;
@@ -41,7 +41,6 @@ type KnowFlowSnapshot = {
   lastWorkerSummary: string | null;
   lastSeedTs: number | null;
   lastSeedSummary: string | null;
-  lastFrontierSeedTs: number | null;
   lastKeywordSeedTs: number | null;
   lastFailureTs: number | null;
   status: 'idle' | 'healthy' | 'degraded' | 'unknown';
@@ -281,7 +280,7 @@ export const collectWorkerEvalAndKnowFlow = async (
   };
 
   const evalResult: EvalSnapshot = {
-    degradedRate: 0,
+    passRate: 0,
     passed: 0,
     failed: 0,
     updatedAtTs: null,
@@ -292,7 +291,6 @@ export const collectWorkerEvalAndKnowFlow = async (
     lastWorkerSummary: null,
     lastSeedTs: null,
     lastSeedSummary: null,
-    lastFrontierSeedTs: null,
     lastKeywordSeedTs: null,
     lastFailureTs: null,
     status: 'unknown',
@@ -366,21 +364,9 @@ export const collectWorkerEvalAndKnowFlow = async (
           knowflow.lastWorkerSummary = toStringValue(record.data.summary);
         }
 
-        if (
-          (taskType === 'knowflow_frontier_seed' || taskType === 'knowflow_keyword_seed') &&
-          knowflow.lastSeedTs === null &&
-          ts !== null
-        ) {
+        if (taskType === 'knowflow_keyword_seed' && knowflow.lastSeedTs === null && ts !== null) {
           knowflow.lastSeedTs = ts;
           knowflow.lastSeedSummary = toStringValue(record.data.summary);
-        }
-
-        if (
-          taskType === 'knowflow_frontier_seed' &&
-          knowflow.lastFrontierSeedTs === null &&
-          ts !== null
-        ) {
-          knowflow.lastFrontierSeedTs = ts;
         }
 
         if (
@@ -392,35 +378,55 @@ export const collectWorkerEvalAndKnowFlow = async (
         }
       }
 
-      if (record.event === 'cli.result' && record.data?.command === 'seed-frontier') {
+      if (record.event === 'knowflow.phrase_scout.completed' && record.data) {
         if (knowflow.lastSeedTs === null && ts !== null) {
           knowflow.lastSeedTs = ts;
-          knowflow.lastSeedSummary = 'manual seed-frontier run';
+          knowflow.lastSeedSummary = `phrase scout: sources=${
+            toNumber(record.data.sources) ?? 0
+          } phrases=${toNumber(record.data.phrases) ?? 0} enqueued=${
+            toNumber(record.data.enqueued) ?? 0
+          }`;
+        }
+        if (knowflow.lastKeywordSeedTs === null && ts !== null) {
+          knowflow.lastKeywordSeedTs = ts;
+        }
+      }
+
+      if (record.event === 'cli.result' && record.data?.command === 'seed-phrases') {
+        if (knowflow.lastSeedTs === null && ts !== null) {
+          knowflow.lastSeedTs = ts;
+          knowflow.lastSeedSummary = 'manual seed-phrases run';
         }
       }
 
       if (!evalFound && record.event === 'cli.result' && record.data) {
         if (record.data.command === 'eval-run' && isRecord(record.data.result)) {
           const result = record.data.result;
-          const degradedRate = toNumber(result.degradedRate);
+          const passRate = toNumber(result.passRate);
           const passedCount = toNumber(result.passedCount);
           const failedCount = toNumber(result.failedCount);
-          evalResult.degradedRate = degradedRate ?? 0;
           evalResult.passed = passedCount ?? 0;
           evalResult.failed = failedCount ?? 0;
+          const total = evalResult.passed + evalResult.failed;
+          evalResult.passRate =
+            passRate ?? (total > 0 ? Number(((evalResult.passed / total) * 100).toFixed(2)) : 0);
           evalResult.updatedAtTs = ts;
           evalFound = true;
         }
       }
 
       const hasWorkerSnapshot = worker.lastSuccessTs !== null && worker.lastFailureTs !== null;
-      if (hasWorkerSnapshot && consecutiveCounterDone && evalFound) {
+      const hasKnowFlowSeedSnapshot =
+        knowflow.lastSeedTs !== null || knowflow.lastKeywordSeedTs !== null;
+      if (hasWorkerSnapshot && consecutiveCounterDone && evalFound && hasKnowFlowSeedSnapshot) {
         break;
       }
     }
 
     const hasWorkerSnapshot = worker.lastSuccessTs !== null && worker.lastFailureTs !== null;
-    if (hasWorkerSnapshot && consecutiveCounterDone && evalFound) {
+    const hasKnowFlowSeedSnapshot =
+      knowflow.lastSeedTs !== null || knowflow.lastKeywordSeedTs !== null;
+    if (hasWorkerSnapshot && consecutiveCounterDone && evalFound && hasKnowFlowSeedSnapshot) {
       break;
     }
   }

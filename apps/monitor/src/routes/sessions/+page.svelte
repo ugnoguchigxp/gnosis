@@ -228,7 +228,7 @@ async function runDistillation(promote: boolean): Promise<void> {
       'monitor_distill_session_knowledge',
       {
         sessionId: selectedDetail.summary.id,
-        force: true,
+        force: false,
         promote,
       },
     );
@@ -299,7 +299,7 @@ async function rejectCandidate(candidateId: string): Promise<void> {
       : undefined;
   const typed = promptFn?.('却下理由を入力してください', 'monitor manual reject');
   if (promptFn) {
-    if (typed === null) return;
+    if (typed == null) return;
     if (typed.trim().length === 0) return;
   }
   const reason = typed?.trim() || 'monitor manual reject (prompt_unavailable)';

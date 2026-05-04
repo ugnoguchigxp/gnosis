@@ -6,8 +6,12 @@ const validSuiteJson = JSON.stringify({
   name: 'test-suite',
   description: 'test desc',
   cases: [
-    { id: 'case-1', task: 'query_generation', context: { topic: 'TypeScript' } },
-    { id: 'case-2', task: 'query_generation', context: { topic: 'Bun' } },
+    { id: 'case-1', task: 'phrase_scout', context: { context: 'TypeScript typecheck logs' } },
+    {
+      id: 'case-2',
+      task: 'research_note',
+      context: { topic: 'Bun', source_texts: 'Bun runtime notes' },
+    },
   ],
 });
 
@@ -25,18 +29,8 @@ describe('eval runner', () => {
     expect(result.caseCount).toBe(result.passedCount + result.failedCount);
     expect(result.cases).toHaveLength(result.caseCount);
     expect(result.failedCount).toBe(0);
-    expect(result.degradedCount).toBe(0);
+    expect(result.passRate).toBe(100);
     expect(result.cases.every((c) => c.backend === 'cli')).toBe(true);
-  });
-
-  it('throws when maxDegradedRate is out of range', async () => {
-    await expect(
-      runEvalSuite({ suiteName: 'local', mode: 'mock', maxDegradedRate: 150 }),
-    ).rejects.toThrow('--max-degraded-rate must be between 0 and 100');
-
-    await expect(
-      runEvalSuite({ suiteName: 'local', mode: 'mock', maxDegradedRate: -1 }),
-    ).rejects.toThrow('--max-degraded-rate must be between 0 and 100');
   });
 
   it('throws when suite root is not an object', async () => {
@@ -85,7 +79,7 @@ describe('eval runner', () => {
           readSuiteFile: async () =>
             JSON.stringify({
               name: 'x',
-              cases: [{ id: '', task: 'query_generation', context: {} }],
+              cases: [{ id: '', task: 'phrase_scout', context: {} }],
             }),
         },
       ),
@@ -115,7 +109,7 @@ describe('eval runner', () => {
           readSuiteFile: async () =>
             JSON.stringify({
               name: 'x',
-              cases: [{ id: 'c1', task: 'query_generation', context: 'bad' }],
+              cases: [{ id: 'c1', task: 'phrase_scout', context: 'bad' }],
             }),
         },
       ),
@@ -139,8 +133,6 @@ describe('eval runner', () => {
 
   it('runs live mode with injected runLlmTask', async () => {
     const mockRunLlmTask = mock(async () => ({
-      ok: true,
-      degraded: false,
       backend: 'api' as const,
       warnings: [],
       text: 'result',
@@ -159,7 +151,7 @@ describe('eval runner', () => {
     expect(result.caseCount).toBe(2);
     expect(result.passedCount).toBe(2);
     expect(result.failedCount).toBe(0);
-    expect(result.degradedCount).toBe(0);
+    expect(result.passRate).toBe(100);
     expect(result.backends.api).toBe(2);
     expect(result.backends.cli).toBe(0);
     expect(mockRunLlmTask).toHaveBeenCalledTimes(2);
@@ -184,30 +176,8 @@ describe('eval runner', () => {
     expect(result.cases[0]?.error).toBe('LLM unavailable');
   });
 
-  it('throws when maxDegradedRate is exceeded', async () => {
-    const mockRunLlmTask = mock(async () => ({
-      ok: true,
-      degraded: true,
-      backend: 'cli' as const,
-      warnings: [],
-      text: 'result',
-    }));
-
-    await expect(
-      runEvalSuite(
-        { suiteName: 'test', mode: 'live', maxDegradedRate: 0 },
-        {
-          readSuiteFile: async () => validSuiteJson,
-          runLlmTask: mockRunLlmTask as unknown as NonNullable<RunEvalSuiteDeps['runLlmTask']>,
-        },
-      ),
-    ).rejects.toThrow('exceeded threshold');
-  });
-
   it('includes latency stats for zero-case suite', async () => {
     const mockRunLlmTask = mock(async () => ({
-      ok: true,
-      degraded: false,
       backend: 'cli' as const,
       warnings: [],
       text: '',
@@ -225,12 +195,11 @@ describe('eval runner', () => {
     expect(result.latency.avgMs).toBe(0);
     expect(result.latency.p95Ms).toBe(0);
     expect(result.latency.maxMs).toBe(0);
+    expect(result.passRate).toBe(0);
   });
 
   it('includes warning case rate when task has warnings', async () => {
     const mockRunLlmTask = mock(async () => ({
-      ok: true,
-      degraded: false,
       backend: 'cli' as const,
       warnings: ['warn1'],
       text: 'result',

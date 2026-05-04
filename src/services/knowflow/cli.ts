@@ -2,15 +2,12 @@ import { resolve } from 'node:path';
 import { runLlmTask } from '../../adapters/llm.js';
 import type { LlmLogEvent } from '../../adapters/llm.js';
 import { createLocalLlmRetriever } from '../../adapters/retriever/mcpRetriever.js';
-import { type BudgetConfig, type LlmClientConfig, config } from '../../config.js';
+import { type LlmClientConfig, config } from '../../config.js';
 import { db as defaultDb } from '../../db/index.js';
 import { searchKnowledgeClaims } from '../knowledge.js';
+import { runKeywordSeederOnce } from './cron/keywordSeeder';
 import { type TaskMode, type TaskSource, createTask } from './domain/task';
 import { runEvalSuite } from './eval/runner';
-import {
-  enqueueFrontierCandidates,
-  selectFrontierCandidatesWithMetadata,
-} from './frontier/selector';
 import { PgKnowledgeRepository } from './knowledge/repository';
 import { KnowledgeUpsertInputSchema } from './knowledge/types';
 import type { StructuredLogger } from './ops/logger';
@@ -19,7 +16,7 @@ import { PgJsonbQueueRepository } from './queue/pgJsonbRepository';
 import { LlmTaskNameSchema } from './schemas/llm';
 import { parseArgMap, readBooleanFlag, readNumberFlag, readStringFlag } from './utils/args';
 import { renderOutput, resolveOutputFormat } from './utils/output';
-import { loadKnowflowProfile, mergeBudgetConfig, mergeLlmConfig } from './utils/profile';
+import { loadKnowflowProfile, mergeLlmConfig } from './utils/profile';
 import {
   type EvidenceProvider,
   createKnowFlowTaskHandler,
@@ -31,12 +28,12 @@ const usage = `Usage:
   bun src/services/knowflow/cli.ts enqueue --topic <text> [--mode directed|expand|explore] [--source user|cron] [--priority <n>] [--requested-by <id>] [--dry-run]
   bun src/services/knowflow/cli.ts run-once [--worker-id <id>] [--max-attempts <n>] [--fail] [--local-llm-path <path>] [--strict-complete]
   bun src/services/knowflow/cli.ts run-worker [--worker-id <id>] [--interval-ms <n>] [--max-iterations <n>] [--max-attempts <n>] [--fail] [--local-llm-path <path>]
-  bun src/services/knowflow/cli.ts llm-task --task hypothesis|query_generation|gap_detection|gap_planner|summarize|extract_evidence --context-json <json>
+  bun src/services/knowflow/cli.ts llm-task --task phrase_scout|research_note --context-json <json>
   bun src/services/knowflow/cli.ts search-knowledge --query <text> [--limit <n>]
   bun src/services/knowflow/cli.ts get-knowledge --topic <text>
   bun src/services/knowflow/cli.ts merge-knowledge --input <json> [--dry-run]
-  bun src/services/knowflow/cli.ts seed-frontier [--limit <n>] [--max-per-community <n>] [--dry-run] [--use-llm|--no-llm]
-  bun src/services/knowflow/cli.ts eval-run [--suite local] [--max-degraded-rate <0-100>] [--mock]
+  bun src/services/knowflow/cli.ts seed-phrases [--limit <n>]
+  bun src/services/knowflow/cli.ts eval-run [--suite local] [--mock]
 
 Global options:
   --json | --table
@@ -59,7 +56,6 @@ const parseContextJson = (raw: string | undefined): Record<string, unknown> => {
 const createHandler = (options: {
   simulateFailure: boolean;
   localLlmPath?: string;
-  budgetOverride?: Partial<BudgetConfig>;
   llmConfig?: Partial<LlmClientConfig>;
   logger?: StructuredLogger;
   llmLogger?: (event: LlmLogEvent) => void;
@@ -74,22 +70,29 @@ const createHandler = (options: {
   const repository = new PgKnowledgeRepository({}, defaultDb);
   const queueRepository = new PgJsonbQueueRepository(defaultDb);
   let evidenceProvider: EvidenceProvider | undefined;
+  let retriever: ReturnType<typeof createLocalLlmRetriever> | undefined;
   if (options.localLlmPath) {
-    const retriever = createLocalLlmRetriever(resolve(options.localLlmPath));
+    retriever = createLocalLlmRetriever(resolve(options.localLlmPath));
     evidenceProvider = createMcpEvidenceProvider(retriever, {
       logger: options.logger,
       llmConfig: options.llmConfig,
       llmLogger: options.llmLogger,
+      getExistingKnowledge: (topic) => repository.getByTopic(topic),
     });
   }
 
-  return createKnowFlowTaskHandler({
-    repository,
-    queueRepository,
+  const handler = createKnowFlowTaskHandler({
     evidenceProvider,
-    budget: options.budgetOverride,
     logger: options.logger,
   });
+
+  return async (task, signal) => {
+    try {
+      return await handler(task, signal);
+    } finally {
+      await retriever?.disconnect();
+    }
+  };
 };
 
 const parseMode = (raw?: string): TaskMode => {
@@ -104,21 +107,6 @@ const parseSource = (raw?: string): TaskSource => {
     return raw;
   }
   return 'user';
-};
-
-export const resolveFrontierUseLlm = (
-  args: Record<string, string | boolean>,
-  dryRun: boolean,
-  defaultUseLlm: boolean,
-): boolean => {
-  const useLlmFlag = readBooleanFlag(args, 'use-llm');
-  const noLlmFlag = readBooleanFlag(args, 'no-llm');
-  if (useLlmFlag && noLlmFlag) {
-    throw new Error('--use-llm and --no-llm cannot be used together');
-  }
-  if (useLlmFlag) return true;
-  if (noLlmFlag) return false;
-  return dryRun ? false : defaultUseLlm;
 };
 
 const run = async () => {
@@ -154,10 +142,6 @@ const run = async () => {
       profileInfo?.profile.localLlmPath ??
       config.localLlmPath;
     const llmConfig = mergeLlmConfig(config.knowflow.llm, profileInfo?.profile.knowflow?.llm);
-    const budgetConfig = mergeBudgetConfig(
-      config.knowflow.budget,
-      profileInfo?.profile.knowflow?.budget,
-    );
 
     const logger = runLogger.createStructuredLogger({ verbose });
     const llmLogger = runLogger.createLlmLogger({ verbose });
@@ -249,7 +233,6 @@ const run = async () => {
       const handler = createHandler({
         simulateFailure: readBooleanFlag(args, 'fail'),
         localLlmPath,
-        budgetOverride: budgetConfig,
         llmConfig,
         logger,
         llmLogger,
@@ -294,7 +277,6 @@ const run = async () => {
       const handler = createHandler({
         simulateFailure: readBooleanFlag(args, 'fail'),
         localLlmPath,
-        budgetOverride: budgetConfig,
         llmConfig,
         logger,
         llmLogger,
@@ -325,7 +307,11 @@ const run = async () => {
         throw new Error('--task is required for llm-task');
       }
 
-      const task = LlmTaskNameSchema.parse(taskRaw);
+      const parsedTask = LlmTaskNameSchema.safeParse(taskRaw.trim());
+      if (!parsedTask.success) {
+        throw new Error('--task must be phrase_scout or research_note');
+      }
+      const task = parsedTask.data;
       const context = parseContextJson(readStringFlag(args, 'context-json'));
       const requestId = readStringFlag(args, 'request-id') ?? runLogger.runId;
 
@@ -422,61 +408,35 @@ const run = async () => {
       return;
     }
 
-    if (command === 'seed-frontier') {
-      const limit = readNumberFlag(args, 'limit') ?? 5;
-      const maxPerCommunity = readNumberFlag(args, 'max-per-community');
-      const useLlm = resolveFrontierUseLlm(args, dryRun, config.knowflow.frontier.llmEnabled);
-      const queueRepository = buildQueueRepository();
-
-      if (dryRun) {
-        const selection = await selectFrontierCandidatesWithMetadata({
-          limit,
-          maxPerCommunity,
-          database: defaultDb,
-          useLlm,
-        });
-        writeResult({
-          command,
-          runId: runLogger.runId,
-          dryRun: true,
-          profilePath,
-          useLlm,
-          selectionMode: selection.selectionMode,
-          degraded: selection.degraded,
-          degradedReasons: selection.degradedReasons,
-          candidates: selection.candidates,
-        });
-        return;
-      }
-
-      const result = await enqueueFrontierCandidates({
-        limit,
-        maxPerCommunity,
+    if (command === 'seed-phrases') {
+      writeErrorOnlyForMutationCommands(command);
+      const limit = readNumberFlag(args, 'limit');
+      const result = await runKeywordSeederOnce({
         database: defaultDb,
-        queueRepository,
-        useLlm,
+        queueRepository: buildQueueRepository(),
+        maxTopics: limit,
       });
       writeResult({
         command,
         runId: runLogger.runId,
         profilePath,
-        useLlm,
-        ...result,
+        result,
       });
       return;
     }
 
     if (command === 'eval-run') {
       writeErrorOnlyForMutationCommands(command);
+      if ('max-degraded-rate' in args) {
+        throw new Error('--max-degraded-rate is no longer supported; eval-run uses pass/fail only');
+      }
       const suiteName = readStringFlag(args, 'suite') ?? 'local';
-      const maxDegradedRate = readNumberFlag(args, 'max-degraded-rate');
       const mockMode = readBooleanFlag(args, 'mock');
       const result = await runEvalSuite({
         suiteName,
         llmConfig,
         requestPrefix: runLogger.runId,
         llmLogger,
-        maxDegradedRate,
         mode: mockMode ? 'mock' : 'live',
       });
       writeResult({

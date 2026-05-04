@@ -13,10 +13,12 @@ type DbTransaction = Parameters<Parameters<typeof defaultDb.transaction>[0]>[0];
 
 const extractLockOwnerPid = (lockOwner: string | undefined): number | null => {
   if (!lockOwner) return null;
-  const match = lockOwner.match(/daemon-(\d+)(?:-\d+)?$/);
-  if (!match?.[1]) return null;
-  const pid = Number(match[1]);
-  return Number.isFinite(pid) && pid > 1 ? pid : null;
+  const parts = lockOwner.split('-').filter((part) => part.length > 0);
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const pid = Number(parts[index]);
+    if (Number.isInteger(pid) && pid > 1) return pid;
+  }
+  return null;
 };
 
 const isPidAlive = (pid: number | null): boolean => {
@@ -285,6 +287,7 @@ export class PgJsonbQueueRepository implements QueueRepository {
           .update(topicTasks)
           .set({
             status: fields.status,
+            nextRunAt: fields.nextRunAt,
             payload: fields.payload,
             lockOwner: fields.lockOwner,
             lockedAt: fields.lockedAt,
@@ -341,6 +344,7 @@ export class PgJsonbQueueRepository implements QueueRepository {
           .update(topicTasks)
           .set({
             status: fields.status,
+            nextRunAt: fields.nextRunAt,
             payload: fields.payload,
             lockOwner: fields.lockOwner,
             lockedAt: fields.lockedAt,

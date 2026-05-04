@@ -40,4 +40,4 @@ bun run monitor:detail --task-id <task-id>
 出力内容:
 - Queue: `pending/running/deferred/failed`
 - Worker: `lastSuccessTs/lastFailureTs/consecutiveFailures`
-- Eval: `degradedRate/passed/failed`
+- Eval: `passRate/passed/failed`
