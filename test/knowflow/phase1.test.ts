@@ -80,7 +80,7 @@ describe('Phase1: queue/scheduler/worker', () => {
     }
   });
 
-  it('defers failed tasks with exponential backoff', async () => {
+  it('defers failed tasks for immediate retry (no wait backoff)', async () => {
     const { repository, dir } = await createRepo();
     try {
       await repository.enqueue({
@@ -110,7 +110,7 @@ describe('Phase1: queue/scheduler/worker', () => {
       expect(task?.attempts).toBe(1);
       expect(task?.status).toBe('deferred');
       expect(task?.errorReason).toBe('temporary failure');
-      expect(task?.nextRunAt).toBe(now + 500);
+      expect(task?.nextRunAt).toBe(now);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

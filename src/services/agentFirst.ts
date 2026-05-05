@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
+import { sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { experienceLogs } from '../db/schema.js';
-import { searchMemoriesByType } from './memory.js';
+import { entities, experienceLogs } from '../db/schema.js';
+import { searchEntityKnowledgeDetailed } from './entityKnowledge.js';
+import { generateEmbedding, searchMemoriesByType } from './memory.js';
 
 export type KnowledgeKind =
   | 'project_doc'
@@ -60,6 +62,10 @@ export type SearchKnowledgeV2Input = {
   technologies?: string[];
   intent?: 'plan' | 'edit' | 'debug' | 'review' | 'finish';
 };
+
+type SearchEntityKnowledgeFn = typeof searchEntityKnowledgeDetailed;
+type AgentFirstDbClient = Pick<typeof db, 'insert'>;
+type GenerateKnowledgeEmbedding = typeof generateEmbedding;
 
 export type AgenticSearchInput = {
   userRequest: string;
@@ -121,8 +127,28 @@ export function selectAgenticSearchPhrases(task: AgenticSearchTaskEnvelope): str
     .slice(0, 16);
 }
 
-export async function searchKnowledgeV2(input: SearchKnowledgeV2Input) {
-  const taskText = `${input.taskGoal ?? ''} ${input.query ?? ''}`.trim();
+const pushSearchText = (parts: string[], value: string | undefined): void => {
+  const normalized = value?.trim().replace(/\s+/g, ' ');
+  if (normalized) parts.push(normalized);
+};
+
+export function buildKnowledgeQueryText(input: SearchKnowledgeV2Input): string {
+  const parts: string[] = [];
+  pushSearchText(parts, input.taskGoal);
+  pushSearchText(parts, input.query);
+  for (const file of input.files ?? []) pushSearchText(parts, file);
+  for (const changeType of input.changeTypes ?? []) pushSearchText(parts, changeType);
+  for (const technology of input.technologies ?? []) pushSearchText(parts, technology);
+  pushSearchText(parts, input.intent);
+
+  return Array.from(new Set(parts)).join(' ').slice(0, 1200).trim();
+}
+
+export async function searchKnowledgeV2(
+  input: SearchKnowledgeV2Input,
+  deps: { searchEntityKnowledge?: SearchEntityKnowledgeFn } = {},
+) {
+  const taskText = buildKnowledgeQueryText(input);
   if (taskText.length < 8) {
     return {
       taskContext: null,
@@ -132,6 +158,33 @@ export async function searchKnowledgeV2(input: SearchKnowledgeV2Input) {
       degraded: { reason: 'insufficient_task_context' },
     };
   }
+
+  const search = deps.searchEntityKnowledge ?? searchEntityKnowledgeDetailed;
+  const { results: hits, telemetry } = await search({
+    query: taskText,
+    type: 'all',
+    limit: 10,
+  });
+  const flatTopHits = hits.map((hit) => ({
+    id: hit.id,
+    type: hit.type,
+    title: hit.title,
+    content: hit.content,
+    score: hit.score,
+    source: hit.source,
+    matchSources: hit.matchSources,
+    sourceScores: hit.sourceScores,
+    confidence: hit.confidence,
+    metadata: hit.metadata,
+  }));
+  const grouped = new Map<string, typeof flatTopHits>();
+  for (const hit of flatTopHits) {
+    const group = hit.type || 'unknown';
+    const current = grouped.get(group) ?? [];
+    current.push(hit);
+    grouped.set(group, current);
+  }
+
   return {
     taskContext: {
       intent: input.intent ?? 'edit',
@@ -139,8 +192,22 @@ export async function searchKnowledgeV2(input: SearchKnowledgeV2Input) {
       changeTypes: input.changeTypes ?? [],
       technologies: input.technologies ?? [],
     },
-    groups: [],
-    flatTopHits: [],
+    retrieval: {
+      queryText: telemetry.queryText,
+      mode: 'merged_embedding_and_lexical',
+      vectorHitCount: telemetry.vectorHitCount,
+      exactHitCount: telemetry.exactHitCount,
+      fullTextHitCount: telemetry.fullTextHitCount,
+      directTextHitCount: telemetry.directTextHitCount,
+      recentFallbackUsed: telemetry.recentFallbackUsed,
+      embeddingStatus: telemetry.embeddingStatus,
+      mergedCandidateCount: telemetry.mergedCandidateCount,
+    },
+    groups: Array.from(grouped.entries()).map(([type, items]) => ({
+      type,
+      items,
+    })),
+    flatTopHits,
   };
 }
 
@@ -197,20 +264,43 @@ export async function agenticSearch(input: AgenticSearchInput) {
   return result;
 }
 
-export async function recordTaskNote(input: {
-  content: string;
-  taskId?: string;
-  kind?: KnowledgeKind;
-  category?: KnowledgeCategory;
-  title?: string;
-  purpose?: string;
-  tags?: string[];
-  evidence?: Array<{ type?: string; value?: string; uri?: string }>;
-  files?: string[];
-  metadata?: Record<string, unknown>;
-  confidence?: number;
-  source?: 'manual' | 'task' | 'review' | 'onboarding' | 'import';
-}) {
+const normalizeStringArray = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value
+        .map((item) => (typeof item === 'string' ? item.trim() : ''))
+        .filter((item) => item.length > 0)
+    : [];
+
+const uniqueStrings = (values: string[]): string[] => Array.from(new Set(values));
+
+const deriveKnowledgeTitle = (content: string, title?: string): string => {
+  const normalizedTitle = title?.trim();
+  if (normalizedTitle) return normalizedTitle;
+  return content.split(/\r?\n/)[0]?.trim().slice(0, 96) || 'Untitled knowledge note';
+};
+
+export async function recordTaskNote(
+  input: {
+    content: string;
+    taskId?: string;
+    kind?: KnowledgeKind;
+    category?: KnowledgeCategory;
+    title?: string;
+    purpose?: string;
+    tags?: string[];
+    evidence?: Array<{ type?: string; value?: string; uri?: string }>;
+    files?: string[];
+    metadata?: Record<string, unknown>;
+    triggerPhrases?: string[];
+    appliesWhen?: string[];
+    confidence?: number;
+    source?: 'manual' | 'task' | 'review' | 'onboarding' | 'import';
+  },
+  deps: {
+    database?: AgentFirstDbClient;
+    generateKnowledgeEmbedding?: GenerateKnowledgeEmbedding;
+  } = {},
+) {
   const content = input.content.trim();
   if (content.length === 0) {
     return {
@@ -222,11 +312,48 @@ export async function recordTaskNote(input: {
     };
   }
 
-  const tags = (input.tags ?? []).map((tag) => tag.trim().toLowerCase()).filter(Boolean);
+  const database = deps.database ?? db;
+  const generateKnowledgeEmbedding = deps.generateKnowledgeEmbedding ?? generateEmbedding;
+  const rawMetadata = typeof input.metadata === 'object' && input.metadata ? input.metadata : {};
+  const title = deriveKnowledgeTitle(content, input.title);
+  const tags = uniqueStrings(
+    (input.tags ?? []).map((tag) => tag.trim().toLowerCase()).filter(Boolean),
+  );
+  const triggerPhrases = uniqueStrings([
+    ...normalizeStringArray(rawMetadata.triggerPhrases),
+    ...normalizeStringArray(input.triggerPhrases),
+  ]);
+  const appliesWhen = uniqueStrings([
+    ...normalizeStringArray(rawMetadata.appliesWhen),
+    ...normalizeStringArray(input.appliesWhen),
+  ]);
   const hasFirewallTag = tags.includes('failure-firewall');
   const hasGoldenPathTag = tags.includes('golden-path');
   const noteHash = createHash('sha256').update(content).digest('hex');
   const entityId = `note/${noteHash.slice(0, 12)}`;
+  const kind = input.kind ?? 'observation';
+  const category = input.category ?? 'reference';
+  const source = input.source ?? 'manual';
+  const now = new Date();
+  const metadata = {
+    ...rawMetadata,
+    title,
+    tags,
+    source,
+    kind,
+    category,
+    purpose: input.purpose ?? undefined,
+    taskId: input.taskId ?? undefined,
+    files: input.files ?? [],
+    evidence: input.evidence ?? [],
+    confidence: input.confidence ?? undefined,
+    triggerPhrases,
+    appliesWhen,
+    recordedBy: 'record_task_note',
+    recordedAt: now.toISOString(),
+  };
+  let embeddingStatus: 'stored' | 'unavailable' = 'unavailable';
+  let embedding: number[] | null = null;
 
   let failureFirewallCandidateState:
     | { saved: false; reason: string }
@@ -235,73 +362,95 @@ export async function recordTaskNote(input: {
     reason: 'no_firewall_tags',
   };
 
+  try {
+    embedding = await generateKnowledgeEmbedding(`${title}\n${content}`, {
+      type: 'passage',
+      priority: 'normal',
+    });
+    embeddingStatus = 'stored';
+  } catch {
+    embeddingStatus = 'unavailable';
+  }
+
+  await database
+    .insert(entities)
+    .values({
+      id: entityId,
+      type: kind,
+      name: title,
+      description: content,
+      embedding,
+      metadata,
+      confidence: input.confidence ?? 0.6,
+      provenance: source,
+      scope: 'task_note',
+      freshness: now,
+    })
+    .onConflictDoUpdate({
+      target: entities.id,
+      set: {
+        type: sql`excluded.type`,
+        name: sql`excluded.name`,
+        description: sql`excluded.description`,
+        embedding: sql`COALESCE(excluded.embedding, ${entities.embedding})`,
+        metadata: sql`COALESCE(${entities.metadata}, '{}'::jsonb) || excluded.metadata`,
+        confidence: sql`COALESCE(excluded.confidence, ${entities.confidence})`,
+        provenance: sql`excluded.provenance`,
+        scope: sql`excluded.scope`,
+        freshness: sql`excluded.freshness`,
+      },
+    });
+
   if (hasFirewallTag || hasGoldenPathTag) {
     const type: 'failure' | 'success' = hasGoldenPathTag ? 'success' : 'failure';
     const scenarioId =
-      typeof input.metadata?.scenarioId === 'string' && input.metadata.scenarioId.trim().length > 0
-        ? input.metadata.scenarioId
+      typeof rawMetadata.scenarioId === 'string' && rawMetadata.scenarioId.trim().length > 0
+        ? rawMetadata.scenarioId
         : `firewall-${noteHash.slice(0, 12)}`;
 
-    const metadata = {
-      ...(typeof input.metadata === 'object' && input.metadata ? input.metadata : {}),
-      title: input.title ?? undefined,
-      tags,
-      source: input.source ?? 'manual',
-      kind: input.kind ?? 'observation',
-      category: input.category ?? 'reference',
-      purpose: input.purpose ?? undefined,
-      files: input.files ?? [],
-      evidence: input.evidence ?? [],
-      confidence: input.confidence ?? undefined,
+    const experienceMetadata = {
+      ...metadata,
       ...(hasGoldenPathTag
         ? {
-            pathId: typeof input.metadata?.pathId === 'string' ? input.metadata.pathId : entityId,
+            pathId: typeof rawMetadata.pathId === 'string' ? rawMetadata.pathId : entityId,
             pathType:
-              typeof input.metadata?.pathType === 'string'
-                ? input.metadata.pathType
-                : 'record_task_note',
-            reusableSteps: Array.isArray(input.metadata?.reusableSteps)
-              ? input.metadata?.reusableSteps
+              typeof rawMetadata.pathType === 'string' ? rawMetadata.pathType : 'record_task_note',
+            reusableSteps: Array.isArray(rawMetadata.reusableSteps)
+              ? rawMetadata.reusableSteps
               : [],
-            blockWhenMissing: Array.isArray(input.metadata?.blockWhenMissing)
-              ? input.metadata?.blockWhenMissing
+            blockWhenMissing: Array.isArray(rawMetadata.blockWhenMissing)
+              ? rawMetadata.blockWhenMissing
               : [],
-            riskSignals: Array.isArray(input.metadata?.riskSignals)
-              ? input.metadata?.riskSignals
-              : [],
+            riskSignals: Array.isArray(rawMetadata.riskSignals) ? rawMetadata.riskSignals : [],
           }
         : {
-            patternId:
-              typeof input.metadata?.patternId === 'string' ? input.metadata.patternId : entityId,
+            patternId: typeof rawMetadata.patternId === 'string' ? rawMetadata.patternId : entityId,
             patternType:
-              typeof input.metadata?.patternType === 'string'
-                ? input.metadata.patternType
+              typeof rawMetadata.patternType === 'string'
+                ? rawMetadata.patternType
                 : 'record_task_note',
-            severity:
-              typeof input.metadata?.severity === 'string' ? input.metadata.severity : 'warning',
-            riskSignals: Array.isArray(input.metadata?.riskSignals)
-              ? input.metadata?.riskSignals
-              : [],
-            matchHints: Array.isArray(input.metadata?.matchHints) ? input.metadata?.matchHints : [],
-            requiredEvidence: Array.isArray(input.metadata?.requiredEvidence)
-              ? input.metadata?.requiredEvidence
+            severity: typeof rawMetadata.severity === 'string' ? rawMetadata.severity : 'warning',
+            riskSignals: Array.isArray(rawMetadata.riskSignals) ? rawMetadata.riskSignals : [],
+            matchHints: Array.isArray(rawMetadata.matchHints) ? rawMetadata.matchHints : [],
+            requiredEvidence: Array.isArray(rawMetadata.requiredEvidence)
+              ? rawMetadata.requiredEvidence
               : [],
           }),
     };
 
-    await db.insert(experienceLogs).values({
+    await database.insert(experienceLogs).values({
       sessionId: 'mcp-record-task-note',
       scenarioId,
       attempt: 1,
       type,
       failureType:
         type === 'failure'
-          ? typeof input.metadata?.failureType === 'string'
-            ? input.metadata.failureType
+          ? typeof rawMetadata.failureType === 'string'
+            ? rawMetadata.failureType
             : 'record_task_note'
           : null,
       content,
-      metadata,
+      metadata: experienceMetadata,
     });
     failureFirewallCandidateState = { saved: true, type, scenarioId };
   }
@@ -309,8 +458,9 @@ export async function recordTaskNote(input: {
   return {
     saved: true,
     entityId,
-    kind: input.kind ?? 'observation',
-    category: input.category ?? 'reference',
+    kind,
+    category,
+    embeddingStatus,
     failureFirewallCandidateState,
   };
 }

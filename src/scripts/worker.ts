@@ -255,11 +255,8 @@ async function main() {
 
   let fatalError: unknown;
   try {
-    // ワーカーは並列に走らせ、空きスロットがあれば pending を即時処理する。
-    const workerParallelism = Math.max(
-      1,
-      Math.min(config.knowflow.worker.parallelism, config.backgroundWorker.maxConcurrency),
-    );
+    // Single-daemon mode: keep one active KnowFlow worker loop at a time.
+    const workerParallelism = 1;
     const workers = Array.from({ length: workerParallelism }, (_, index) => {
       const workerIndex = index + 1;
       return runWorkerLoop(queueRepository, handler, {

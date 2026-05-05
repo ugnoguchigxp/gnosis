@@ -16,6 +16,7 @@ import type { TaskExecutionResult, TaskHandler } from './loop';
 
 const MAX_FETCHED_PAGES_PER_TASK = 1;
 const MAX_CONTENT_CHARS = 800;
+const SESSION_DISTILLATION_PROGRESS_LOG_INTERVAL_MS = 15_000;
 
 type SystemTaskType = 'synthesis' | 'embedding_batch' | 'session_distillation';
 
@@ -417,7 +418,27 @@ function parseSystemTask(task: TopicTask): {
   return { type, payload };
 }
 
-async function runSystemTask(task: TopicTask): Promise<TaskExecutionResult | null> {
+function errorInfo(error: unknown): { kind: string; message: string } {
+  if (error instanceof Error) {
+    const kind =
+      error.name?.trim() ||
+      (typeof error.constructor?.name === 'string' ? error.constructor.name : '');
+    return {
+      kind: kind || 'Error',
+      message: error.message,
+    };
+  }
+  if (typeof error === 'string') {
+    return { kind: 'StringError', message: error };
+  }
+  return { kind: 'UnknownError', message: String(error) };
+}
+
+async function runSystemTask(
+  task: TopicTask,
+  logger: StructuredLogger = defaultStructuredLogger,
+  signal?: AbortSignal,
+): Promise<TaskExecutionResult | null> {
   const parsed = parseSystemTask(task);
   if (!parsed) return null;
 
@@ -464,21 +485,126 @@ async function runSystemTask(task: TopicTask): Promise<TaskExecutionResult | nul
       parsed.payload.provider === 'bedrock'
         ? parsed.payload.provider
         : undefined;
-    const result = await distillSessionKnowledge({
+
+    if (signal?.aborted) {
+      return {
+        ok: false,
+        error: `system:session_distillation session=${sessionId} status=exception elapsedMs=0 errorKind=AbortError error=system:session_distillation aborted`,
+        retryable: false,
+      };
+    }
+
+    const startedAt = Date.now();
+    let heartbeatCount = 0;
+    logger({
+      event: 'system.session_distillation.started',
+      level: 'info',
+      taskId: task.id,
       sessionId,
+      provider: provider ?? 'auto',
       force: parsed.payload.force === true,
       promote: parsed.payload.promote === true,
-      provider,
+      elapsedMs: 0,
     });
-    const summary = `system:session_distillation session=${sessionId} status=${result.status} keep=${result.keptCount} drop=${result.droppedCount}`;
+    const heartbeat = setInterval(() => {
+      heartbeatCount += 1;
+      logger({
+        event: 'system.session_distillation.progress',
+        level: 'info',
+        taskId: task.id,
+        sessionId,
+        elapsedMs: Date.now() - startedAt,
+        heartbeatCount,
+      });
+    }, SESSION_DISTILLATION_PROGRESS_LOG_INTERVAL_MS);
+    heartbeat.unref?.();
+
+    let result: Awaited<ReturnType<typeof distillSessionKnowledge>>;
+    let abortHandler: (() => void) | undefined;
+    const abortPromise =
+      signal &&
+      new Promise<never>((_, reject) => {
+        abortHandler = () => {
+          const abortedError = new Error('system:session_distillation aborted');
+          abortedError.name = 'AbortError';
+          reject(abortedError);
+        };
+        if (signal.aborted) {
+          abortHandler();
+          return;
+        }
+        signal.addEventListener('abort', abortHandler, { once: true });
+      });
+    try {
+      const distillationPromise = distillSessionKnowledge({
+        sessionId,
+        force: parsed.payload.force === true,
+        promote: parsed.payload.promote === true,
+        provider,
+      });
+      result = abortPromise
+        ? await Promise.race([distillationPromise, abortPromise])
+        : await distillationPromise;
+    } catch (error) {
+      const detail = errorInfo(error);
+      const elapsedMs = Date.now() - startedAt;
+      const aborted = detail.kind === 'AbortError';
+      logger({
+        event: 'system.session_distillation.exception',
+        level: aborted ? 'warn' : 'error',
+        taskId: task.id,
+        sessionId,
+        elapsedMs,
+        errorKind: detail.kind,
+        message: detail.message,
+      });
+      return {
+        ok: false,
+        error: `system:session_distillation session=${sessionId} status=exception elapsedMs=${elapsedMs} errorKind=${detail.kind} error=${detail.message}`,
+        retryable: !aborted,
+      };
+    } finally {
+      if (signal && abortHandler) {
+        signal.removeEventListener('abort', abortHandler);
+      }
+      clearInterval(heartbeat);
+    }
+
+    const elapsedMs = Date.now() - startedAt;
+    const summary = `system:session_distillation session=${sessionId} status=${result.status} keep=${result.keptCount} drop=${result.droppedCount} elapsedMs=${elapsedMs}`;
+    logger({
+      event: 'system.session_distillation.completed',
+      level: result.status === 'succeeded' ? 'info' : 'warn',
+      taskId: task.id,
+      sessionId,
+      elapsedMs,
+      keep: result.keptCount,
+      drop: result.droppedCount,
+      status: result.status,
+      modelProvider: result.modelProvider,
+      errorKind: result.errorKind ?? null,
+      error: result.error ?? null,
+    });
     if (result.status === 'succeeded') {
       return { ok: true, summary };
     }
-    return { ok: false, error: summary };
+    const failedKind = result.errorKind ?? 'DistillationFailed';
+    const failedMessage = result.error ? ` error=${result.error}` : '';
+    return { ok: false, error: `${summary} errorKind=${failedKind}${failedMessage}` };
   } catch (error) {
+    const detail = errorInfo(error);
+    logger({
+      event: 'system.task.exception',
+      level: 'error',
+      taskId: task.id,
+      topic: task.topic,
+      systemTaskType: parsed.type,
+      errorKind: detail.kind,
+      message: detail.message,
+    });
     return {
       ok: false,
-      error: error instanceof Error ? error.message : String(error),
+      error: `system_task_exception errorKind=${detail.kind} error=${detail.message}`,
     };
   }
 }
@@ -497,7 +623,7 @@ export const createKnowFlowTaskHandler = (
   let cronRunConsumed = 0;
 
   return async (task, signal): Promise<TaskExecutionResult> => {
-    const systemTaskResult = await runSystemTask(task);
+    const systemTaskResult = await runSystemTask(task, logger, signal);
     if (systemTaskResult) return systemTaskResult;
 
     const now = options.now?.() ?? Date.now();

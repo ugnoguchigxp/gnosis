@@ -9,8 +9,13 @@ const SOURCE_PATHS = [
   'src/index.ts',
   'src/scripts/mcp-host.ts',
   'src/mcp',
+  'src/services/agentFirst.ts',
+  'src/services/agenticSearch',
+  'src/services/entityKnowledge.ts',
+  'src/services/failureFirewall',
   'src/services/review',
   'src/services/reviewAgent',
+  'src/services/sessionKnowledge',
 ] as const;
 
 function collectFiles(path: string): string[] {

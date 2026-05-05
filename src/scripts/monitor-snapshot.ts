@@ -1,13 +1,14 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { join, resolve } from 'node:path';
-import { desc, inArray, sql } from 'drizzle-orm';
+import { desc, sql } from 'drizzle-orm';
 import { envBoolean } from '../config.js';
 import { GNOSIS_CONSTANTS } from '../constants.js';
 import { closeDbPool, db } from '../db/index.js';
 import { topicTasks } from '../db/schema.js';
 import { parseArgMap, readNumberFlag, readStringFlag } from '../services/knowflow/utils/args';
 import { renderOutput, resolveOutputFormat } from '../services/knowflow/utils/output';
+import { EMBEDDING_SYSTEM_TOPIC } from './monitor-queue-utils.js';
 
 type QueueSnapshot = {
   pending: number;
@@ -57,6 +58,7 @@ type TaskIndexEntry = {
 type MonitorSnapshot = {
   ts: number;
   queue: QueueSnapshot;
+  embeddingQueue: QueueSnapshot;
   worker: WorkerSnapshot;
   eval: EvalSnapshot;
   automation: AutomationSnapshot;
@@ -192,40 +194,66 @@ const listRecentRunLogs = async (logsRoot: string, limit: number): Promise<strin
   }
 };
 
-const countQueueStatuses = async (): Promise<QueueSnapshot> => {
-  const initial = emptyQueueSnapshot();
+const countQueueStatuses = async (): Promise<{
+  queue: QueueSnapshot;
+  embeddingQueue: QueueSnapshot;
+}> => {
+  const queue = emptyQueueSnapshot();
+  const embeddingQueue = emptyQueueSnapshot();
 
-  let rows: Array<{ status: string; count: number }>;
+  let rows: Array<{ status?: unknown; is_embedding?: unknown; count?: unknown }>;
   try {
-    rows = await db
-      .select({
-        status: topicTasks.status,
-        count: sql<number>`count(*)::int`,
-      })
-      .from(topicTasks)
-      .where(inArray(topicTasks.status, [...MONITORED_QUEUE_STATUSES]))
-      .groupBy(topicTasks.status)
-      .orderBy(desc(topicTasks.status));
+    const result = await db.execute(
+      sql.raw(`
+        SELECT
+          status,
+          (
+            (payload ->> 'topic') = '${EMBEDDING_SYSTEM_TOPIC}'
+            OR (payload -> 'metadata' -> 'systemTask' ->> 'type') = 'embedding_batch'
+          ) AS is_embedding,
+          count(*)::int AS count
+        FROM topic_tasks
+        WHERE status IN ('pending', 'running', 'deferred', 'failed')
+        GROUP BY status, is_embedding
+      `),
+    );
+    rows = result.rows as Array<{ status?: unknown; is_embedding?: unknown; count?: unknown }>;
   } catch {
-    return initial;
+    return { queue, embeddingQueue };
   }
+
+  const parseBoolean = (value: unknown): boolean => {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value > 0;
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      return normalized === 'true' || normalized === 't' || normalized === '1';
+    }
+    return false;
+  };
 
   for (const row of rows) {
-    if (row.status === 'pending') {
-      initial.pending = row.count;
+    const status = typeof row.status === 'string' ? row.status : null;
+    if (!status) {
+      continue;
     }
-    if (row.status === 'running') {
-      initial.running = row.count;
+    const target = parseBoolean(row.is_embedding) ? embeddingQueue : queue;
+    const count = toNumber(row.count) ?? 0;
+    if (status === 'pending') {
+      target.pending = count;
     }
-    if (row.status === 'deferred') {
-      initial.deferred = row.count;
+    if (status === 'running') {
+      target.running = count;
     }
-    if (row.status === 'failed') {
-      initial.failed = row.count;
+    if (status === 'deferred') {
+      target.deferred = count;
+    }
+    if (status === 'failed') {
+      target.failed = count;
     }
   }
 
-  return initial;
+  return { queue, embeddingQueue };
 };
 
 const collectTaskIndex = async (limit: number): Promise<TaskIndexEntry[]> => {
@@ -476,7 +504,9 @@ const run = async (): Promise<void> => {
   const taskIndexLimit = readNumberFlag(args, 'task-index-limit') ?? FALLBACK_TASK_INDEX_LIMIT;
 
   const databaseReachable = await canReachDatabase();
-  const queue = databaseReachable ? await countQueueStatuses() : emptyQueueSnapshot();
+  const { queue, embeddingQueue } = databaseReachable
+    ? await countQueueStatuses()
+    : { queue: emptyQueueSnapshot(), embeddingQueue: emptyQueueSnapshot() };
   const { worker, evalResult, knowflow } = await collectWorkerEvalAndKnowFlow(
     logsRoot,
     Math.max(1, fileLimit),
@@ -486,6 +516,7 @@ const run = async (): Promise<void> => {
   const payload: MonitorSnapshot = {
     ts: Date.now(),
     queue,
+    embeddingQueue,
     worker,
     eval: evalResult,
     automation: collectAutomation(),

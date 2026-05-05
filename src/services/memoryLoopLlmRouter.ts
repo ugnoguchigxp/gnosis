@@ -35,7 +35,7 @@ export type SpawnSyncFn = (
   command: string,
   args: ReadonlyArray<string>,
   options: { encoding: 'utf-8'; env?: NodeJS.ProcessEnv; timeout?: number },
-) => SpawnSyncResult;
+) => SpawnSyncResult | Promise<SpawnSyncResult>;
 
 export type RunPromptOptions = {
   prompt: string;
@@ -56,15 +56,13 @@ export type RunPromptDeps = {
   withSemaphore?: <T>(name: string, concurrency: number, fn: () => Promise<T>) => Promise<T>;
 };
 
-import type { SpawnSyncOptionsWithStringEncoding } from 'node:child_process';
-import { runLlmProcessSync } from './llm/spawnControl.js';
+import { runLlmProcess } from './llm/spawnControl.js';
 
 const defaultSpawnSync: SpawnSyncFn = (command, args, options) => {
-  return runLlmProcessSync(
-    command,
-    args as string[],
-    options as SpawnSyncOptionsWithStringEncoding,
-  ) as unknown as SpawnSyncResult;
+  return runLlmProcess(command, args as string[], {
+    env: options.env,
+    timeout: options.timeout,
+  }) as unknown as SpawnSyncResult;
 };
 
 type MemoryLoopRuntimeConfig = {

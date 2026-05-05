@@ -10,6 +10,7 @@ import {
   findDistillationByHash,
   markDistillationStatus,
   replaceKnowledgeCandidates,
+  resetDistillationToRunning,
 } from './repository.js';
 import { splitSessionTurns, toSessionMessageInputs } from './segmenter.js';
 import type { DistillSessionResult, KnowledgeCandidate } from './types.js';
@@ -19,6 +20,18 @@ function hashTranscript(
 ): string {
   const stable = messages.map((m) => [m.id ?? '', m.role, m.createdAt ?? '', m.content]).join('\n');
   return createHash('sha256').update(stable).digest('hex');
+}
+
+function errorKindFromUnknown(error: unknown): string {
+  if (error instanceof Error) {
+    const byName = error.name?.trim();
+    if (byName) return byName;
+    const ctorName = error.constructor?.name;
+    if (typeof ctorName === 'string' && ctorName.trim().length > 0) return ctorName;
+    return 'Error';
+  }
+  if (typeof error === 'string') return 'StringError';
+  return 'UnknownError';
 }
 
 export async function distillSessionKnowledge(input: {
@@ -63,11 +76,19 @@ export async function distillSessionKnowledge(input: {
   let allCandidates: KnowledgeCandidate[] = [];
   let llmSucceededTurns = 0;
   let llmFailedTurns = 0;
+  let llmSkippedTurns = 0;
   let llmParsedConfidenceTotal = 0;
   for (const turn of turns) {
     const deterministic = buildDeterministicCandidates(turn);
+    const hasReusableCandidates = deterministic.some((candidate) => candidate.keep);
     if (provider === 'deterministic') {
       allCandidates = allCandidates.concat(deterministic);
+      continue;
+    }
+    if (!hasReusableCandidates) {
+      // Skip expensive LLM refinement when deterministic pass already concluded "nothing reusable".
+      allCandidates = allCandidates.concat(deterministic);
+      llmSkippedTurns += 1;
       continue;
     }
     const refined = await refineCandidatesWithLlm(turn, deterministic);
@@ -104,10 +125,7 @@ export async function distillSessionKnowledge(input: {
     };
   }
 
-  const row = await createRunningDistillation({
-    sessionKey: detail.summary.id,
-    transcriptHash,
-    promptVersion,
+  const baseRowInput = {
     modelProvider,
     turnCount: turns.length,
     messageCount: messageInputs.length,
@@ -115,7 +133,19 @@ export async function distillSessionKnowledge(input: {
       source: detail.summary.source,
       sourceId: detail.summary.sourceId,
     },
-  });
+  } as const;
+  const row =
+    existing && input.force
+      ? await resetDistillationToRunning({
+          id: existing.id,
+          ...baseRowInput,
+        })
+      : await createRunningDistillation({
+          sessionKey: detail.summary.id,
+          transcriptHash,
+          promptVersion,
+          ...baseRowInput,
+        });
 
   try {
     await replaceKnowledgeCandidates(row.id, allCandidates);
@@ -127,6 +157,7 @@ export async function distillSessionKnowledge(input: {
         promotedCount,
         llmSucceededTurns,
         llmFailedTurns,
+        llmSkippedTurns,
         llmParsedConfidenceTotal,
       },
     });
@@ -144,12 +175,21 @@ export async function distillSessionKnowledge(input: {
       candidates: allCandidates,
     };
   } catch (error) {
+    const errorKind = errorKindFromUnknown(error);
     const message = error instanceof Error ? error.message : String(error);
     await markDistillationStatus(row.id, {
       status: 'failed',
       keptCount,
       droppedCount,
       error: message,
+      metadata: {
+        promotedCount,
+        llmSucceededTurns,
+        llmFailedTurns,
+        llmSkippedTurns,
+        llmParsedConfidenceTotal,
+        errorKind,
+      },
     });
 
     return {
@@ -162,6 +202,7 @@ export async function distillSessionKnowledge(input: {
       droppedCount,
       promotedCount,
       modelProvider,
+      errorKind,
       error: message,
       candidates: allCandidates,
     };

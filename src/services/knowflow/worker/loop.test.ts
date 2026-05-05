@@ -48,7 +48,7 @@ describe('worker loop', () => {
   it('runWorkerOnce should handle timeout', async () => {
     const repo = mockRepo();
     repo.dequeueAndLock = mock().mockResolvedValue(mockTask);
-    repo.applyFailureAction = mock().mockResolvedValue({ ...mockTask, status: 'deferred' });
+    repo.applyFailureAction = mock().mockResolvedValue({ ...mockTask, status: 'failed' });
 
     let capturedSignal: AbortSignal | undefined;
     const handler = mock(async (_task: TopicTask, signal?: AbortSignal) => {
@@ -61,7 +61,11 @@ describe('worker loop', () => {
       createTaskTimeout: (timeoutMs, abortController) => ({
         promise: Promise.resolve().then(() => {
           abortController.abort();
-          return { ok: false as const, error: `Task execution timed out after ${timeoutMs}ms` };
+          return {
+            ok: false as const,
+            error: `Task execution timed out after ${timeoutMs}ms`,
+            retryable: false,
+          };
         }),
         cancel: () => {},
       }),
@@ -69,7 +73,7 @@ describe('worker loop', () => {
 
     expect(result.processed).toBe(true);
     if (result.processed) {
-      expect(result.status).toBe('deferred');
+      expect(result.status).toBe('failed');
       expect(result.error).toContain('timed out');
     }
     expect(capturedSignal?.aborted).toBe(true);

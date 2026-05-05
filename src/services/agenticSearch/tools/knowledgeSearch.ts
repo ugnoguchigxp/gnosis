@@ -1,4 +1,7 @@
-import { type EntityKnowledgeSearchType, searchEntityKnowledge } from '../../entityKnowledge.js';
+import {
+  type EntityKnowledgeSearchType,
+  searchEntityKnowledgeDetailed,
+} from '../../entityKnowledge.js';
 
 export type KnowledgeSearchArgs = {
   query: string;
@@ -12,7 +15,7 @@ export async function runKnowledgeSearch(
   args: KnowledgeSearchArgs,
 ): Promise<Record<string, unknown>> {
   try {
-    const rows = await searchEntityKnowledge({
+    const { results: rows, telemetry } = await searchEntityKnowledgeDetailed({
       query: args.query,
       type: args.type,
       limit: args.limit ?? 5,
@@ -25,8 +28,12 @@ export async function runKnowledgeSearch(
         content: row.content,
         source: 'entities',
         score: row.score,
+        retrievalSource: row.source,
+        matchSources: row.matchSources,
+        sourceScores: row.sourceScores,
         metadata: row.metadata,
       })),
+      retrieval: telemetry,
     };
   } catch (error) {
     return {

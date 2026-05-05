@@ -1,5 +1,8 @@
+import { Database } from 'bun:sqlite';
+import { existsSync } from 'node:fs';
 import { readFile, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { resolve as resolvePath } from 'node:path';
 import { desc, eq } from 'drizzle-orm';
 import { closeDbPool, db } from '../db/index.js';
 import { topicTasks } from '../db/schema.js';
@@ -163,59 +166,115 @@ const run = async (): Promise<void> => {
   const fileLimit = readNumberFlag(args, 'file-limit') ?? FALLBACK_FILE_LIMIT;
   const snippetLimit = readNumberFlag(args, 'snippet-limit') ?? FALLBACK_SNIPPET_LIMIT;
 
-  const rows = await db
-    .select({
-      id: topicTasks.id,
-      status: topicTasks.status,
-      payload: topicTasks.payload,
-    })
-    .from(topicTasks)
-    .where(eq(topicTasks.id, taskId))
-    .orderBy(desc(topicTasks.updatedAt))
-    .limit(1);
-
-  if (rows.length === 0) {
-    throw new Error(`task not found: ${taskId}`);
+  let rows: any[] = [];
+  try {
+    rows = await db
+      .select({
+        id: topicTasks.id,
+        status: topicTasks.status,
+        payload: topicTasks.payload,
+      })
+      .from(topicTasks)
+      .where(eq(topicTasks.id, taskId))
+      .orderBy(desc(topicTasks.updatedAt))
+      .limit(1);
+  } catch (e) {
+    // Ignore error and fallback to SQLite
   }
 
-  const row = rows[0];
-  const payload = isRecord(row.payload) ? row.payload : {};
+  if (rows.length > 0) {
+    const row = rows[0];
+    const payload = isRecord(row.payload) ? row.payload : {};
 
-  const resultSummary =
-    typeof payload.resultSummary === 'string'
-      ? payload.resultSummary
-      : typeof payload.summary === 'string'
-        ? payload.summary
-        : null;
+    const resultSummary =
+      typeof payload.resultSummary === 'string'
+        ? payload.resultSummary
+        : typeof payload.summary === 'string'
+          ? payload.summary
+          : null;
 
-  const errorReason =
-    typeof payload.errorReason === 'string'
-      ? payload.errorReason
-      : typeof payload.error === 'string'
-        ? payload.error
-        : null;
+    const errorReason =
+      typeof payload.errorReason === 'string'
+        ? payload.errorReason
+        : typeof payload.error === 'string'
+          ? payload.error
+          : null;
 
-  const logs = await collectLogSnippets({
-    taskId,
-    logsRoot,
-    fileLimit: Math.max(1, fileLimit),
-    snippetLimit: Math.max(1, snippetLimit),
-  });
+    const logs = await collectLogSnippets({
+      taskId,
+      logsRoot,
+      fileLimit: Math.max(1, fileLimit),
+      snippetLimit: Math.max(1, snippetLimit),
+    });
 
-  const latestRunId = logs.find((item) => item.runId)?.runId ?? null;
+    const latestRunId = logs.find((item) => item.runId)?.runId ?? null;
 
-  const detail: TaskDetailPayload = {
-    taskId,
-    runId: latestRunId ?? null,
-    topic: typeof payload.topic === 'string' ? payload.topic : null,
-    source: typeof payload.source === 'string' ? payload.source : null,
-    status: row.status,
-    resultSummary,
-    errorReason,
-    logs,
-  };
+    const detail: TaskDetailPayload = {
+      taskId,
+      runId: latestRunId ?? null,
+      topic: typeof payload.topic === 'string' ? payload.topic : null,
+      source: typeof payload.source === 'string' ? payload.source : null,
+      status: row.status,
+      resultSummary,
+      errorReason,
+      logs,
+    };
 
-  process.stdout.write(renderOutput(detail, outputFormat));
+    process.stdout.write(renderOutput(detail, outputFormat));
+    return;
+  }
+
+  // Fallback to SQLite
+  const sqlitePath = resolvePath(process.cwd(), 'data', 'gnosis-tasks.sqlite');
+  if (existsSync(sqlitePath)) {
+    const sqlite = new Database(sqlitePath);
+    try {
+      const sqliteRow = sqlite
+        .query<
+          {
+            id: string;
+            type: string;
+            status: string;
+            payload: string;
+            error_message: string | null;
+          },
+          [string]
+        >('SELECT * FROM background_tasks WHERE id = ?')
+        .get(taskId);
+
+      if (sqliteRow) {
+        let payload: Record<string, unknown> = {};
+        try {
+          payload = JSON.parse(sqliteRow.payload);
+        } catch {}
+
+        const logs = await collectLogSnippets({
+          taskId,
+          logsRoot,
+          fileLimit: Math.max(1, fileLimit),
+          snippetLimit: Math.max(1, snippetLimit),
+        });
+
+        const detail: TaskDetailPayload = {
+          taskId,
+          runId: null,
+          topic: sqliteRow.type,
+          source: 'background',
+          status: sqliteRow.status,
+          resultSummary: sqliteRow.status === 'completed' ? 'Done' : null,
+          errorReason: sqliteRow.error_message,
+          logs,
+        };
+
+        process.stdout.write(renderOutput(detail, outputFormat));
+        return;
+      }
+    } finally {
+      sqlite.close();
+    }
+  }
+
+  throw new Error(`task not found in any queue: ${taskId}`);
 };
 
 if (import.meta.main) {

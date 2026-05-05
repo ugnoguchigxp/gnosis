@@ -70,7 +70,11 @@ function createTaskTimeout(
     promise: new Promise<TaskExecutionResult>((resolve) => {
       timeoutId = setTimeout(() => {
         abortController.abort();
-        resolve({ ok: false, error: `Task execution timed out after ${timeoutMs}ms` });
+        resolve({
+          ok: false,
+          error: `Task execution timed out after ${timeoutMs}ms`,
+          retryable: false,
+        });
       }, timeoutMs);
     }),
     cancel: () => {
@@ -140,6 +144,7 @@ export const runWorkerOnce = async (
     const action = decideFailureAction(task, error, {
       now: currentNow,
       maxAttempts: options.maxAttempts,
+      retryable: result.retryable,
       baseBackoffMs: options.baseBackoffMs,
       maxBackoffMs: options.maxBackoffMs,
       jitterRatio: options.backoffJitterRatio,

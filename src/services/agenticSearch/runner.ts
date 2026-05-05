@@ -43,6 +43,20 @@ function buildUserTaskMessage(input: AgenticSearchRunnerInput): string {
   ].join('\n');
 }
 
+function buildPrefetchKnowledgeQuery(input: AgenticSearchRunnerInput): string {
+  return [
+    input.userRequest,
+    ...(input.files ?? []),
+    ...(input.changeTypes ?? []),
+    ...(input.technologies ?? []),
+    input.intent ?? 'edit',
+  ]
+    .map((part) => part.trim().replace(/\s+/g, ' '))
+    .filter((part) => part.length > 0)
+    .join(' ')
+    .slice(0, 1200);
+}
+
 function shouldPrefetchFailureFirewallContext(input: AgenticSearchRunnerInput): boolean {
   const intent = input.intent ?? 'edit';
   if (intent === 'finish') return false;
@@ -74,7 +88,7 @@ export class AgenticSearchRunner {
       {
         id: 'prefetch-knowledge',
         name: 'knowledge_search' as const,
-        arguments: { query: input.userRequest, type: 'all', limit: 5 },
+        arguments: { query: buildPrefetchKnowledgeQuery(input), type: 'all', limit: 5 },
       },
       {
         id: 'prefetch-web',

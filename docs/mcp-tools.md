@@ -78,6 +78,7 @@ bun test test/mcpHostServices.test.ts test/mcpStdioIntegration.test.ts
 
 - **用途**: 語句・ベクトル・metadata で近い raw 候補やスコアを確認します。
 - **位置づけ**: 通常の知識取得入口ではありません。通常は `agentic_search` を使ってください。
+- **検索方式**: `query` / `taskGoal` / files / changeTypes / technologies / intent を1本の query text に整形し、entities の vector / exact / full-text / direct text 候補を merge します。候補0件時だけ recent fallback を使います。
 - **入力**:
   - `query` (string, 任意)
   - `taskGoal` (string, 任意)

@@ -41,6 +41,12 @@ const createInitialSnapshot = (): MonitorSnapshotData => ({
     deferred: 0,
     failed: 0,
   },
+  embeddingQueue: {
+    pending: 0,
+    running: 0,
+    deferred: 0,
+    failed: 0,
+  },
   worker: {
     lastSuccessTs: null,
     lastFailureTs: null,
@@ -85,6 +91,8 @@ let topicFilter = $state('');
 let lastSnapshotTs = $state<number | null>(null);
 let errorMessage = $state<string | null>(null);
 let wsUrl = $state<string>('');
+// biome-ignore lint/style/useConst: $state value is reassigned via tab click handlers
+let activeQueueTab = $state<'knowflow' | 'embedding'>('knowflow');
 
 let detailOpen = $state(false);
 let selectedEvent = $state<EnrichedTimelineEvent | null>(null);
@@ -495,13 +503,41 @@ onMount(() => {
 
 	<div class="grid">
 		<section class="panel">
-			<h2>Queue</h2>
-			<div class="stat-row">
-				<div class="metric"><div class="metric-label">pending</div><div class="metric-value">{snapshot.queue.pending}</div></div>
-				<div class="metric"><div class="metric-label">running</div><div class="metric-value">{snapshot.queue.running}</div></div>
-				<div class="metric"><div class="metric-label">deferred</div><div class="metric-value">{snapshot.queue.deferred}</div></div>
-				<div class="metric"><div class="metric-label">failed</div><div class="metric-value">{snapshot.queue.failed}</div></div>
+			<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+				<h2 style="margin: 0;">Queue</h2>
+				<div class="tabs">
+					<button 
+						type="button" 
+						class={`tab-btn ${activeQueueTab === 'knowflow' ? 'active' : ''}`}
+						onclick={() => activeQueueTab = 'knowflow'}
+					>
+						KnowFlow
+					</button>
+					<button 
+						type="button" 
+						class={`tab-btn ${activeQueueTab === 'embedding' ? 'active' : ''}`}
+						onclick={() => activeQueueTab = 'embedding'}
+					>
+						Embedding
+					</button>
+				</div>
 			</div>
+			
+			{#if activeQueueTab === 'knowflow'}
+				<div class="stat-row">
+					<div class="metric"><div class="metric-label">pending</div><div class="metric-value">{snapshot.queue.pending}</div></div>
+					<div class="metric"><div class="metric-label">running</div><div class="metric-value">{snapshot.queue.running}</div></div>
+					<div class="metric"><div class="metric-label">deferred</div><div class="metric-value">{snapshot.queue.deferred}</div></div>
+					<div class="metric"><div class="metric-label">failed</div><div class="metric-value">{snapshot.queue.failed}</div></div>
+				</div>
+			{:else}
+				<div class="stat-row">
+					<div class="metric"><div class="metric-label">pending</div><div class="metric-value">{snapshot.embeddingQueue.pending}</div></div>
+					<div class="metric"><div class="metric-label">running</div><div class="metric-value">{snapshot.embeddingQueue.running}</div></div>
+					<div class="metric"><div class="metric-label">deferred</div><div class="metric-value">{snapshot.embeddingQueue.deferred}</div></div>
+					<div class="metric"><div class="metric-label">failed</div><div class="metric-value">{snapshot.embeddingQueue.failed}</div></div>
+				</div>
+			{/if}
 		</section>
 
 		<section class="panel">
@@ -777,5 +813,35 @@ font-weight: 500;
 
 .enqueue-btn:hover {
 background: #059669;
+}
+
+.tabs {
+	display: flex;
+	gap: 4px;
+	background: #f1f5f9;
+	padding: 2px;
+	border-radius: 6px;
+}
+
+.tab-btn {
+	padding: 4px 10px;
+	font-size: 0.75rem;
+	font-weight: 500;
+	border: none;
+	background: transparent;
+	border-radius: 4px;
+	cursor: pointer;
+	color: #64748b;
+	transition: all 0.2s;
+}
+
+.tab-btn:hover {
+	color: #475569;
+}
+
+.tab-btn.active {
+	background: white;
+	color: #0f172a;
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 </style>

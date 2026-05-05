@@ -108,6 +108,7 @@ impl Default for KnowFlowSnapshot {
 #[serde(rename_all = "camelCase")]
 pub struct MonitorSnapshotData {
     pub queue: QueueSnapshot,
+    pub embedding_queue: QueueSnapshot,
     pub worker: WorkerSnapshot,
     pub eval: EvalSnapshot,
     pub automation: AutomationSnapshot,
@@ -119,6 +120,7 @@ impl Default for MonitorSnapshotData {
     fn default() -> Self {
         Self {
             queue: QueueSnapshot::default(),
+            embedding_queue: QueueSnapshot::default(),
             worker: WorkerSnapshot::default(),
             eval: EvalSnapshot::default(),
             automation: AutomationSnapshot::default(),
@@ -185,6 +187,7 @@ pub enum OutboundBroadcast {
 pub struct SnapshotCliPayload {
     pub ts: i64,
     pub queue: QueueSnapshot,
+    pub embedding_queue: QueueSnapshot,
     pub worker: WorkerSnapshot,
     pub eval: EvalSnapshot,
     #[serde(default)]
@@ -201,6 +204,7 @@ impl From<SnapshotCliPayload> for SnapshotEnvelope {
             ts: value.ts,
             data: MonitorSnapshotData {
                 queue: value.queue,
+                embedding_queue: value.embedding_queue,
                 worker: value.worker,
                 eval: value.eval,
                 automation: value.automation,

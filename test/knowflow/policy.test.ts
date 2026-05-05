@@ -44,7 +44,7 @@ describe('scheduler policy', () => {
     expect(isRunnable(createTask({ status: 'running' }), now)).toBe(false);
   });
 
-  it('decideFailureAction defers first and fails at max attempts', () => {
+  it('decideFailureAction retries immediately and fails at max attempts', () => {
     const deferAction = decideFailureAction(createTask({ attempts: 0 }), 'temporary', {
       now: 1_000,
       maxAttempts: 3,
@@ -55,7 +55,7 @@ describe('scheduler policy', () => {
     expect(deferAction.kind).toBe('defer');
     if (deferAction.kind === 'defer') {
       expect(deferAction.attempts).toBe(1);
-      expect(deferAction.nextRunAt).toBe(1_200);
+      expect(deferAction.nextRunAt).toBe(1_000);
       expect(deferAction.errorReason).toBe('temporary');
     }
 
@@ -70,6 +70,19 @@ describe('scheduler policy', () => {
     }
   });
 
+  it('decideFailureAction fails immediately when retryable=false', () => {
+    const action = decideFailureAction(createTask({ attempts: 0 }), 'timeout', {
+      now: 1_000,
+      maxAttempts: 3,
+      retryable: false,
+    });
+    expect(action.kind).toBe('fail');
+    if (action.kind === 'fail') {
+      expect(action.attempts).toBe(1);
+      expect(action.errorReason).toBe('timeout');
+    }
+  });
+
   it('computeBackoffWithJitterMs spreads retry time within configured jitter range', () => {
     const baseBackoff = 1_000;
     expect(computeBackoffWithJitterMs(baseBackoff, 0.2, () => 0)).toBe(800);
@@ -77,7 +90,7 @@ describe('scheduler policy', () => {
     expect(computeBackoffWithJitterMs(baseBackoff, 0.2, () => 1)).toBe(1_200);
   });
 
-  it('decideFailureAction keeps backoff at or below maxBackoffMs even with jitter', () => {
+  it('decideFailureAction ignores backoff knobs and keeps retry immediate', () => {
     const action = decideFailureAction(createTask({ attempts: 10 }), 'retry', {
       now: 1_000,
       maxAttempts: 99,
@@ -88,7 +101,7 @@ describe('scheduler policy', () => {
     });
     expect(action.kind).toBe('defer');
     if (action.kind === 'defer') {
-      expect(action.nextRunAt).toBe(6_000);
+      expect(action.nextRunAt).toBe(1_000);
     }
   });
 });

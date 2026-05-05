@@ -208,6 +208,36 @@ export async function createRunningDistillation(input: {
   return row;
 }
 
+export async function resetDistillationToRunning(input: {
+  id: string;
+  modelProvider: 'deterministic' | 'local-llm' | 'openai' | 'bedrock';
+  modelName?: string;
+  turnCount: number;
+  messageCount: number;
+  metadata?: Record<string, unknown>;
+}): Promise<SessionDistillationRecord> {
+  const [row] = await db
+    .update(sessionDistillations)
+    .set({
+      status: 'running',
+      modelProvider: input.modelProvider,
+      modelName: input.modelName,
+      turnCount: input.turnCount,
+      messageCount: input.messageCount,
+      keptCount: 0,
+      droppedCount: 0,
+      metadata: input.metadata ?? {},
+      error: null,
+      updatedAt: new Date(),
+      completedAt: null,
+    })
+    .where(eq(sessionDistillations.id, input.id))
+    .returning();
+
+  if (!row) throw new Error(`Failed to reset session distillation: ${input.id}`);
+  return row;
+}
+
 export async function replaceKnowledgeCandidates(
   distillationId: string,
   candidates: KnowledgeCandidate[],

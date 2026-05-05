@@ -68,4 +68,5 @@ export interface DistillSessionResult {
   modelName?: string;
   candidates: KnowledgeCandidate[];
   error?: string;
+  errorKind?: string;
 }

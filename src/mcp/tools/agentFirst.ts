@@ -88,6 +88,8 @@ const recordTaskNoteSchema = z.object({
     .optional(),
   files: z.array(z.string()).optional(),
   metadata: z.record(z.unknown()).optional(),
+  triggerPhrases: z.array(z.string()).optional(),
+  appliesWhen: z.array(z.string()).optional(),
   confidence: z.number().optional(),
   source: z.enum(['manual', 'task', 'review', 'onboarding', 'import']).optional(),
 });
@@ -114,7 +116,17 @@ const reviewTaskSchema = z.object({
   }),
 });
 
-const agenticSearchRunner = new AgenticSearchRunner();
+type AgenticSearchRunnerLike = Pick<AgenticSearchRunner, 'run'>;
+
+let agenticSearchRunner: AgenticSearchRunnerLike = new AgenticSearchRunner();
+
+export function setAgenticSearchRunnerForTest(runner: AgenticSearchRunnerLike): void {
+  agenticSearchRunner = runner;
+}
+
+export function resetAgenticSearchRunnerForTest(): void {
+  agenticSearchRunner = new AgenticSearchRunner();
+}
 
 export const agentFirstTools: ToolEntry[] = [
   {

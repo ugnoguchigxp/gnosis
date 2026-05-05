@@ -6,6 +6,18 @@ import {
   rejectCandidate,
 } from '../sessionSummary/repository.js';
 
+type RecordTaskNoteFn = typeof recordTaskNote;
+
+let recordTaskNoteImpl: RecordTaskNoteFn = recordTaskNote;
+
+export function setRecordTaskNoteForTest(fn: RecordTaskNoteFn): void {
+  recordTaskNoteImpl = fn;
+}
+
+export function resetRecordTaskNoteForTest(): void {
+  recordTaskNoteImpl = recordTaskNote;
+}
+
 function mapKind(
   kind: string,
 ):
@@ -55,7 +67,7 @@ export async function recordSessionKnowledgeCandidate(candidateId: string) {
         })
     : [];
 
-  const note = await recordTaskNote({
+  const note = await recordTaskNoteImpl({
     content: `${candidate.title}\n\n${candidate.statement}`.trim(),
     title: candidate.title,
     kind: mapKind(candidate.kind),

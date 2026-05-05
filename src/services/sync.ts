@@ -299,7 +299,7 @@ export async function syncAllAgentLogs() {
           source: 'cron',
           requestedBy: 'sync',
           sourceGroup: `system/session_distillation/${sessionId}`,
-          priority: 92,
+          priority: 89,
           metadata: {
             systemTask: {
               type: 'session_distillation',

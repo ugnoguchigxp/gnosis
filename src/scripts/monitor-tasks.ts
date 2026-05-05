@@ -1,8 +1,9 @@
-import { desc, inArray, sql } from 'drizzle-orm';
+import { desc, sql } from 'drizzle-orm';
 import { closeDbPool, db } from '../db/index.js';
 import { topicTasks } from '../db/schema.js';
 import { parseArgMap, readStringFlag } from '../services/knowflow/utils/args.js';
 import { renderOutput, resolveOutputFormat } from '../services/knowflow/utils/output.js';
+import { isEmbeddingSystemTaskPayload } from './monitor-queue-utils.js';
 
 type TaskEntry = {
   id: string;
@@ -18,6 +19,7 @@ type TaskEntry = {
   payload: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
+  queueType: 'knowflow' | 'embedding';
 };
 
 const run = async (): Promise<void> => {
@@ -51,6 +53,9 @@ const run = async (): Promise<void> => {
       typeof row.payload === 'object' && row.payload !== null
         ? (row.payload as Record<string, unknown>)
         : {};
+    const queueType: TaskEntry['queueType'] = isEmbeddingSystemTaskPayload(payload)
+      ? 'embedding'
+      : 'knowflow';
     return {
       id: row.id,
       topic: typeof payload.topic === 'string' ? payload.topic : null,
@@ -65,6 +70,7 @@ const run = async (): Promise<void> => {
       payload,
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
+      queueType,
     };
   });
 

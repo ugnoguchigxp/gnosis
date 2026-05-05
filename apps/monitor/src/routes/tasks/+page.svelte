@@ -12,6 +12,8 @@ let loading = $state(true);
 let errorMessage = $state<string | null>(null);
 // biome-ignore lint/style/useConst: $state value is reassigned via tab click handlers
 let activeTab = $state<TaskStatusGroup>('active');
+// biome-ignore lint/style/useConst: $state value is reassigned via tab click handlers
+let activeQueueTab = $state<'knowflow' | 'embedding'>('knowflow');
 
 let detailOpen = $state(false);
 let selectedTask = $state<TaskHistoryEntry | null>(null);
@@ -36,10 +38,14 @@ const loadTasks = async () => {
   }
 };
 
+const filteredTasksByQueue = $derived(tasks.filter((t) => t.queueType === activeQueueTab));
+
 const groupedTasks = $derived.by(() => {
-  const upcoming = tasks.filter((t) => ['pending', 'deferred'].includes(t.status));
-  const active = tasks.filter((t) => t.status === 'running');
-  const history = tasks.filter((t) => ['done', 'failed', 'unknown'].includes(t.status));
+  const upcoming = filteredTasksByQueue.filter((t) => ['pending', 'deferred'].includes(t.status));
+  const active = filteredTasksByQueue.filter((t) => t.status === 'running');
+  const history = filteredTasksByQueue.filter((t) =>
+    ['done', 'failed', 'unknown'].includes(t.status),
+  );
   return { upcoming, active, history };
 });
 
@@ -245,6 +251,10 @@ const handleDefer = async (task: TaskHistoryEntry, deferMinutes = 15) => {
 
 onMount(() => {
   void loadTasks();
+  const timer = setInterval(() => {
+    void loadTasks();
+  }, 10_000);
+  return () => clearInterval(timer);
 });
 </script>
 
@@ -258,6 +268,25 @@ onMount(() => {
         </div>
         <button type="button" class="refresh-btn" onclick={loadTasks} disabled={loading}>
             {loading ? 'Refreshing...' : 'Refresh'}
+        </button>
+    </div>
+
+    <div class="queue-tabs">
+        <button 
+            type="button"
+            class="queue-tab-btn" 
+            class:active={activeQueueTab === 'knowflow'} 
+            onclick={() => activeQueueTab = 'knowflow'}
+        >
+            KnowFlow Queue
+        </button>
+        <button 
+            type="button"
+            class="queue-tab-btn" 
+            class:active={activeQueueTab === 'embedding'} 
+            onclick={() => activeQueueTab = 'embedding'}
+        >
+            Embedding Queue
         </button>
     </div>
 
@@ -615,5 +644,39 @@ onMount(() => {
         color: var(--accent-danger);
         background: rgba(239, 68, 68, 0.1);
         border-radius: 8px;
+    }
+
+    .queue-tabs {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 1rem;
+        border-bottom: 1px solid var(--panel-border);
+        padding-bottom: 8px;
+    }
+    .queue-tab-btn {
+        padding: 6px 12px;
+        border: none;
+        background: transparent;
+        color: var(--text-secondary);
+        cursor: pointer;
+        font-size: 1rem;
+        font-weight: 600;
+        position: relative;
+        transition: all 0.2s;
+    }
+    .queue-tab-btn.active {
+        color: var(--accent-primary);
+    }
+    .queue-tab-btn.active::after {
+        content: '';
+        position: absolute;
+        bottom: -9px;
+        left: 0;
+        right: 0;
+        height: 2px;
+        background: var(--accent-primary);
+    }
+    .queue-tab-btn:hover:not(.active) {
+        color: var(--text-primary);
     }
 </style>

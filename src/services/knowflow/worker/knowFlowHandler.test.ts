@@ -30,6 +30,40 @@ const makeDatabase = () => {
 };
 
 describe('knowFlowHandler', () => {
+  it('fails immediately when session_distillation receives an already aborted signal', async () => {
+    const systemTask: TopicTask = {
+      ...defaultTask,
+      id: 'system-task-1',
+      topic: '__system__/session_distillation/test-session',
+      metadata: {
+        systemTask: {
+          type: 'session_distillation',
+          payload: {
+            sessionId: 'test-session',
+            provider: 'auto',
+            force: false,
+            promote: false,
+          },
+        },
+      },
+    };
+    const abortController = new AbortController();
+    abortController.abort();
+
+    const handler = createKnowFlowTaskHandler({
+      evidenceProvider: vi.fn(),
+      logger: testLogger,
+    });
+
+    const result = await handler(systemTask, abortController.signal);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('errorKind=AbortError');
+      expect(result.retryable).toBe(false);
+    }
+  });
+
   it('records a research note and completes the task', async () => {
     const db = makeDatabase();
     const mockEvidenceProvider = vi.fn().mockResolvedValue({

@@ -37,6 +37,7 @@ export type KnowFlowSnapshot = {
 
 export type MonitorSnapshotData = {
   queue: QueueSnapshot;
+  embeddingQueue: QueueSnapshot;
   worker: WorkerSnapshot;
   eval: EvalSnapshot;
   automation: AutomationSnapshot;
@@ -84,6 +85,7 @@ export type TaskHistoryEntry = {
   payload: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
+  queueType: 'knowflow' | 'embedding';
 };
 
 export type TaskDetailLogSnippet = {

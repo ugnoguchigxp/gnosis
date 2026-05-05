@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 
 const mockApproveCandidate = mock();
 const mockGetCandidateById = mock();
@@ -13,14 +13,12 @@ mock.module('../src/services/sessionSummary/repository.js', () => ({
   rejectCandidate: mockRejectCandidate,
 }));
 
-mock.module('../src/services/agentFirst.js', () => ({
-  recordTaskNote: mockRecordTaskNote,
-}));
-
 import {
   approveSessionKnowledgeCandidate,
   recordSessionKnowledgeCandidate,
   rejectSessionKnowledgeCandidate,
+  resetRecordTaskNoteForTest,
+  setRecordTaskNoteForTest,
 } from '../src/services/sessionKnowledge/approval.js';
 
 describe('sessionKnowledge approval service', () => {
@@ -30,6 +28,11 @@ describe('sessionKnowledge approval service', () => {
     mockMarkCandidateRecorded.mockReset();
     mockRejectCandidate.mockReset();
     mockRecordTaskNote.mockReset();
+    setRecordTaskNoteForTest(mockRecordTaskNote as never);
+  });
+
+  afterEach(() => {
+    resetRecordTaskNoteForTest();
   });
 
   it('rejects record when candidate is not approved', async () => {

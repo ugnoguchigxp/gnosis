@@ -169,14 +169,21 @@ export async function runTask(
       return {
         ok: result.status === 'succeeded',
         processed: true,
-        summary: `session=${result.sessionKey} status=${result.status} keep=${result.keptCount} drop=${result.droppedCount} promoted=${result.promotedCount}`,
+        summary: `session=${result.sessionKey} status=${result.status} keep=${
+          result.keptCount
+        } drop=${result.droppedCount} promoted=${result.promotedCount}${
+          result.errorKind ? ` errorKind=${result.errorKind}` : ''
+        }`,
         partialFailures: result.status === 'succeeded' ? 0 : 1,
-        error: result.error,
+        error: result.errorKind
+          ? `${result.errorKind}${result.error ? `: ${result.error}` : ''}`
+          : result.error,
         stats: {
           distillationId: result.distillationId,
           turnCount: result.turnCount,
           messageCount: result.messageCount,
           modelProvider: result.modelProvider,
+          errorKind: result.errorKind,
         },
       };
     }

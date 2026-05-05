@@ -48,6 +48,7 @@ export const decideFailureAction = (
   options?: {
     now?: number;
     maxAttempts?: number;
+    retryable?: boolean;
     baseBackoffMs?: number;
     maxBackoffMs?: number;
     jitterRatio?: number;
@@ -56,10 +57,10 @@ export const decideFailureAction = (
 ): FailureAction => {
   const now = options?.now ?? Date.now();
   const maxAttempts = options?.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
-  const maxBackoffMs = options?.maxBackoffMs ?? DEFAULT_MAX_BACKOFF_MS;
   const attempts = task.attempts + 1;
+  const retryable = options?.retryable ?? true;
 
-  if (attempts >= maxAttempts) {
+  if (!retryable || attempts >= maxAttempts) {
     return {
       kind: 'fail',
       attempts,
@@ -67,19 +68,12 @@ export const decideFailureAction = (
     };
   }
 
-  const baseBackoffMs = computeBackoffMs(attempts, options?.baseBackoffMs, maxBackoffMs);
-  const jitteredBackoffMs = computeBackoffWithJitterMs(
-    baseBackoffMs,
-    options?.jitterRatio,
-    options?.random,
-  );
-  const backoffMs = Math.min(maxBackoffMs, jitteredBackoffMs);
-
   return {
     kind: 'defer',
     attempts,
     errorReason,
-    nextRunAt: now + backoffMs,
+    // Single-thread queue policy: retry immediately and let priority order decide execution.
+    nextRunAt: now,
   };
 };
 
