@@ -172,4 +172,34 @@ describe('llm adapter', () => {
 
     expect(apiCalls).toBe(1);
   });
+
+  it('passes request priority to API invocation', async () => {
+    let observedPriority: unknown;
+    const result = await runLlmTask(
+      {
+        task: 'research_note',
+        context: { topic: 'priority' },
+        requestId: 'req-priority',
+        priority: 'high',
+      },
+      {
+        config: {
+          maxRetries: 1,
+          enableCliFallback: false,
+        },
+        deps: {
+          loadPromptTemplate: async () => 'Topic: {{topic}}',
+          invokeApi: async (_prompt, _config, _signal, priority) => {
+            observedPriority = priority;
+            return 'priority accepted';
+          },
+          invokeCli: async () => 'should not be used',
+          logger: noopLogger,
+        },
+      },
+    );
+
+    expect(result.text).toBe('priority accepted');
+    expect(observedPriority).toBe('high');
+  });
 });

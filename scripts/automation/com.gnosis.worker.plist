@@ -26,6 +26,16 @@
         <string>true</string>
         <key>GNOSIS_BACKGROUND_WORKER_ENABLED</key>
         <string>true</string>
+        <key>GNOSIS_BACKGROUND_WORKER_MAX_CONCURRENCY</key>
+        <string>2</string>
+        <key>GNOSIS_EMBED_DAEMON_URL</key>
+        <string>http://127.0.0.1:44512</string>
+        <key>GNOSIS_LLM_CONCURRENCY_LIMIT</key>
+        <string>1</string>
+        <key>LOCAL_LLM_API_BASE_URL</key>
+        <string>http://127.0.0.1:44448</string>
+        <key>LOCAL_LLM_ENABLE_CLI_FALLBACK</key>
+        <string>false</string>
     </dict>
 </dict>
 </plist>

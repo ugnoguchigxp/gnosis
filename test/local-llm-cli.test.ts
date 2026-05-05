@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseAlias, resolveLauncherPlan } from '../src/scripts/local-llm-cli.js';
+import {
+  parseAlias,
+  resolveLauncherPlan,
+  resolveLocalLlmConcurrencyLimit,
+} from '../src/scripts/local-llm-cli.js';
 
 const ROOT_DIR = process.cwd();
 
@@ -50,6 +54,13 @@ describe('local LLM CLI launchers', () => {
     expect(resolveLauncherPlan('gemma4', ['--model', 'custom-model']).args.join(' ')).toContain(
       'custom-model',
     );
+  });
+
+  test('local LLM concurrency is capped at one process', () => {
+    expect(resolveLocalLlmConcurrencyLimit({})).toBe(1);
+    expect(resolveLocalLlmConcurrencyLimit({ GNOSIS_LLM_CONCURRENCY_LIMIT: '1' })).toBe(1);
+    expect(resolveLocalLlmConcurrencyLimit({ GNOSIS_LLM_CONCURRENCY_LIMIT: '4' })).toBe(1);
+    expect(resolveLocalLlmConcurrencyLimit({ GNOSIS_LLM_CONCURRENCY_LIMIT: 'invalid' })).toBe(1);
   });
 
   test('PATH helpers include all command names', () => {

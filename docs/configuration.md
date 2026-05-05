@@ -26,6 +26,7 @@ Gnosis は環境変数を中心に構成されています。一部の機能（K
 | `GNOSIS_DOCTOR_REQUIRE_LOCAL_LLM` | `false` | `bun run doctor` で local-llm API 未起動を失敗扱いにするか |
 | `GNOSIS_ENABLE_AUTOMATION` | `true` | LaunchAgent / background manager などの自動処理を実行するか。停止したい場合だけ `false` を指定 |
 | `GNOSIS_BACKGROUND_WORKER_ENABLED` | `true` | background worker daemon の常駐処理を実行するか。停止したい場合だけ `false` を指定 |
+| `GNOSIS_BACKGROUND_WORKER_MAX_CONCURRENCY` | `2` | background worker の同時処理枠。LLM 実行は local-llm daemon の single-thread queue 側で直列化する |
 | `GNOSIS_NO_WORKERS` | `false` | MCP host 内で background workers を起動しない。`scripts/setup-automation.sh` の `com.gnosis.mcp-host` は worker LaunchAgent との二重起動を避けるため `true` を指定 |
 | `GNOSIS_MCP_HOST_REPLACE_EXISTING` | `false` | 起動時に既存 MCP host が健康な場合、それを shutdown して自プロセスが host を引き継ぐ。LaunchAgent の `KeepAlive` ループ防止用 |
 | `ASTMEND_REPO_PATH` | `../Astmend` | MCP host が Astmend service factory を読み込むローカル repo path |
@@ -44,6 +45,12 @@ Gnosis は環境変数を中心に構成されています。一部の機能（K
 | 変数名 | デフォルト値 | 説明 |
 | :--- | :--- | :--- |
 | `GNOSIS_EMBED_COMMAND` | `services/embedding/.venv/bin/embed` | ベクトル生成スクリプトのフルパス |
+| `GNOSIS_EMBED_DAEMON_URL` | `http://127.0.0.1:44512` | 常駐embedding daemonのURL。空文字を明示するとdaemonを使わずCLI fallbackのみ |
+| `GNOSIS_EMBED_DAEMON_TIMEOUT_MS` | `5000` | daemon呼び出しのタイムアウト |
+| `GNOSIS_EMBED_HIGH_CONCURRENCY` | `8` | MCP/search/review query embedding用の同時実行上限 |
+| `GNOSIS_EMBED_NORMAL_CONCURRENCY` | `2` | 通常登録embedding用の同時実行上限 |
+| `GNOSIS_EMBED_BACKGROUND_CONCURRENCY` | `1` | 背景補完embedding用の同時実行上限 |
+| `GNOSIS_EMBED_BACKGROUND_CHUNK_SIZE` | `8` | 背景補完の1 daemon requestあたりの最大件数 |
 | `GNOSIS_EMBEDDING_DIMENSION` | `384` | ベクトルの次元数（モデルに合わせる必要があります） |
 | `GNOSIS_EMBED_TIMEOUT_MS` | `30000` | 埋め込み生成のタイムアウト |
 
@@ -53,9 +60,14 @@ Gnosis は環境変数を中心に構成されています。一部の機能（K
 | :--- | :--- | :--- |
 | `LOCAL_LLM_API_BASE_URL` | `http://127.0.0.1:44448` | ローカル LLM API のエンドポイント |
 | `LOCAL_LLM_MODEL` | `gemma-4-e4b-it` | 使用するモデル名 |
-| `LOCAL_LLM_ENABLE_CLI_FALLBACK` | `true` | API 失敗時にスクリプトを直接実行するか |
+| `LOCAL_LLM_ENABLE_CLI_FALLBACK` | `false` | API 失敗時にスクリプトを直接実行するか。通常運用では daemon 1本に集約するため無効 |
 | `GNOSIS_LLM_SCRIPT` | `services/local-llm/scripts/gemma4` | 直接実行時のスクリプトパス |
+| `GNOSIS_LLM_CONCURRENCY_LIMIT` | `1` | `gemma4` / `bonsai` 等のローカルLLMプロセス同時実行上限。daemon single-thread 前提のため、1より大きい値は1に丸める |
+| `LOCAL_LLM_DAEMON_PRELOAD` | `true` | local-llm daemon 起動時にモデルを読み込んで ready 状態にする |
+| `LOCAL_LLM_DAEMON_REQUEST_TIMEOUT_MS` | `900000` | daemon 内部 single-thread queue の1リクエスト待機上限 |
 | `LOCAL_LLM_ALLOW_MLX_IN_SEATBELT` | `false` | `CODEX_SANDBOX=seatbelt` で MLX (`gemma4`/`bonsai`) を強制有効化するか（既定は安全のため無効） |
+
+local-llm は `com.gnosis.local-llm` LaunchAgent で1プロセスだけ常駐します。HTTP リクエストは TypeScript 側で直列化せず、daemon 内部の single-worker priority queue に登録されます。追加の poll 間隔を置かず、queue に入ったものから直ちに処理対象になります。CLI fallback を明示的に有効化した場合だけ、プロセス起動を `GNOSIS_LLM_CONCURRENCY_LIMIT=1` のセマフォで守ります。
 | `GNOSIS_CODEX_INITIAL_LOOKBACK_HOURS` | `0` | Codex 初回同期の対象期間。`0` は既存 JSONL を全件対象にする |
 
 ### Memory Loop (Local-first)
@@ -80,6 +92,7 @@ Gnosis は環境変数を中心に構成されています。一部の機能（K
 | 変数名 | デフォルト値 | 説明 |
 | :--- | :--- | :--- |
 | `KNOWFLOW_WORKER_POLL_INTERVAL_MS` | `60000` | タスクキューの監視間隔 |
+| `KNOWFLOW_WORKER_PARALLELISM` | `3` | worker loop 数。実効値は `GNOSIS_BACKGROUND_WORKER_MAX_CONCURRENCY` 以下に制限される |
 | `KNOWFLOW_WORKER_MAX_CONSECUTIVE_ERRORS` | `5` | 連続失敗時の自動停止閾値 |
 | `KNOWFLOW_KEYWORD_CRON_ENABLED` | `true` | Phrase Scout による新規調査フレーズ投入を有効にするか |
 | `KNOWFLOW_KEYWORD_CRON_MAX_TOPICS` | `10` | 1 回の Phrase Scout で queue に投入する最大 topic 数 |

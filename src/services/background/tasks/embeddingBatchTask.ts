@@ -1,7 +1,7 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { db } from '../../../db/index.js';
 import { entities, experienceLogs, sessionKnowledgeCandidates } from '../../../db/schema.js';
-import { generateEmbedding } from '../../memory.js';
+import { generateEmbeddings } from '../../memory.js';
 
 /**
  * 埋め込みベクトルが欠損しているレコードを特定し、一括で生成します。
@@ -16,10 +16,14 @@ export async function embeddingBatchTask(batchSize = 20): Promise<{ processed: n
     .where(isNull(entities.embedding))
     .limit(batchSize);
 
-  for (const ent of pendingEntities) {
-    const text = `${ent.name}: ${ent.description || ''}`;
-    const embedding = await generateEmbedding(text);
-    await db.update(entities).set({ embedding }).where(sql`id = ${ent.id}`);
+  const entityEmbeddings = await generateEmbeddings(
+    pendingEntities.map((ent) => `${ent.name}: ${ent.description || ''}`),
+    { type: 'passage', priority: 'low' },
+  );
+  for (const [index, ent] of pendingEntities.entries()) {
+    const embedding = entityEmbeddings[index];
+    if (!embedding) continue;
+    await db.update(entities).set({ embedding }).where(sql`${entities.id} = ${ent.id}`);
     totalProcessed++;
   }
 
@@ -30,9 +34,14 @@ export async function embeddingBatchTask(batchSize = 20): Promise<{ processed: n
     .where(isNull(experienceLogs.embedding))
     .limit(batchSize);
 
-  for (const log of pendingLogs) {
-    const embedding = await generateEmbedding(log.content);
-    await db.update(experienceLogs).set({ embedding }).where(sql`id = ${log.id}`);
+  const logEmbeddings = await generateEmbeddings(
+    pendingLogs.map((log) => log.content),
+    { type: 'passage', priority: 'low' },
+  );
+  for (const [index, log] of pendingLogs.entries()) {
+    const embedding = logEmbeddings[index];
+    if (!embedding) continue;
+    await db.update(experienceLogs).set({ embedding }).where(sql`${experienceLogs.id} = ${log.id}`);
     totalProcessed++;
   }
 
@@ -59,12 +68,17 @@ export async function embeddingBatchTask(batchSize = 20): Promise<{ processed: n
       )
       .limit(batchSize);
 
-    for (const candidate of pendingCandidates) {
-      const embedding = await generateEmbedding(`${candidate.title}\n${candidate.statement}`);
+    const candidateEmbeddings = await generateEmbeddings(
+      pendingCandidates.map((candidate) => `${candidate.title}\n${candidate.statement}`),
+      { type: 'passage', priority: 'low' },
+    );
+    for (const [index, candidate] of pendingCandidates.entries()) {
+      const embedding = candidateEmbeddings[index];
+      if (!embedding) continue;
       await db
         .update(sessionKnowledgeCandidates)
         .set({ embedding })
-        .where(sql`id = ${candidate.id}`);
+        .where(sql`${sessionKnowledgeCandidates.id} = ${candidate.id}`);
       totalProcessed++;
     }
   }

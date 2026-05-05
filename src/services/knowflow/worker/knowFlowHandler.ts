@@ -292,6 +292,7 @@ export const createMcpEvidenceProvider = (
           source_texts: formatFetchedSourceTexts(fetchedContents),
         },
         requestId: task.id,
+        priority: 'low',
       },
       {
         config: options?.llmConfig,

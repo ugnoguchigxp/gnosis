@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.gnosis.local-llm</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{PROJECT_ROOT}}/services/local-llm/scripts/run_openai_api.sh</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>{{PROJECT_ROOT}}/services/local-llm</string>
+    <key>StandardOutPath</key>
+    <string>{{PROJECT_ROOT}}/logs/local-llm.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{PROJECT_ROOT}}/logs/local-llm.log</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>GEMMA4_API_HOST</key>
+        <string>127.0.0.1</string>
+        <key>GEMMA4_API_PORT</key>
+        <string>44448</string>
+        <key>LOCAL_LLM_DAEMON_PRELOAD</key>
+        <string>true</string>
+        <key>LOCAL_LLM_DAEMON_REQUEST_TIMEOUT_MS</key>
+        <string>900000</string>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+    </dict>
+</dict>
+</plist>

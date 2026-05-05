@@ -3,39 +3,31 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.gnosis.mcp-host</string>
+    <string>com.gnosis.embedding-batch</string>
     <key>ProgramArguments</key>
     <array>
         <string>{{BUN_PATH}}</string>
         <string>run</string>
-        <string>src/scripts/mcp-host.ts</string>
+        <string>src/scripts/embedding-batch-worker.ts</string>
     </array>
     <key>WorkingDirectory</key>
     <string>{{PROJECT_ROOT}}</string>
+    <key>StartInterval</key>
+    <integer>300</integer>
     <key>StandardOutPath</key>
-    <string>{{PROJECT_ROOT}}/logs/mcp-host.log</string>
+    <string>{{PROJECT_ROOT}}/logs/embedding-batch.log</string>
     <key>StandardErrorPath</key>
-    <string>{{PROJECT_ROOT}}/logs/mcp-host.log</string>
+    <string>{{PROJECT_ROOT}}/logs/embedding-batch.log</string>
     <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
     <true/>
     <key>EnvironmentVariables</key>
     <dict>
         <key>GNOSIS_ENABLE_AUTOMATION</key>
         <string>true</string>
-        <key>GNOSIS_NO_WORKERS</key>
-        <string>true</string>
-        <key>GNOSIS_MCP_HOST_REPLACE_EXISTING</key>
-        <string>true</string>
         <key>GNOSIS_EMBED_DAEMON_URL</key>
         <string>http://127.0.0.1:44512</string>
-        <key>GNOSIS_LLM_CONCURRENCY_LIMIT</key>
-        <string>1</string>
-        <key>LOCAL_LLM_API_BASE_URL</key>
-        <string>http://127.0.0.1:44448</string>
-        <key>LOCAL_LLM_ENABLE_CLI_FALLBACK</key>
-        <string>false</string>
+        <key>GNOSIS_EMBED_BATCH_SIZE</key>
+        <string>50</string>
     </dict>
 </dict>
 </plist>

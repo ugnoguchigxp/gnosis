@@ -292,21 +292,6 @@ export async function syncAllAgentLogs() {
         },
       });
       summary.queuedTasks.push(synthesisTask.task.id);
-      const embeddingTask = await queue.enqueue({
-        topic: '__system__/embedding_batch',
-        mode: 'directed',
-        source: 'cron',
-        requestedBy: 'sync',
-        sourceGroup: 'system/embedding_batch',
-        priority: 91,
-        metadata: {
-          systemTask: {
-            type: 'embedding_batch',
-            payload: { batchSize: 50 },
-          },
-        },
-      });
-      summary.queuedTasks.push(embeddingTask.task.id);
       for (const sessionId of insertedDistillationSessionIds) {
         const sessionTask = await queue.enqueue({
           topic: `__system__/session_distillation/${sessionId}`,

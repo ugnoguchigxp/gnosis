@@ -32,6 +32,7 @@ class ChatCompletionRequest(BaseModel):
     temperature: float = 0.0
     max_tokens: int = 1024
     tools: list[ChatTool] | None = None
+    priority: Literal["high", "normal", "low"] = "normal"
 
 
 class ResponseMessage(BaseModel):

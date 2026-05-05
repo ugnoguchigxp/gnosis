@@ -10,7 +10,7 @@ import {
 import { envBoolean, envNumber } from '../config.js';
 import { RuntimeLifecycle } from '../runtime/lifecycle.js';
 import { registerProcess } from '../runtime/processRegistry.js';
-import { MCP_HOST_SOURCE_FINGERPRINT } from './hostFingerprint.js';
+import { computeMcpHostSourceFingerprint } from './hostFingerprint.js';
 import {
   type McpHostHealth,
   type McpHostToolResult,
@@ -57,8 +57,8 @@ async function waitForHost(rootDir: string, timeoutMs: number): Promise<McpHostH
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
-function hostMatchesCurrentSource(health: McpHostHealth): boolean {
-  return health.sourceFingerprint === MCP_HOST_SOURCE_FINGERPRINT;
+function hostMatchesCurrentSource(rootDir: string, health: McpHostHealth): boolean {
+  return health.sourceFingerprint === computeMcpHostSourceFingerprint(rootDir);
 }
 
 async function waitForHostExit(rootDir: string, timeoutMs: number): Promise<void> {
@@ -105,13 +105,14 @@ async function ensureHostRunning(rootDir: string): Promise<void> {
     }
 
     if (health) {
-      if (hostMatchesCurrentSource(health)) return;
+      if (hostMatchesCurrentSource(rootDir, health)) return;
       const replaceStale = envBoolean(process.env.GNOSIS_MCP_HOST_REPLACE_STALE, true);
       if (!replaceStale) {
+        const currentFingerprint = computeMcpHostSourceFingerprint(rootDir);
         throw new Error(
           `MCP host source fingerprint mismatch: running=${
             health.sourceFingerprint ?? 'unknown'
-          }, current=${MCP_HOST_SOURCE_FINGERPRINT}`,
+          }, current=${currentFingerprint}`,
         );
       }
       await shutdownStaleHost(rootDir);

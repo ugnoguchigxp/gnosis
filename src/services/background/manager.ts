@@ -83,7 +83,6 @@ export function startBackgroundWorkers(): void {
           logger: defaultStructuredLogger,
         });
 
-        // topic_tasks に system task を投入（単一キュー運用）
         await queueRepository.enqueue({
           topic: '__system__/synthesis',
           mode: 'directed',
@@ -95,20 +94,6 @@ export function startBackgroundWorkers(): void {
             systemTask: {
               type: 'synthesis',
               payload: { maxFailures: 0 },
-            },
-          },
-        });
-        await queueRepository.enqueue({
-          topic: '__system__/embedding_batch',
-          mode: 'directed',
-          source: 'cron',
-          requestedBy: 'background-manager',
-          sourceGroup: 'system/embedding_batch',
-          priority: 91,
-          metadata: {
-            systemTask: {
-              type: 'embedding_batch',
-              payload: { batchSize: 50 },
             },
           },
         });

@@ -240,6 +240,7 @@ const defaultScoutPhrases = async (input: {
       max_topics: input.maxTopics,
     },
     requestId: input.requestId,
+    priority: 'low',
   });
   return parsePhraseLines(result.text, input.maxTopics);
 };

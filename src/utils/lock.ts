@@ -61,10 +61,11 @@ export async function withGlobalSemaphore<T>(
               }
             }
 
-            // 10分以上経過したロック（以前は30分）、または有効なPIDが明確に死んでいるロックのみ削除
+            // 実行中のLLMは10分を超えることがあるため、生存PIDのロックは年齢だけでは消さない。
             const staleByAge = Date.now() - stats.mtimeMs > 10 * 60 * 1000;
             const staleByDeadPid = !Number.isNaN(pid) && !isAlive;
-            if (staleByAge || staleByDeadPid) {
+            const staleByInvalidOldPid = Number.isNaN(pid) && staleByAge;
+            if (staleByDeadPid || staleByInvalidOldPid) {
               fs.unlinkSync(lockFile);
               console.error(
                 `[Semaphore] Cleaned up stale lock: ${lockFile} (PID ${pid} alive: ${isAlive})`,

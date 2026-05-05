@@ -41,12 +41,16 @@ const ROOT_DIR = process.cwd();
 const BUN = process.env.GNOSIS_BUN_COMMAND || process.argv[0] || 'bun';
 const IS_WINDOWS = process.platform === 'win32';
 const LAUNCH_AGENT_LABELS = [
+  'com.gnosis.embedding-daemon',
+  'com.gnosis.local-llm',
+  'com.gnosis.embedding-batch',
   'com.gnosis.sync',
   'com.gnosis.reflect',
   'com.gnosis.worker',
   'com.gnosis.guidance',
   'com.gnosis.report',
   'com.gnosis.process-watchdog',
+  'com.gnosis.mcp-host',
 ];
 
 async function runCapture(spec: CommandSpec): Promise<CommandOutput> {
@@ -120,20 +124,9 @@ function resolveEmbedPath(): string {
 }
 
 async function checkLocalLlmHealth(): Promise<CheckResult> {
-  const base = process.env.LOCAL_LLM_API_BASE_URL?.trim();
+  const configuredBase = process.env.LOCAL_LLM_API_BASE_URL?.trim();
+  const base = configuredBase || GNOSIS_CONSTANTS.LOCAL_LLM_API_BASE_URL_DEFAULT;
   const requireLocalLlm = process.env.GNOSIS_DOCTOR_REQUIRE_LOCAL_LLM === 'true';
-  if (!base) {
-    return {
-      name: 'local-llm health',
-      status: requireLocalLlm ? 'FAIL' : 'OK',
-      message: requireLocalLlm
-        ? 'LOCAL_LLM_API_BASE_URL is not set.'
-        : 'skipped (LOCAL_LLM_API_BASE_URL is not set)',
-      fix: requireLocalLlm
-        ? 'Set LOCAL_LLM_API_BASE_URL or unset GNOSIS_DOCTOR_REQUIRE_LOCAL_LLM.'
-        : undefined,
-    };
-  }
 
   const healthUrl = `${base.replace(/\/+$/, '')}/health`;
   const controller = new AbortController();
@@ -145,7 +138,9 @@ async function checkLocalLlmHealth(): Promise<CheckResult> {
       return {
         name: 'local-llm health',
         status: 'OK',
-        message: `${healthUrl} responded ${response.status}`,
+        message: `${healthUrl} responded ${response.status}${
+          configuredBase ? '' : ' (default endpoint)'
+        }`,
       };
     }
     return {

@@ -140,4 +140,23 @@ describe('lock utility', () => {
     );
     expect(fs.unlinkSync).not.toHaveBeenCalled();
   });
+
+  it('does not clean an old lock while its PID is still alive', async () => {
+    const writeFileSync = mock(() => {
+      const err = new Error('EEXIST');
+      Object.defineProperty(err, 'code', { value: 'EEXIST' });
+      throw err;
+    });
+    const fs = makeLockFs({
+      existsSync: mock(() => true),
+      readFileSync: mock(() => String(process.pid)),
+      statSync: mock(() => ({ mtimeMs: Date.now() - 11 * 60 * 1000 })),
+      writeFileSync,
+    });
+
+    await expect(withGlobalLock('alive-old-lock', async () => 'bad', 10, fs)).rejects.toThrow(
+      /Global lock timeout/,
+    );
+    expect(fs.unlinkSync).not.toHaveBeenCalled();
+  });
 });

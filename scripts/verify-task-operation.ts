@@ -25,7 +25,7 @@ function runCommand(command: string, args: string[]) {
     timeout: COMMAND_TIMEOUT_MS,
     env: {
       ...process.env,
-      GNOSIS_LLM_CONCURRENCY_LIMIT: '3',
+      GNOSIS_LLM_CONCURRENCY_LIMIT: '1',
       KNOWFLOW_LLM_QUEUE_NAME: 'llm-pool',
     },
   });

@@ -10,11 +10,13 @@ const execAsync = promisify(exec);
 
 export type LlmBackend = 'api' | 'cli';
 export type LlmTaskName = string;
+export type LlmRequestPriority = 'high' | 'normal' | 'low';
 
 export type RunLlmTaskInput = {
   task: LlmTaskName;
   context: Record<string, unknown>;
   requestId?: string;
+  priority?: LlmRequestPriority;
 };
 
 export type RunLlmTaskResult = {
@@ -44,7 +46,12 @@ export type LlmLogEvent = {
 };
 
 type AdapterDependencies = {
-  invokeApi: (prompt: string, config: LlmClientConfig, signal?: AbortSignal) => Promise<string>;
+  invokeApi: (
+    prompt: string,
+    config: LlmClientConfig,
+    signal?: AbortSignal,
+    priority?: LlmRequestPriority,
+  ) => Promise<string>;
   invokeCli: (prompt: string, config: LlmClientConfig, signal?: AbortSignal) => Promise<string>;
   loadPromptTemplate: (task: LlmTaskName) => Promise<string>;
   sleep: (ms: number) => Promise<void>;
@@ -73,13 +80,22 @@ const LLM_QUEUE_MAX_CONCURRENCY = parsePositiveEnvInt(
   process.env.KNOWFLOW_LLM_MAX_CONCURRENCY,
   config.llm.concurrencyLimit,
 );
+const EFFECTIVE_LLM_QUEUE_MAX_CONCURRENCY = Math.min(
+  LLM_QUEUE_MAX_CONCURRENCY,
+  config.llm.concurrencyLimit,
+);
 const LLM_QUEUE_TIMEOUT_MS = parsePositiveEnvInt(
   process.env.KNOWFLOW_LLM_QUEUE_TIMEOUT_MS,
   Math.max(GNOSIS_CONSTANTS.LLM_QUEUE_TIMEOUT_MS_DEFAULT, config.knowflow.llm.timeoutMs * 4),
 );
 
 const withKnowflowLlmQueue = async <T>(fn: () => Promise<T>): Promise<T> =>
-  withGlobalSemaphore(LLM_QUEUE_NAME, LLM_QUEUE_MAX_CONCURRENCY, fn, LLM_QUEUE_TIMEOUT_MS);
+  withGlobalSemaphore(
+    LLM_QUEUE_NAME,
+    EFFECTIVE_LLM_QUEUE_MAX_CONCURRENCY,
+    fn,
+    LLM_QUEUE_TIMEOUT_MS,
+  );
 
 type OpenAiCompatibleResponse = {
   choices?: Array<{
@@ -120,66 +136,84 @@ const defaultInvokeApi = async (
   prompt: string,
   config: LlmClientConfig,
   signal?: AbortSignal,
+  priority: LlmRequestPriority = 'normal',
 ): Promise<string> => {
   if (signal?.aborted) {
     throw new Error('LLM task aborted by caller before queueing');
   }
 
-  return await withKnowflowLlmQueue(async () => {
-    const url = resolveApiUrl(config.apiBaseUrl, config.apiPath);
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), config.timeoutMs);
+  const url = resolveApiUrl(config.apiBaseUrl, config.apiPath);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), config.timeoutMs);
 
-    if (signal?.aborted) {
-      clearTimeout(timeoutId);
-      throw new Error('LLM task aborted by caller before start');
+  if (signal?.aborted) {
+    clearTimeout(timeoutId);
+    throw new Error('LLM task aborted by caller before start');
+  }
+
+  const abortListener = () => controller.abort();
+  signal?.addEventListener('abort', abortListener, { once: true });
+
+  try {
+    const apiKey = process.env[config.apiKeyEnv];
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+      },
+      body: JSON.stringify({
+        model: config.model,
+        temperature: config.temperature,
+        priority,
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a concise assistant. Return plain text only.',
+          },
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`API request failed: ${response.status} ${text}`);
     }
 
-    const abortListener = () => controller.abort();
-    signal?.addEventListener('abort', abortListener, { once: true });
-
-    try {
-      const apiKey = process.env[config.apiKeyEnv];
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
-        },
-        body: JSON.stringify({
-          model: config.model,
-          temperature: config.temperature,
-          messages: [
-            {
-              role: 'system',
-              content: 'You are a concise assistant. Return plain text only.',
-            },
-            {
-              role: 'user',
-              content: prompt,
-            },
-          ],
-        }),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`API request failed: ${response.status} ${text}`);
-      }
-
-      const payload = (await response.json()) as OpenAiCompatibleResponse;
-      const text = extractLlmText(payload.choices?.[0]?.message?.content);
-      if (!text) {
-        throw new Error('API response does not include message content.');
-      }
-      return text;
-    } finally {
-      clearTimeout(timeoutId);
-      signal?.removeEventListener('abort', abortListener);
+    const payload = (await response.json()) as OpenAiCompatibleResponse;
+    const text = extractLlmText(payload.choices?.[0]?.message?.content);
+    if (!text) {
+      throw new Error('API response does not include message content.');
     }
-  });
+    return text;
+  } finally {
+    clearTimeout(timeoutId);
+    signal?.removeEventListener('abort', abortListener);
+  }
 };
+
+const runCliWithSemaphore = async (
+  command: string,
+  stdin: string | undefined,
+  llmClientConfig: LlmClientConfig,
+  signal?: AbortSignal,
+): Promise<{ stdout: string; stderr: string }> =>
+  withKnowflowLlmQueue(async () => {
+    if (stdin) {
+      return runCommandWithStdin(command, stdin, llmClientConfig.timeoutMs, signal);
+    }
+
+    return execAsync(command, {
+      timeout: llmClientConfig.timeoutMs,
+      maxBuffer: config.llm.maxBuffer,
+      signal,
+    });
+  });
 
 const runCommandWithStdin = (
   command: string,
@@ -254,13 +288,7 @@ const defaultInvokeCli = async (
     stdin = prompt;
   }
 
-  const { stdout, stderr } = stdin
-    ? await runCommandWithStdin(command, stdin, llmClientConfig.timeoutMs, signal)
-    : await execAsync(command, {
-        timeout: llmClientConfig.timeoutMs,
-        maxBuffer: config.llm.maxBuffer,
-        signal,
-      });
+  const { stdout, stderr } = await runCliWithSemaphore(command, stdin, llmClientConfig, signal);
 
   const output = stdout.trim();
   if (output.length === 0) {
@@ -349,7 +377,7 @@ const attemptBackend = async (
     try {
       const raw =
         backend === 'api'
-          ? await deps.invokeApi(prompt, llmConfig, signal)
+          ? await deps.invokeApi(prompt, llmConfig, signal, input.priority ?? 'normal')
           : await deps.invokeCli(prompt, llmConfig, signal);
 
       deps.logger({

@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { GNOSIS_CONSTANTS } from '../constants.js';
 import { withGlobalSemaphore } from '../utils/lock.js';
 
 export type LocalLlmAlias = 'gemma4' | 'qwen' | 'bonsai' | 'openai' | 'bedrock';
@@ -23,6 +24,22 @@ const BUN = process.env.GNOSIS_BUN_COMMAND ?? 'bun';
 const DEFAULT_GEMMA4_MODEL = process.env.GEMMA4_MODEL ?? 'mlx-community/gemma-4-e4b-it-4bit';
 const DEFAULT_QWEN_MODEL = process.env.QWEN_MODEL ?? 'mlx-community/Qwen3-14B-4bit';
 const DEFAULT_BONSAI_MODEL = process.env.BONSAI_MODEL ?? 'prism-ml/Bonsai-8B-mlx-1bit';
+
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  if (!value || value.trim().length === 0) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export function resolveLocalLlmConcurrencyLimit(env: NodeJS.ProcessEnv = process.env): number {
+  return Math.min(
+    GNOSIS_CONSTANTS.LLM_CONCURRENCY_LIMIT_MAX,
+    parsePositiveInt(
+      env.GNOSIS_LLM_CONCURRENCY_LIMIT,
+      GNOSIS_CONSTANTS.LLM_CONCURRENCY_LIMIT_DEFAULT,
+    ),
+  );
+}
 
 const getArgValue = (argv: string[], key: string): string | undefined => {
   const index = argv.indexOf(key);
@@ -118,7 +135,7 @@ async function main(): Promise<void> {
   const alias = parseAlias(argv);
   const plan = resolveLauncherPlan(alias, argv);
 
-  const limit = 3; // システム全体の制限。本来は config から読みたいが、このスクリプトは独立して動くため定数または環境変数で。
+  const limit = resolveLocalLlmConcurrencyLimit();
   const semaphoreName = 'llm-pool';
 
   await withGlobalSemaphore(semaphoreName, limit, async () => {

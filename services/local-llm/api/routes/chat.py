@@ -16,11 +16,9 @@ from api.schemas import (
     create_completion_id,
     now_epoch,
 )
-from core.chat_engine import ChatEngine
-from core.model import get_model_manager
+from core.daemon import get_local_llm_daemon
 
 router = APIRouter(tags=["chat"])
-chat_engine = ChatEngine()
 
 
 def _message_to_dict(message) -> dict[str, object]:
@@ -52,7 +50,8 @@ def _chunk_text(text: str, chunk_size: int = 24):
 
 @router.post("/v1/chat/completions", response_model=ChatCompletionResponse)
 async def chat_completions(request: ChatCompletionRequest):
-    manager = get_model_manager()
+    daemon = get_local_llm_daemon()
+    manager = daemon.manager
 
     try:
         requested_model = manager.validate_model(request.model)
@@ -70,16 +69,20 @@ async def chat_completions(request: ChatCompletionRequest):
 
     async def run_chat_once() -> str:
         try:
-            return await asyncio.to_thread(
-                chat_engine.run_chat,
+            result = await asyncio.to_thread(
+                daemon.chat,
                 messages,
                 requested_model,
                 request.max_tokens,
                 request.temperature,
                 tool_names,
+                request.priority,
             )
+            return str(result["content"])
         except RuntimeError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
+        except TimeoutError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     if request.stream:
         async def event_stream() -> AsyncGenerator[str, None]:

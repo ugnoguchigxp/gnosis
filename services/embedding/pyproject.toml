@@ -17,6 +17,7 @@ dependencies = [
 [project.scripts]
 e5embed = "e5embed.cli:main"
 embed = "e5embed.simple_cli:main"
+e5embed-daemon = "e5embed.daemon:main"
 
 [tool.setuptools]
 packages = ["e5embed"]

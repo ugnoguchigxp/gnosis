@@ -21,7 +21,10 @@ GUIDANCE_PLIST="com.gnosis.guidance.plist"
 REPORT_PLIST="com.gnosis.report.plist"
 WATCHDOG_PLIST="com.gnosis.process-watchdog.plist"
 MCP_HOST_PLIST="com.gnosis.mcp-host.plist"
-PLISTS=("$SYNC_PLIST" "$REFLECT_PLIST" "$WORKER_PLIST" "$GUIDANCE_PLIST" "$REPORT_PLIST" "$WATCHDOG_PLIST" "$MCP_HOST_PLIST")
+LOCAL_LLM_PLIST="com.gnosis.local-llm.plist"
+EMBEDDING_DAEMON_PLIST="com.gnosis.embedding-daemon.plist"
+EMBEDDING_BATCH_PLIST="com.gnosis.embedding-batch.plist"
+PLISTS=("$EMBEDDING_DAEMON_PLIST" "$LOCAL_LLM_PLIST" "$EMBEDDING_BATCH_PLIST" "$SYNC_PLIST" "$REFLECT_PLIST" "$WORKER_PLIST" "$GUIDANCE_PLIST" "$REPORT_PLIST" "$WATCHDOG_PLIST" "$MCP_HOST_PLIST")
 
 # ログディレクトリの作成
 mkdir -p "$PROJECT_ROOT/logs"

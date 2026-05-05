@@ -124,6 +124,47 @@ export const config = {
     1,
     envNumber(process.env.GNOSIS_EMBED_TIMEOUT_MS, GNOSIS_CONSTANTS.EMBED_TIMEOUT_MS_DEFAULT),
   ),
+  embedding: {
+    daemonUrl:
+      process.env.GNOSIS_EMBED_DAEMON_URL === undefined
+        ? GNOSIS_CONSTANTS.EMBED_DAEMON_URL_DEFAULT
+        : process.env.GNOSIS_EMBED_DAEMON_URL.trim(),
+    daemonTimeoutMs: Math.max(
+      1,
+      envNumber(
+        process.env.GNOSIS_EMBED_DAEMON_TIMEOUT_MS,
+        GNOSIS_CONSTANTS.EMBED_DAEMON_TIMEOUT_MS_DEFAULT,
+      ),
+    ),
+    highConcurrency: Math.max(
+      1,
+      envNumber(
+        process.env.GNOSIS_EMBED_HIGH_CONCURRENCY,
+        GNOSIS_CONSTANTS.EMBED_HIGH_CONCURRENCY_DEFAULT,
+      ),
+    ),
+    normalConcurrency: Math.max(
+      1,
+      envNumber(
+        process.env.GNOSIS_EMBED_NORMAL_CONCURRENCY,
+        GNOSIS_CONSTANTS.EMBED_NORMAL_CONCURRENCY_DEFAULT,
+      ),
+    ),
+    backgroundConcurrency: Math.max(
+      1,
+      envNumber(
+        process.env.GNOSIS_EMBED_BACKGROUND_CONCURRENCY,
+        GNOSIS_CONSTANTS.EMBED_BACKGROUND_CONCURRENCY_DEFAULT,
+      ),
+    ),
+    backgroundChunkSize: Math.max(
+      1,
+      envNumber(
+        process.env.GNOSIS_EMBED_BACKGROUND_CHUNK_SIZE,
+        GNOSIS_CONSTANTS.EMBED_BACKGROUND_CHUNK_SIZE_DEFAULT,
+      ),
+    ),
+  },
 
   // Bun バイナリのパス
   bunCommand: process.env.GNOSIS_BUN_COMMAND || 'bun',
@@ -273,9 +314,15 @@ export const config = {
       process.env.GNOSIS_LLM_DEFAULT_TIMEOUT_MS,
       GNOSIS_CONSTANTS.LLM_DEFAULT_TIMEOUT_MS_DEFAULT,
     ),
-    concurrencyLimit: envNumber(
-      process.env.GNOSIS_LLM_CONCURRENCY_LIMIT,
-      GNOSIS_CONSTANTS.LLM_CONCURRENCY_LIMIT_DEFAULT,
+    concurrencyLimit: Math.min(
+      GNOSIS_CONSTANTS.LLM_CONCURRENCY_LIMIT_MAX,
+      Math.max(
+        1,
+        envNumber(
+          process.env.GNOSIS_LLM_CONCURRENCY_LIMIT,
+          GNOSIS_CONSTANTS.LLM_CONCURRENCY_LIMIT_DEFAULT,
+        ),
+      ),
     ),
   },
 

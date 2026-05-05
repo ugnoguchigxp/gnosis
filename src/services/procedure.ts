@@ -226,7 +226,8 @@ export async function queryProcedure(
   deps: QueryProcedureDeps = {},
 ): Promise<ProcedureResult | null> {
   const database = deps.database ?? db;
-  const embed = deps.embed ?? generateEmbedding;
+  const embed =
+    deps.embed ?? ((text: string) => generateEmbedding(text, { type: 'query', priority: 'high' }));
   const { contextText, filters } = resolveProcedureOptions(contextOrOptions);
 
   // 1. goal 検索: embedding 類似度 TOP 1

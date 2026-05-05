@@ -69,7 +69,7 @@ export async function recallExperienceLessons(
   database: DbClient = db,
 ): Promise<ExperienceLesson[]> {
   const normalizedLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 5;
-  const embedding = await generateEmbedding(query);
+  const embedding = await generateEmbedding(query, { type: 'query', priority: 'high' });
   const embeddingStr = JSON.stringify(embedding);
 
   const similarity = sql<number>`1 - (${experienceLogs.embedding} <=> ${embeddingStr}::vector)`;

@@ -86,6 +86,7 @@ import { GnosisError } from '../src/domain/errors';
 import {
   deleteMemory,
   generateEmbedding,
+  generateEmbeddings,
   listMemoriesByMetadata,
   saveMemory,
   searchMemory,
@@ -166,6 +167,36 @@ describe('memory service', () => {
       }));
 
       await expect(generateEmbedding('hello')).rejects.toThrow(GnosisError);
+    });
+
+    it('rejects empty batch text before assigning embeddings by index', async () => {
+      await expect(generateEmbeddings(['valid text', '  '])).rejects.toThrow(GnosisError);
+      expect(mockSpawn).not.toHaveBeenCalled();
+    });
+
+    it('chunks low-priority background batches without dropping results', async () => {
+      mockSpawn.mockImplementation(() => ({
+        stdout: {
+          // biome-ignore lint/suspicious/noExplicitAny: mock
+          on: (event: string, cb: any) =>
+            event === 'data' &&
+            cb(Buffer.from(JSON.stringify(new Array(config.embeddingDimension).fill(0.2)))),
+        },
+        stderr: { on: () => {} },
+        // biome-ignore lint/suspicious/noExplicitAny: mock
+        on: (event: string, cb: any) => {
+          if (event === 'close') setTimeout(() => cb(0), 1);
+        },
+        kill: () => {},
+      }));
+
+      const embeddings = await generateEmbeddings(
+        Array.from({ length: 9 }, (_, index) => `background text ${index}`),
+        { priority: 'low', type: 'passage' },
+      );
+
+      expect(embeddings).toHaveLength(9);
+      expect(mockSpawn).toHaveBeenCalledTimes(9);
     });
   });
 

@@ -36,7 +36,7 @@ export async function getOnDemandGuidance(
   minSimilarity = config.guidance.minSimilarity,
   sessionId = config.guidance.sessionId,
 ) {
-  const embedding = await generateEmbedding(query);
+  const embedding = await generateEmbedding(query, { type: 'query', priority: 'high' });
   const embeddingStr = JSON.stringify(embedding);
   const similarity = sql<number>`1 - (${vibeMemories.embedding} <=> ${embeddingStr}::vector)`;
 

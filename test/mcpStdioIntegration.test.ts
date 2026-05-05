@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { type Server, type Socket, createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { MCP_HOST_SOURCE_FINGERPRINT } from '../src/mcp/hostFingerprint.js';
+import {
+  MCP_HOST_SOURCE_FINGERPRINT,
+  computeMcpHostSourceFingerprint,
+} from '../src/mcp/hostFingerprint.js';
 import {
   MCP_HOST_MESSAGE_DELIMITER,
   type McpHostHealth,
@@ -90,6 +93,86 @@ describe('MCP stdio integration', () => {
     return { shutdowns: () => shutdownCount };
   }
 
+  async function startHealthyHost(
+    socketPath: string,
+    sourceFingerprint: string,
+  ): Promise<{
+    shutdowns: () => number;
+    listToolCalls: () => number;
+  }> {
+    let shutdownCount = 0;
+    let listToolCount = 0;
+    staleHost = createServer((socket: Socket) => {
+      let buffer = '';
+      socket.on('data', (chunk) => {
+        buffer += chunk.toString();
+        const parts = buffer.split(MCP_HOST_MESSAGE_DELIMITER);
+        buffer = parts.pop() ?? '';
+        for (const part of parts) {
+          if (!part.trim()) continue;
+          const request = JSON.parse(part) as { id: string; type: string };
+          if (request.type === 'health') {
+            socket.write(
+              `${JSON.stringify({
+                id: request.id,
+                ok: true,
+                result: {
+                  pid: process.pid,
+                  uptimeMs: 1,
+                  socketPath,
+                  services: ['healthy-service'],
+                  sourceFingerprint,
+                  backgroundWorkers: 'disabled',
+                  requestTimeoutMs: 30000,
+                },
+              })}${MCP_HOST_MESSAGE_DELIMITER}`,
+            );
+            continue;
+          }
+          if (request.type === 'listTools') {
+            listToolCount += 1;
+            socket.write(
+              `${JSON.stringify({
+                id: request.id,
+                ok: true,
+                result: {
+                  tools: [
+                    {
+                      name: 'healthy_tool',
+                      description: 'fake healthy tool',
+                      inputSchema: { type: 'object', properties: {} },
+                    },
+                  ],
+                },
+              })}${MCP_HOST_MESSAGE_DELIMITER}`,
+            );
+            continue;
+          }
+          if (request.type === 'shutdown') {
+            shutdownCount += 1;
+            socket.write(
+              `${JSON.stringify({
+                id: request.id,
+                ok: true,
+                result: null,
+              })}${MCP_HOST_MESSAGE_DELIMITER}`,
+            );
+            socket.end();
+            staleHost?.close();
+          }
+        }
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      staleHost?.once('error', reject);
+      staleHost?.listen(socketPath, () => {
+        staleHost?.off('error', reject);
+        resolve();
+      });
+    });
+    return { shutdowns: () => shutdownCount, listToolCalls: () => listToolCount };
+  }
+
   it('starts the stdio server and calls initial_instructions', async () => {
     const runtimeDir = mkdtempSync(join(tmpdir(), 'gnosis-stdio-mcp-'));
     tempDirs.push(runtimeDir);
@@ -170,5 +253,45 @@ describe('MCP stdio integration', () => {
     await sendMcpHostRequest({ type: 'shutdown' }, { socketPath, timeoutMs: 1_000 }).catch(
       () => undefined,
     );
+  });
+
+  it('compares singleton host source against the current request root, not adapter startup state', async () => {
+    const runtimeDir = mkdtempSync(join(tmpdir(), 'gnosis-stdio-current-root-mcp-'));
+    tempDirs.push(runtimeDir);
+    mkdirSync(join(runtimeDir, 'src', 'mcp'), { recursive: true });
+    mkdirSync(join(runtimeDir, 'src', 'scripts'), { recursive: true });
+    writeFileSync(join(runtimeDir, 'package.json'), '{"name":"runtime-root"}\n');
+    writeFileSync(join(runtimeDir, 'src', 'index.ts'), 'export {};\n');
+    writeFileSync(join(runtimeDir, 'src', 'scripts', 'mcp-host.ts'), 'export {};\n');
+    writeFileSync(join(runtimeDir, 'src', 'mcp', 'placeholder.ts'), 'export {};\n');
+
+    const socketPath = join(runtimeDir, 'mcp-host.sock');
+    const lockPath = join(runtimeDir, 'mcp-host.lock');
+    const runtimeFingerprint = computeMcpHostSourceFingerprint(runtimeDir);
+    const healthy = await startHealthyHost(socketPath, runtimeFingerprint);
+
+    transport = new StdioClientTransport({
+      command: process.argv[0] ?? 'bun',
+      args: ['run', join(process.cwd(), 'src/index.ts')],
+      cwd: runtimeDir,
+      env: {
+        ...process.env,
+        GNOSIS_MCP_HOST_AUTOSTART: 'false',
+        GNOSIS_MCP_HOST_SOCKET_PATH: socketPath,
+        GNOSIS_MCP_HOST_LOCK_PATH: lockPath,
+      },
+    });
+    const client = new Client(
+      { name: 'gnosis-stdio-current-root-test', version: '0.0.0' },
+      { capabilities: {} },
+    );
+
+    await client.connect(transport);
+    const tools = await client.listTools();
+
+    expect(runtimeFingerprint).not.toBe(MCP_HOST_SOURCE_FINGERPRINT);
+    expect(healthy.shutdowns()).toBe(0);
+    expect(healthy.listToolCalls()).toBe(1);
+    expect(tools.tools.map((tool) => tool.name)).toContain('healthy_tool');
   });
 });

@@ -55,6 +55,13 @@ class MLXModelManager:
             self._model, self._tokenizer = load(target_model)
             self._model_path = target_model
 
+    def health(self) -> dict[str, Any]:
+        return {
+            "loaded": self._model is not None and self._tokenizer is not None,
+            "modelPath": self._model_path,
+            "modelId": self.model_id,
+        }
+
     def generate_stream(
         self,
         messages: list[dict[str, str]],

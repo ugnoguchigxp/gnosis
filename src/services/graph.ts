@@ -293,7 +293,7 @@ export async function searchEntityByQuery(
   query: string,
   database: Pick<typeof db, 'select'> = db,
 ): Promise<string | null> {
-  const embedding = await generateEmbedding(query);
+  const embedding = await generateEmbedding(query, { type: 'query', priority: 'high' });
   const embeddingStr = JSON.stringify(embedding);
 
   const similarity = sql`1 - (${entities.embedding} <=> ${embeddingStr}::vector)`;
@@ -334,7 +334,10 @@ export async function searchEntitiesByText(
   database: Pick<typeof db, 'select' | 'update'> = db,
   deps: SearchEntitiesDeps = {},
 ) {
-  const embedding = await (deps.embeddingGenerator ?? generateEmbedding)(query);
+  const embedding =
+    deps.embeddingGenerator !== undefined
+      ? await deps.embeddingGenerator(query)
+      : await generateEmbedding(query, { type: 'query', priority: 'high' });
   const embeddingStr = JSON.stringify(embedding);
 
   const similarity = sql<number>`1 - (${entities.embedding} <=> ${embeddingStr}::vector)`;

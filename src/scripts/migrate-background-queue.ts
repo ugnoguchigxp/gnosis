@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { Database } from 'bun:sqlite';
+import { GNOSIS_CONSTANTS } from '../constants.js';
 import { closeDbPool } from '../db/index.js';
 import { PgJsonbQueueRepository } from '../services/knowflow/queue/pgJsonbRepository.js';
 
@@ -65,6 +66,11 @@ function parseJsonObject(raw: string): Record<string, unknown> {
   return {};
 }
 
+function targetPriority(type: SystemTaskType, sourcePriority: number): number {
+  if (type === 'embedding_batch') return GNOSIS_CONSTANTS.EMBED_BACKGROUND_TASK_PRIORITY_DEFAULT;
+  return sourcePriority > 0 ? sourcePriority : 10;
+}
+
 async function run(): Promise<void> {
   const args = process.argv.slice(2);
   const dryRun = args.includes('--dry-run');
@@ -115,7 +121,7 @@ async function run(): Promise<void> {
         source: 'cron',
         requestedBy: 'background-queue-migration',
         sourceGroup: `migration/${type}`,
-        priority: row.priority > 0 ? row.priority : 10,
+        priority: targetPriority(type, row.priority),
         metadata: {
           migratedFromBackgroundTaskId: row.id,
           systemTask: {
