@@ -90,12 +90,14 @@ bun run verify:fast
 bun run verify
 bun run verify:strict
 GNOSIS_DOCTOR_STRICT=1 bun run doctor
+bun run agentic-search:semantic-smoke
 ```
 
 実行内容:
 - `verify:fast` / `verify`: `format-check` / `lint` / `typecheck` / `build` / `test`
 - `verify:strict`: `verify` + `coverage` + `failure-path` + `smoke` + `flaky-check` + `integration-local`
 - `GNOSIS_DOCTOR_STRICT=1 bun run doctor`: 通常診断 + `smoke` + MCP contract snapshot
+- `agentic-search:semantic-smoke`: `agentic_search` の live 回答が現行 public surface と矛盾しないことを確認
 
 ## 日常コマンド
 

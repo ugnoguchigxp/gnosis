@@ -51,10 +51,13 @@ Monitor UI は同じ snapshot を WebSocket で受け取り、queue と gate を
 2. Queue 健全性確認: `bun run monitor:snapshot -- --json`
 3. KnowFlow 変更後: `bun run smoke`
 4. strict 証跡更新: `GNOSIS_DOCTOR_STRICT=1 bun run doctor`
-5. 失敗時: `logs/runs/*.jsonl` の最新 `task.failed` / `background.task.failed` を見る
+5. 失敗分類: `bun run monitor:knowflow-failures -- --json`
+6. 再試行: `bun run monitor:task-action -- --action retry --task-id <id> --json`
+7. 詳細確認: `logs/runs/*.jsonl` の最新 `task.failed` / `background.task.failed` を見る
 
 ## 注意点
 
 - KnowFlow は MCP primary tool ではありません。エージェント向けの通常入口は `agentic_search` です。
 - mock eval は外部サービスの成熟度を測るものではなく、queue/eval 配線の回帰検出用です。
 - local LLM が未設定でも minimal smoke は通る設計にします。
+- `llm_provider_unavailable` は task payload 不正ではなく provider/env/backoff 側の失敗として扱います。

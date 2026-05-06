@@ -1,8 +1,13 @@
 #!/usr/bin/env bun
 
 import { closeDbPool, db } from '../db/index.js';
+import { classifyQueueFailureReason } from './status-report.js';
 
-type Bucket = 'task_timeout_600000ms' | 'llm_pool_lock_timeout' | 'orphaned_or_stale' | 'other';
+type Bucket =
+  | 'task_timeout_600000ms'
+  | 'llm_pool_lock_timeout'
+  | 'orphaned_or_stale'
+  | ReturnType<typeof classifyQueueFailureReason>;
 
 function classify(reason: string | null): Bucket {
   const text = (reason ?? '').toLowerCase();
@@ -10,7 +15,7 @@ function classify(reason: string | null): Bucket {
   if (text.includes('global lock timeout: llm-pool')) return 'llm_pool_lock_timeout';
   if (text.includes('orphaned running task') || text.includes('stale running task'))
     return 'orphaned_or_stale';
-  return 'other';
+  return classifyQueueFailureReason(reason ?? '');
 }
 
 async function main() {

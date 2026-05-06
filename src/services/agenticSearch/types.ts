@@ -32,4 +32,8 @@ export type AgenticSearchTrace = {
     errorCode?: string;
   }>;
   loopCount: number;
+  staleKnowledge?: {
+    withheldCount: number;
+    finalAnswerRejected?: boolean;
+  };
 };

@@ -4,8 +4,14 @@ import { join } from 'node:path';
 import { sql } from 'drizzle-orm';
 import { envBoolean } from '../config.js';
 import { GNOSIS_CONSTANTS } from '../constants.js';
-import { db } from '../db/index.js';
-import { experienceLogs, knowledgeClaims, knowledgeTopics, vibeMemories } from '../db/schema.js';
+import { closeDbPool, db } from '../db/index.js';
+import {
+  experienceLogs,
+  knowledgeClaims,
+  knowledgeTopics,
+  topicTasks,
+  vibeMemories,
+} from '../db/schema.js';
 
 type QualityGateRecord = {
   status?: string;
@@ -26,6 +32,7 @@ const QUALITY_GATE_NAMES = [
   'doctorStrict',
   'onboardingSmoke',
   'smoke',
+  'semanticSmoke',
   'verifyFast',
   'verify',
   'verifyStrict',
@@ -76,8 +83,140 @@ function gateStatus(gates: Record<string, QualityGateRecord>, name: string): str
   return gates[name]?.status ?? 'unknown';
 }
 
-function buildValueReport(): ValueReport {
+type FailedQueueReasonRow = {
+  reason: string;
+  count: number;
+  classification: string;
+};
+
+export function classifyQueueFailureReason(reason: string): string {
+  const normalized = reason.trim().toLowerCase();
+  if (normalized.length === 0 || normalized === 'unknown') return 'unknown';
+  if (
+    normalized.includes('all api attempts failed') ||
+    normalized.includes('provider') ||
+    normalized.includes('api key') ||
+    normalized.includes('rate limit')
+  ) {
+    return 'llm_provider_unavailable';
+  }
+  if (
+    normalized.includes('timed out') ||
+    normalized.includes('timeout') ||
+    normalized.includes('aborted')
+  ) {
+    return 'timeout';
+  }
+  if (
+    normalized.includes('failed query') ||
+    normalized.includes('database') ||
+    normalized.includes('postgres') ||
+    normalized.includes('econnrefused') ||
+    normalized.includes('connection refused')
+  ) {
+    return 'db_connectivity';
+  }
+  if (
+    normalized.includes('validation') ||
+    normalized.includes('invalid') ||
+    normalized.includes('schema') ||
+    normalized.includes('parse') ||
+    normalized.includes('requires ')
+  ) {
+    return 'input_validation';
+  }
+  if (
+    normalized.includes('http ') ||
+    normalized.includes('fetch failed') ||
+    normalized.includes('search failed') ||
+    normalized.includes('network')
+  ) {
+    return 'network_or_fetch';
+  }
+  if (
+    normalized.includes('system_task_exception') ||
+    normalized.includes('unexpected crash') ||
+    normalized.includes('typeerror') ||
+    normalized.includes('referenceerror') ||
+    normalized.includes('worker')
+  ) {
+    return 'worker_runtime';
+  }
+  return 'task_failure';
+}
+
+async function collectQueueBacklogEvidence(): Promise<{
+  reachable: boolean;
+  statuses: {
+    pending: number;
+    running: number;
+    deferred: number;
+    failed: number;
+  } | null;
+  failedReasonClasses: FailedQueueReasonRow[];
+}> {
+  try {
+    const statusRows = await db
+      .select({
+        status: topicTasks.status,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(topicTasks)
+      .where(sql`${topicTasks.status} IN ('pending', 'running', 'deferred', 'failed')`)
+      .groupBy(topicTasks.status);
+
+    const statuses = {
+      pending: 0,
+      running: 0,
+      deferred: 0,
+      failed: 0,
+    };
+    for (const row of statusRows) {
+      if (
+        row.status === 'pending' ||
+        row.status === 'running' ||
+        row.status === 'deferred' ||
+        row.status === 'failed'
+      ) {
+        statuses[row.status] = Number(row.count) || 0;
+      }
+    }
+
+    const failedReasonRows = await db
+      .select({
+        errorReason: sql<string>`COALESCE(${topicTasks.payload}->>'errorReason', 'unknown')`,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(topicTasks)
+      .where(sql`${topicTasks.status} = 'failed'`)
+      .groupBy(sql`COALESCE(${topicTasks.payload}->>'errorReason', 'unknown')`);
+
+    const rows = failedReasonRows.map((row) => {
+      const reason = typeof row.errorReason === 'string' ? row.errorReason : 'unknown';
+      return {
+        reason,
+        count: Number(row.count) || 0,
+        classification: classifyQueueFailureReason(reason),
+      };
+    });
+
+    return {
+      reachable: true,
+      statuses,
+      failedReasonClasses: rows,
+    };
+  } catch {
+    return {
+      reachable: false,
+      statuses: null,
+      failedReasonClasses: [],
+    };
+  }
+}
+
+async function buildValueReport(): Promise<ValueReport> {
   const qualityGates = readQualityGates();
+  const queueBacklog = await collectQueueBacklogEvidence();
   const missingEvidence: string[] = [];
   for (const gate of QUALITY_GATE_NAMES) {
     if (gateStatus(qualityGates, gate) !== 'passed') {
@@ -92,6 +231,15 @@ function buildValueReport(): ValueReport {
     status: gateStatus(qualityGates, gate),
     message: qualityGates[gate]?.message ?? null,
   }));
+  const knownDegradedReasons: Array<Record<string, unknown>> = [...failedOrUnknownGates];
+  if ((queueBacklog.statuses?.failed ?? 0) > 0) {
+    knownDegradedReasons.push({
+      gate: 'queueBacklog',
+      status: 'degraded',
+      message: `failed=${queueBacklog.statuses?.failed ?? 0}`,
+      classifications: queueBacklog.failedReasonClasses.map((row) => row.classification),
+    });
+  }
 
   return {
     generatedAt: new Date().toISOString(),
@@ -104,6 +252,7 @@ function buildValueReport(): ValueReport {
       doctorResult: qualityGates.doctor ?? { status: 'unknown' },
       smokeResult: qualityGates.smoke ?? { status: 'unknown' },
       strictResult: qualityGates.doctorStrict ?? { status: 'unknown' },
+      semanticSmoke: qualityGates.semanticSmoke ?? { status: 'unknown' },
       verifyFast: qualityGates.verifyFast ?? { status: 'unknown' },
       verify: qualityGates.verify ?? { status: 'unknown' },
       verifyStrict: qualityGates.verifyStrict ?? { status: 'unknown' },
@@ -111,10 +260,10 @@ function buildValueReport(): ValueReport {
         command: 'bun run monitor:snapshot -- --json',
         note: 'Use monitor snapshot for live queue, KnowFlow, and backlog interpretation.',
       },
+      queueBacklog,
       latestAgenticSearchSmoke: {
-        command:
-          'bun run agentic-search -- --request "Gnosis の agentic_search 改善で守るべきルールを調べて" --intent plan --change-type mcp --json',
-        note: 'This live smoke is not persisted in quality-gates.json; attach command output when updating value score.',
+        command: 'bun run agentic-search:semantic-smoke',
+        status: gateStatus(qualityGates, 'semanticSmoke'),
       },
       latestReviewTaskSmoke: {
         command: 'bun run smoke',
@@ -124,13 +273,14 @@ function buildValueReport(): ValueReport {
         command: 'rg -n "TODO|存在しない|unavailable_in_minimal_mode" README.md docs',
         note: 'Run before final value-score updates when docs changed.',
       },
-      knownDegradedReasons: failedOrUnknownGates,
+      knownDegradedReasons,
     },
     missingEvidence,
     commands: {
       doctor: 'bun run doctor',
       doctorStrict: 'GNOSIS_DOCTOR_STRICT=1 bun run doctor',
       smoke: 'bun run smoke',
+      semanticSmoke: 'bun run agentic-search:semantic-smoke',
       verifyFast: 'bun run verify:fast',
       verify: 'bun run verify',
       verifyStrict: 'bun run verify:strict',
@@ -165,8 +315,8 @@ function renderValueReport(report: ValueReport): string {
   return `${lines.join('\n')}\n`;
 }
 
-function runValueReport(json: boolean): void {
-  const report = buildValueReport();
+async function runValueReport(json: boolean): Promise<void> {
+  const report = await buildValueReport();
   process.stdout.write(json ? `${JSON.stringify(report, null, 2)}\n` : renderValueReport(report));
 }
 
@@ -226,10 +376,13 @@ async function runNotificationReport() {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.mode === 'value') {
-    runValueReport(args.json);
+    await runValueReport(args.json);
+    await closeDbPool();
     process.exit(0);
   }
   await runNotificationReport();
 }
 
-main();
+if (import.meta.main) {
+  main();
+}

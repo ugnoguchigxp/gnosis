@@ -18,12 +18,14 @@ bun run doctor
 bun test test/mcp/tools/agentFirst.test.ts test/agenticSearch/runner.test.ts test/agenticSearch/llmAdapter.test.ts test/agentic-search-cli.test.ts
 bun test test/mcpContract.test.ts test/mcpToolsSnapshot.test.ts test/mcpHostServices.test.ts test/mcpStdioIntegration.test.ts
 bun run agentic-search -- --request "Gnosis の agentic_search 改善で守るべきルールを調べて" --intent plan --change-type mcp --json
+bun run agentic-search:semantic-smoke
 bun run smoke
 ```
 
 - `review_task` が `unavailable_in_minimal_mode` を返さないこと
 - `agentic_search` が provider の `tool role` protocol error を返さないこと
 - `agentic_search` が自然文回答、または限定回答であることを明示した fallback を返せること
+- `agentic_search` の回答が現行 public surface と矛盾する古い lifecycle 導線を推奨しないこと
 - raw 候補確認で `search_knowledge` を使う場合は、`taskGoal` / `files` / `changeTypes` / `technologies` を明示し、`insufficient_task_context` を pass 扱いしないこと
 - KnowFlow mock eval が pass/fail gate で通ること
 
@@ -52,11 +54,14 @@ bun run verify:strict
 
 ```bash
 bun run monitor:snapshot -- --json
+bun run status-report --json
 ```
 
 - `qualityGates` に直近 gate 結果が出ること
 - queue の `failed` / `deferred` が説明可能であること
 - `knowflow.status` が `healthy` / `idle` / `degraded` のどれかとして解釈できること
+- `status-report` の `queueBacklog.failedReasonClasses` で failed queue の主因が分類されること
+- `status-report` の `missingEvidence` が空、または残項目を release blocker / non-blocker に分類できること
 
 ## 6. Tag
 

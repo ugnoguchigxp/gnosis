@@ -4,6 +4,10 @@ import {
   renderFailureFirewallContextForPrompt,
 } from '../failureFirewall/context.js';
 import { AgenticSearchLlmAdapter } from './llmAdapter.js';
+import {
+  buildPublicSurfaceFallbackAnswer,
+  inspectDeprecatedLifecycleToolMentions,
+} from './publicSurface.js';
 import { saveAgenticAnswer } from './saveAnswer.js';
 import { buildInitialSystemContext } from './systemContext.js';
 import { buildToolFollowupContext } from './toolContext.js';
@@ -153,6 +157,25 @@ function truncateForFallback(text: string, limit: number): string {
   return `${compact.slice(0, limit - 1)}...`;
 }
 
+function isStaleKnowledgeItem(item: KnowledgeFallbackItem): boolean {
+  return !inspectDeprecatedLifecycleToolMentions(`${item.title}\n${item.content}`).ok;
+}
+
+function extractKnowledgeFallbackItems(results: AgenticToolResult[]): KnowledgeFallbackItem[] {
+  return results
+    .filter((result) => result.toolName === 'knowledge_search' && result.ok)
+    .flatMap((result) => {
+      const rawItems = Array.isArray(result.output?.items) ? result.output.items : [];
+      return rawItems
+        .map(toKnowledgeFallbackItem)
+        .filter((item): item is KnowledgeFallbackItem => item !== null);
+    });
+}
+
+function countStaleKnowledgeItems(results: AgenticToolResult[]): number {
+  return extractKnowledgeFallbackItems(results).filter(isStaleKnowledgeItem).length;
+}
+
 function getToolDegraded(result: AgenticToolResult): {
   toolName: AgenticSearchToolName;
   code: string;
@@ -175,14 +198,10 @@ function getToolDegraded(result: AgenticToolResult): {
 
 function buildPrefetchContextMessage(results: AgenticToolResult[]): string {
   const sections: string[] = [];
-  const knowledgeItems = results
-    .filter((result) => result.toolName === 'knowledge_search' && result.ok)
-    .flatMap((result) => {
-      const rawItems = Array.isArray(result.output?.items) ? result.output.items : [];
-      return rawItems
-        .map(toKnowledgeFallbackItem)
-        .filter((item): item is KnowledgeFallbackItem => item !== null);
-    })
+  const allKnowledgeItems = extractKnowledgeFallbackItems(results);
+  const staleKnowledgeCount = allKnowledgeItems.filter(isStaleKnowledgeItem).length;
+  const knowledgeItems = allKnowledgeItems
+    .filter((item) => !isStaleKnowledgeItem(item))
     .slice(0, 5);
 
   if (knowledgeItems.length > 0) {
@@ -202,6 +221,15 @@ function buildPrefetchContextMessage(results: AgenticToolResult[]): string {
             meta ? ` (${meta})` : ''
           }: ${truncateForFallback(item.content, 260)}`;
         }),
+      ].join('\n'),
+    );
+  }
+
+  if (staleKnowledgeCount > 0) {
+    sections.push(
+      [
+        'Withheld stale Gnosis knowledge:',
+        `${staleKnowledgeCount} candidate(s) conflicted with the current public MCP surface and were not included.`,
       ].join('\n'),
     );
   }
@@ -262,21 +290,18 @@ function buildKnowledgeFallbackAnswer(
   results: AgenticToolResult[],
   reason: string,
 ): string | undefined {
-  const items = results
-    .filter((result) => result.ok && result.toolName === 'knowledge_search')
-    .flatMap((result) => {
-      const rawItems = Array.isArray(result.output?.items) ? result.output.items : [];
-      return rawItems
-        .map(toKnowledgeFallbackItem)
-        .filter((item): item is KnowledgeFallbackItem => item !== null);
-    })
+  const staleKnowledgeCount = countStaleKnowledgeItems(results);
+  const items = extractKnowledgeFallbackItems(results)
+    .filter((item) => !isStaleKnowledgeItem(item))
     .slice(0, 5);
 
   const degradedResults = results
     .map(getToolDegraded)
     .filter((item): item is NonNullable<ReturnType<typeof getToolDegraded>> => item !== null);
 
-  if (items.length === 0 && degradedResults.length === 0) return undefined;
+  if (items.length === 0 && degradedResults.length === 0 && staleKnowledgeCount === 0) {
+    return undefined;
+  }
 
   const renderedItems = items
     .map((item, index) => {
@@ -309,6 +334,12 @@ function buildKnowledgeFallbackAnswer(
       ...degradedResults.map((result) =>
         `- ${result.toolName}: ${result.code} ${result.message}`.trim(),
       ),
+      '',
+    );
+  }
+  if (staleKnowledgeCount > 0) {
+    parts.push(
+      `withheldStaleKnowledge: ${staleKnowledgeCount} candidate(s) conflicted with the current public MCP surface.`,
       '',
     );
   }
@@ -373,6 +404,10 @@ export class AgenticSearchRunner {
         ok: result.ok,
         errorCode: result.error?.code,
       });
+    }
+    const stalePrefetchCount = countStaleKnowledgeItems(prefetchResults);
+    if (stalePrefetchCount > 0) {
+      trace.staleKnowledge = { withheldCount: stalePrefetchCount };
     }
     messages.push({
       role: 'system',
@@ -456,6 +491,21 @@ export class AgenticSearchRunner {
       trace.loopCount = loopResult.loopCount;
       const answer = loopResult.finalText.trim();
       if (answer.length > 0) {
+        if (!inspectDeprecatedLifecycleToolMentions(answer).ok) {
+          trace.staleKnowledge = {
+            withheldCount: trace.staleKnowledge?.withheldCount ?? 0,
+            finalAnswerRejected: true,
+          };
+          return {
+            answer: buildPublicSurfaceFallbackAnswer(),
+            toolTrace: trace,
+            degraded: {
+              code: 'STALE_PUBLIC_SURFACE_ANSWER',
+              message: 'Final answer conflicted with current public MCP surface.',
+            },
+            usage,
+          };
+        }
         let savedMemoryId: string | undefined;
         try {
           savedMemoryId = await saveAgenticAnswer({

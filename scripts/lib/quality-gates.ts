@@ -14,6 +14,7 @@ export type QualityGateName =
   | 'doctorStrict'
   | 'onboardingSmoke'
   | 'smoke'
+  | 'semanticSmoke'
   | 'verifyFast'
   | 'verify'
   | 'verifyStrict'

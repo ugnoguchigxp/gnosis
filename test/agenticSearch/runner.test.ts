@@ -208,6 +208,43 @@ describe('AgenticSearchRunner', () => {
     ).toBe(true);
   });
 
+  it('withholds stale lifecycle knowledge from compact context', async () => {
+    const seenMessages: Array<Array<{ role: string; content: string }>> = [];
+    const adapter = {
+      generate: mock(async (messages) => {
+        seenMessages.push(messages);
+        return { text: 'done', toolCalls: [] };
+      }),
+    };
+    const runner = new AgenticSearchRunner(
+      adapter as never,
+      {
+        knowledge_search: async () => ({
+          items: [
+            {
+              id: 'old-1',
+              type: 'procedure',
+              title: 'Old startup flow',
+              content: 'Call activate_project before searching.',
+              score: 0.99,
+            },
+          ],
+        }),
+        brave_search: async () => ({ results: [] }),
+        fetch: async () => ({}),
+      },
+      6,
+      mockLookupFailureFirewallContext as never,
+    );
+
+    const result = await runner.run({ userRequest: 'Gnosis tool flow' });
+
+    const firstTurnText = (seenMessages[0] ?? []).map((message) => message.content).join('\n');
+    expect(firstTurnText).toContain('Withheld stale Gnosis knowledge');
+    expect(firstTurnText).not.toContain('activate_project');
+    expect(result.toolTrace.staleKnowledge?.withheldCount).toBe(1);
+  });
+
   it('keeps graceful prefetch degraded details in compact context', async () => {
     const seenMessages: Array<Array<{ role: string; content: string }>> = [];
     const adapter = {
@@ -324,6 +361,33 @@ describe('AgenticSearchRunner', () => {
     const result = await runner.run({ userRequest: 'q' });
     expect(result.answer).toBe('final answer');
     expect(result.savedMemoryId).toBeUndefined();
+  });
+
+  it('rejects final answers that mention deprecated lifecycle tools', async () => {
+    const adapter = {
+      generate: mock(async () => ({
+        text: 'Use activate_project before agentic_search.',
+        toolCalls: [],
+      })),
+    };
+    const runner = new AgenticSearchRunner(
+      adapter as never,
+      {
+        knowledge_search: async () => ({ items: [] }),
+        brave_search: async () => ({ results: [] }),
+        fetch: async () => ({}),
+      },
+      6,
+      mockLookupFailureFirewallContext as never,
+    );
+
+    const result = await runner.run({ userRequest: 'Gnosis tool flow' });
+
+    expect(result.answer).toContain('Gnosis の主導線は agentic_search');
+    expect(result.answer).not.toContain('activate_project');
+    expect(result.degraded?.code).toBe('STALE_PUBLIC_SURFACE_ANSWER');
+    expect(result.toolTrace.staleKnowledge?.finalAnswerRejected).toBe(true);
+    expect(mockSaveAgenticAnswer).not.toHaveBeenCalled();
   });
 
   it('returns knowledge fallback when LLM finalization fails after prefetch', async () => {

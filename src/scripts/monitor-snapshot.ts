@@ -68,6 +68,7 @@ type QualityGateSnapshot = {
   doctorStrict: QualityGateRecord;
   onboardingSmoke: QualityGateRecord;
   smoke: QualityGateRecord;
+  semanticSmoke: QualityGateRecord;
   verifyFast: QualityGateRecord;
   verify: QualityGateRecord;
   verifyStrict: QualityGateRecord;
@@ -101,6 +102,7 @@ const QUALITY_GATE_KEYS = [
   'doctorStrict',
   'onboardingSmoke',
   'smoke',
+  'semanticSmoke',
   'verifyFast',
   'verify',
   'verifyStrict',
