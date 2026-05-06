@@ -118,17 +118,71 @@ describe('llm adapter', () => {
     expect(result.warnings.length).toBeGreaterThan(0);
   });
 
-  it('fails when the backend returns a tool or think block parse failure', async () => {
+  it('accepts empty output for KnowFlow tasks after repeated tool or think block parse failures', async () => {
+    const result = await runLlmTask(
+      {
+        task: 'research_note',
+        context: { topic: 'Boundary testing' },
+        requestId: 'req-control-empty',
+      },
+      {
+        config: {
+          maxRetries: 2,
+          retryDelayMs: 0,
+          enableCliFallback: false,
+        },
+        deps: {
+          loadPromptTemplate: async () => 'Topic: {{topic}}',
+          invokeApi: async () =>
+            JSON.stringify({
+              response: '[System] Tool call or think block was generated but failed to parse.',
+            }),
+          invokeCli: async () => 'should not be used',
+          logger: noopLogger,
+        },
+      },
+    );
+
+    expect(result.text).toBe('');
+    expect(result.warnings.join(' | ')).toContain('tool/think block parse failure');
+  });
+
+  it('treats local LLM empty-output sentinels as empty KnowFlow output', async () => {
+    const result = await runLlmTask(
+      {
+        task: 'research_note',
+        context: { topic: 'Boundary testing' },
+        requestId: 'req-empty-sentinel',
+      },
+      {
+        config: {
+          maxRetries: 1,
+          enableCliFallback: false,
+        },
+        deps: {
+          loadPromptTemplate: async () => 'Topic: {{topic}}',
+          invokeApi: async () => '回答を生成できませんでした。',
+          invokeCli: async () => 'should not be used',
+          logger: noopLogger,
+        },
+      },
+    );
+
+    expect(result.text).toBe('');
+  });
+
+  it('keeps control parse failures fatal for tasks that require non-empty text', async () => {
     await expect(
       runLlmTask(
         {
-          task: 'research_note',
+          task: 'custom_task',
           context: { topic: 'Boundary testing' },
           requestId: 'req-control-error',
         },
         {
           config: {
-            maxRetries: 1,
+            maxRetries: 2,
+            retryDelayMs: 0,
             enableCliFallback: false,
           },
           deps: {
@@ -142,7 +196,39 @@ describe('llm adapter', () => {
           },
         },
       ),
-    ).rejects.toThrow('LLM task failed');
+    ).rejects.toThrow('tool/think block parse failure');
+  });
+
+  it('does not convert mixed backend failures into empty KnowFlow output', async () => {
+    let apiCalls = 0;
+    await expect(
+      runLlmTask(
+        {
+          task: 'research_note',
+          context: { topic: 'Boundary testing' },
+          requestId: 'req-mixed-error',
+        },
+        {
+          config: {
+            maxRetries: 2,
+            retryDelayMs: 0,
+            enableCliFallback: false,
+          },
+          deps: {
+            loadPromptTemplate: async () => 'Topic: {{topic}}',
+            invokeApi: async () => {
+              apiCalls += 1;
+              if (apiCalls === 1) throw new Error('api down');
+              return JSON.stringify({
+                response: '[System] Tool call or think block was generated but failed to parse.',
+              });
+            },
+            invokeCli: async () => 'should not be used',
+            logger: noopLogger,
+          },
+        },
+      ),
+    ).rejects.toThrow('api down');
   });
 
   it('uses a plain-text retry prompt after a control parse failure', async () => {

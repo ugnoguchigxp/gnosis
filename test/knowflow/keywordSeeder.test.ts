@@ -97,4 +97,33 @@ describe('runKeywordSeederOnce', () => {
     expect(result.enqueued).toBe(0);
     expect(mockSourceLoader).not.toHaveBeenCalled();
   });
+
+  it('completes without enqueueing when Phrase Scout returns no phrases', async () => {
+    const now = new Date('2026-04-18T10:00:00.000Z');
+    mockSourceLoader.mockResolvedValue([
+      {
+        sourceType: 'experience',
+        sourceId: 's-empty',
+        content: 'no actionable programming direction',
+        createdAt: now,
+      },
+    ] satisfies KeywordSource[]);
+    mockScoutPhrases.mockResolvedValue([]);
+
+    const result = await runKeywordSeederOnce({
+      now: () => now,
+      sourceLoader: mockSourceLoader,
+      contextLoader: mockContextLoader,
+      scoutPhrases: mockScoutPhrases,
+      getSinceTime: mockGetSinceTime,
+      updateCheckpoint: mockUpdateCheckpoint,
+      queueRepository: { enqueue: mockEnqueue } as never,
+      logger: () => {},
+    });
+
+    expect(result.phrases).toBe(0);
+    expect(result.enqueued).toBe(0);
+    expect(mockEnqueue).not.toHaveBeenCalled();
+    expect(mockUpdateCheckpoint).toHaveBeenCalledTimes(1);
+  });
 });

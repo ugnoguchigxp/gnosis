@@ -177,7 +177,7 @@ describe('createKnowFlowTaskHandler', () => {
     ]);
   });
 
-  it('fails the task without creating an entity when the note is empty', async () => {
+  it('completes without creating an entity when no useful note is available', async () => {
     const db = makeDatabase();
     const handler = createKnowFlowTaskHandler({
       database: db.database,
@@ -190,7 +190,70 @@ describe('createKnowFlowTaskHandler', () => {
 
     const result = await handler(makeTask());
 
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.summary).toContain('research_note_skipped outcome=no_research_note');
+    }
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it('does not record local LLM empty-output sentinel text as a note', async () => {
+    const db = makeDatabase();
+    const handler = createKnowFlowTaskHandler({
+      database: db.database,
+      evidenceProvider: mock().mockResolvedValue({
+        researchNote: '回答を生成できませんでした。',
+        referenceUrls: ['https://example.com'],
+        fetchedPageCount: 1,
+        diagnostics: { outcome: 'no_research_note', messages: [] },
+      }),
+    });
+
+    const result = await handler(makeTask());
+
+    expect(result.ok).toBe(true);
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it('keeps transient fetch failures retryable', async () => {
+    const db = makeDatabase();
+    const handler = createKnowFlowTaskHandler({
+      database: db.database,
+      evidenceProvider: mock().mockResolvedValue({
+        referenceUrls: ['https://example.com'],
+        fetchedPageCount: 0,
+        diagnostics: { outcome: 'fetch_failed', messages: ['HTTP 403'] },
+      }),
+    });
+
+    const result = await handler(makeTask());
+
     expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('fetch_failed');
+    }
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it('completes cron Phrase Scout fetch failures as no-op exploration misses', async () => {
+    const db = makeDatabase();
+    const handler = createKnowFlowTaskHandler({
+      database: db.database,
+      evidenceProvider: mock().mockResolvedValue({
+        referenceUrls: ['https://example.com'],
+        fetchedPageCount: 0,
+        diagnostics: { outcome: 'fetch_failed', messages: ['HTTP 403'] },
+      }),
+    });
+
+    const result = await handler(
+      makeTask({ source: 'cron', requestedBy: 'phrase-scout', dedupeKey: 'cron-fetch' }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.summary).toContain('research_note_skipped outcome=fetch_failed');
+    }
     expect(db.insert).not.toHaveBeenCalled();
   });
 });

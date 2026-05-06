@@ -165,6 +165,9 @@ const formatExistingKnowledge = (knowledge: Knowledge | null): string => {
 const isUsableResearchNote = (topic: string, note: string | undefined): note is string => {
   const trimmed = note?.trim();
   if (!trimmed) return false;
+  if (trimmed === '回答を生成できませんでした。' || trimmed === '上限に達しました。') {
+    return false;
+  }
   return trimmed !== topic.trim();
 };
 
@@ -328,6 +331,19 @@ const EMPTY_EVIDENCE: KnowFlowEvidence = {
   usefulPageCount: 0,
   fetchedPageCount: 0,
   diagnostics: { outcome: 'no_research_note', messages: [] },
+};
+
+const NON_FAILURE_NOOP_OUTCOMES = new Set([
+  'no_search_results',
+  'no_fetched_pages',
+  'no_research_note',
+]);
+
+const isNonFailureNoopOutcome = (task: TopicTask, outcome: string): boolean => {
+  if (NON_FAILURE_NOOP_OUTCOMES.has(outcome)) return true;
+  return (
+    task.source === 'cron' && task.requestedBy === 'phrase-scout' && outcome === 'fetch_failed'
+  );
 };
 
 const defaultEvidenceProvider: EvidenceProvider = async () => EMPTY_EVIDENCE;
@@ -644,11 +660,14 @@ export const createKnowFlowTaskHandler = (
         logger,
         database: options.database,
       });
+      const outcome = evidence.diagnostics?.outcome ?? 'no_research_note';
+      const detail = evidence.diagnostics?.messages?.[0];
+      const noopDone = !recorded && isNonFailureNoopOutcome(task, outcome);
 
       metrics.record({
         taskId: task.id,
         source: task.source,
-        ok: recorded,
+        ok: recorded || noopDone,
         changed: recorded,
         retries: task.attempts,
         recordedNotes: recorded ? 1 : 0,
@@ -657,16 +676,22 @@ export const createKnowFlowTaskHandler = (
       });
 
       if (!recorded) {
-        const outcome = evidence.diagnostics?.outcome ?? 'no_research_note';
-        const detail = evidence.diagnostics?.messages?.[0];
         logger({
           event: 'knowflow.research_note.not_recorded',
           taskId: task.id,
           topic: task.topic,
           outcome,
           message: detail,
-          level: 'warn',
+          level: noopDone ? 'info' : 'warn',
         });
+        if (noopDone) {
+          return {
+            ok: true,
+            summary: `research_note_skipped outcome=${outcome} fetched=${
+              evidence.fetchedPageCount ?? 0
+            } references=${evidence.referenceUrls?.length ?? 0}`,
+          };
+        }
         return {
           ok: false,
           error: detail ? `${outcome}: ${detail}` : outcome,

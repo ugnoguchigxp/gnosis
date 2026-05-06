@@ -95,7 +95,7 @@ describe('knowFlowHandler', () => {
     );
   });
 
-  it('does not create an entity when research note is missing', async () => {
+  it('completes without creating an entity when research note is missing', async () => {
     const db = makeDatabase();
     const mockEvidenceProvider = vi.fn().mockResolvedValue({
       referenceUrls: ['https://example.com'],
@@ -112,7 +112,10 @@ describe('knowFlowHandler', () => {
 
     const result = await handler(defaultTask);
 
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.summary).toContain('research_note_skipped outcome=no_research_note');
+    }
     expect(db.insert).not.toHaveBeenCalled();
   });
 });

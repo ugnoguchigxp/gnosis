@@ -6,6 +6,11 @@ describe('status report queue failure classification', () => {
     expect(classifyQueueFailureReason('LLM task failed: All api attempts failed.')).toBe(
       'llm_provider_unavailable',
     );
+    expect(
+      classifyQueueFailureReason(
+        'LLM task failed: All api attempts failed: LLM backend returned a tool/think block parse failure.',
+      ),
+    ).toBe('llm_control_parse_failure');
     expect(classifyQueueFailureReason('OpenAI provider rate limit')).toBe(
       'llm_provider_unavailable',
     );

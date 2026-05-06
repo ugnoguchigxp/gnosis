@@ -93,6 +93,12 @@ export function classifyQueueFailureReason(reason: string): string {
   const normalized = reason.trim().toLowerCase();
   if (normalized.length === 0 || normalized === 'unknown') return 'unknown';
   if (
+    normalized.includes('tool/think block parse failure') ||
+    normalized.includes('tool call or think block')
+  ) {
+    return 'llm_control_parse_failure';
+  }
+  if (
     normalized.includes('all api attempts failed') ||
     normalized.includes('provider') ||
     normalized.includes('api key') ||

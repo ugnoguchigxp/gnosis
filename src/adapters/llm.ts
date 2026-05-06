@@ -88,6 +88,7 @@ const LLM_QUEUE_TIMEOUT_MS = parsePositiveEnvInt(
   process.env.KNOWFLOW_LLM_QUEUE_TIMEOUT_MS,
   Math.max(GNOSIS_CONSTANTS.LLM_QUEUE_TIMEOUT_MS_DEFAULT, config.knowflow.llm.timeoutMs * 4),
 );
+const LLM_MAX_TOKENS = parsePositiveEnvInt(process.env.LOCAL_LLM_MAX_TOKENS, 256);
 
 const withKnowflowLlmQueue = async <T>(fn: () => Promise<T>): Promise<T> =>
   withGlobalSemaphore(
@@ -165,6 +166,7 @@ const defaultInvokeApi = async (
       body: JSON.stringify({
         model: config.model,
         temperature: config.temperature,
+        max_tokens: LLM_MAX_TOKENS,
         priority,
         messages: [
           {
@@ -332,15 +334,66 @@ const unwrapModelEnvelope = (text: string): string => {
   }
 };
 
+const MODEL_CONTROL_PARSE_FAILURE_PREFIX =
+  '[System] Tool call or think block was generated but failed to parse.';
+const MODEL_CONTROL_PARSE_FAILURE_MESSAGE =
+  'LLM backend returned a tool/think block parse failure.';
+
+class LlmBackendAttemptsError extends Error {
+  readonly backend: LlmBackend;
+  readonly attemptMessages: string[];
+
+  constructor(backend: LlmBackend, attemptMessages: string[]) {
+    const details = attemptMessages.length > 0 ? `: ${attemptMessages.join(' | ')}` : '';
+    super(`All ${backend} attempts failed${details}`);
+    this.name = 'LlmBackendAttemptsError';
+    this.backend = backend;
+    this.attemptMessages = attemptMessages;
+  }
+}
+
 const assertModelText = (text: string): string => {
-  if (text.startsWith('[System] Tool call or think block was generated but failed to parse.')) {
-    throw new Error('LLM backend returned a tool/think block parse failure.');
+  if (text.startsWith(MODEL_CONTROL_PARSE_FAILURE_PREFIX)) {
+    throw new Error(MODEL_CONTROL_PARSE_FAILURE_MESSAGE);
   }
   return text;
 };
 
 const isModelControlParseFailure = (text: string): boolean =>
-  text.startsWith('[System] Tool call or think block was generated but failed to parse.');
+  text.startsWith(MODEL_CONTROL_PARSE_FAILURE_PREFIX);
+
+const isModelControlParseFailureMessage = (message: string): boolean =>
+  message.includes(MODEL_CONTROL_PARSE_FAILURE_MESSAGE);
+
+const didBackendFailOnlyWithControlParse = (error: unknown): boolean =>
+  error instanceof LlmBackendAttemptsError &&
+  error.attemptMessages.length > 0 &&
+  error.attemptMessages.every(isModelControlParseFailureMessage);
+
+const EMPTY_OUTPUT_ALLOWED_AFTER_CONTROL_FAILURE_TASKS = new Set<LlmTaskName>([
+  'phrase_scout',
+  'research_note',
+]);
+const LOCAL_LLM_EMPTY_OUTPUT_SENTINELS = new Set([
+  '回答を生成できませんでした。',
+  '上限に達しました。',
+]);
+
+const isEmptyOutputAllowedTask = (task: LlmTaskName): boolean =>
+  EMPTY_OUTPUT_ALLOWED_AFTER_CONTROL_FAILURE_TASKS.has(task);
+
+const isLocalLlmEmptyOutputSentinel = (text: string): boolean =>
+  LOCAL_LLM_EMPTY_OUTPUT_SENTINELS.has(text.trim());
+
+const canAcceptEmptyAfterControlParseFailure = (
+  task: LlmTaskName,
+  warnings: string[],
+  controlParseFailureBackendCount: number,
+): boolean =>
+  isEmptyOutputAllowedTask(task) &&
+  warnings.length > 0 &&
+  controlParseFailureBackendCount > 0 &&
+  warnings.length === controlParseFailureBackendCount;
 
 const buildPlainTextRetryPrompt = (prompt: string): string =>
   [
@@ -375,6 +428,7 @@ const attemptBackend = async (
   signal?: AbortSignal,
 ): Promise<{ text: string; attempt: number }> => {
   let promptForAttempt = prompt;
+  const attemptMessages: string[] = [];
 
   for (let attempt = 1; attempt <= llmConfig.maxRetries; attempt += 1) {
     if (signal?.aborted) {
@@ -409,13 +463,17 @@ const attemptBackend = async (
       if (isModelControlParseFailure(unwrapped) && attempt < llmConfig.maxRetries) {
         promptForAttempt = buildPlainTextRetryPrompt(prompt);
       }
-      const text = assertModelText(unwrapped);
+      const text = assertModelText(unwrapped).trim();
+      if (isEmptyOutputAllowedTask(input.task) && isLocalLlmEmptyOutputSentinel(text)) {
+        return { text: '', attempt };
+      }
       if (text.length === 0) {
         throw new Error(`LLM ${input.task} output is empty.`);
       }
       return { text, attempt };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      attemptMessages.push(message);
       deps.logger({
         event: 'llm.task.retry',
         task: input.task,
@@ -431,7 +489,7 @@ const attemptBackend = async (
     }
   }
 
-  throw new Error(`All ${backend} attempts failed.`);
+  throw new LlmBackendAttemptsError(backend, attemptMessages);
 };
 
 export const runLlmTextTask = async (
@@ -464,6 +522,7 @@ export const runLlmTextTask = async (
   });
 
   const warnings: string[] = [];
+  let controlParseFailureBackendCount = 0;
   const template = await deps.loadPromptTemplate(task);
   const prompt = renderPrompt(template, task, context);
 
@@ -478,6 +537,9 @@ export const runLlmTextTask = async (
     });
     return { task, text: apiResult.text, backend: 'api', warnings };
   } catch (error) {
+    if (didBackendFailOnlyWithControlParse(error)) {
+      controlParseFailureBackendCount += 1;
+    }
     warnings.push(error instanceof Error ? error.message : String(error));
   }
 
@@ -500,8 +562,28 @@ export const runLlmTextTask = async (
       });
       return { task, text: cliResult.text, backend: 'cli', warnings };
     } catch (error) {
+      if (didBackendFailOnlyWithControlParse(error)) {
+        controlParseFailureBackendCount += 1;
+      }
       warnings.push(error instanceof Error ? error.message : String(error));
     }
+  }
+
+  if (canAcceptEmptyAfterControlParseFailure(task, warnings, controlParseFailureBackendCount)) {
+    deps.logger({
+      event: 'llm.task.success',
+      task,
+      backend: llmConfig.enableCliFallback ? 'cli' : 'api',
+      requestId: input.requestId,
+      message: 'empty output accepted after repeated tool/think block parse failure',
+      level: 'warn',
+    });
+    return {
+      task,
+      text: '',
+      backend: llmConfig.enableCliFallback ? 'cli' : 'api',
+      warnings,
+    };
   }
 
   deps.logger({
