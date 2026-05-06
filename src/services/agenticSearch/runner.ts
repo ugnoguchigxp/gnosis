@@ -4,10 +4,6 @@ import {
   renderFailureFirewallContextForPrompt,
 } from '../failureFirewall/context.js';
 import { AgenticSearchLlmAdapter } from './llmAdapter.js';
-import {
-  buildPublicSurfaceFallbackAnswer,
-  inspectDeprecatedLifecycleToolMentions,
-} from './publicSurface.js';
 import { saveAgenticAnswer } from './saveAnswer.js';
 import { buildInitialSystemContext } from './systemContext.js';
 import { buildToolFollowupContext } from './toolContext.js';
@@ -157,10 +153,6 @@ function truncateForFallback(text: string, limit: number): string {
   return `${compact.slice(0, limit - 1)}...`;
 }
 
-function isStaleKnowledgeItem(item: KnowledgeFallbackItem): boolean {
-  return !inspectDeprecatedLifecycleToolMentions(`${item.title}\n${item.content}`).ok;
-}
-
 function extractKnowledgeFallbackItems(results: AgenticToolResult[]): KnowledgeFallbackItem[] {
   return results
     .filter((result) => result.toolName === 'knowledge_search' && result.ok)
@@ -170,10 +162,6 @@ function extractKnowledgeFallbackItems(results: AgenticToolResult[]): KnowledgeF
         .map(toKnowledgeFallbackItem)
         .filter((item): item is KnowledgeFallbackItem => item !== null);
     });
-}
-
-function countStaleKnowledgeItems(results: AgenticToolResult[]): number {
-  return extractKnowledgeFallbackItems(results).filter(isStaleKnowledgeItem).length;
 }
 
 function getToolDegraded(result: AgenticToolResult): {
@@ -198,11 +186,7 @@ function getToolDegraded(result: AgenticToolResult): {
 
 function buildPrefetchContextMessage(results: AgenticToolResult[]): string {
   const sections: string[] = [];
-  const allKnowledgeItems = extractKnowledgeFallbackItems(results);
-  const staleKnowledgeCount = allKnowledgeItems.filter(isStaleKnowledgeItem).length;
-  const knowledgeItems = allKnowledgeItems
-    .filter((item) => !isStaleKnowledgeItem(item))
-    .slice(0, 5);
+  const knowledgeItems = extractKnowledgeFallbackItems(results).slice(0, 5);
 
   if (knowledgeItems.length > 0) {
     sections.push(
@@ -221,15 +205,6 @@ function buildPrefetchContextMessage(results: AgenticToolResult[]): string {
             meta ? ` (${meta})` : ''
           }: ${truncateForFallback(item.content, 260)}`;
         }),
-      ].join('\n'),
-    );
-  }
-
-  if (staleKnowledgeCount > 0) {
-    sections.push(
-      [
-        'Withheld stale Gnosis knowledge:',
-        `${staleKnowledgeCount} candidate(s) conflicted with the current public MCP surface and were not included.`,
       ].join('\n'),
     );
   }
@@ -290,16 +265,13 @@ function buildKnowledgeFallbackAnswer(
   results: AgenticToolResult[],
   reason: string,
 ): string | undefined {
-  const staleKnowledgeCount = countStaleKnowledgeItems(results);
-  const items = extractKnowledgeFallbackItems(results)
-    .filter((item) => !isStaleKnowledgeItem(item))
-    .slice(0, 5);
+  const items = extractKnowledgeFallbackItems(results).slice(0, 5);
 
   const degradedResults = results
     .map(getToolDegraded)
     .filter((item): item is NonNullable<ReturnType<typeof getToolDegraded>> => item !== null);
 
-  if (items.length === 0 && degradedResults.length === 0 && staleKnowledgeCount === 0) {
+  if (items.length === 0 && degradedResults.length === 0) {
     return undefined;
   }
 
@@ -337,12 +309,6 @@ function buildKnowledgeFallbackAnswer(
       '',
     );
   }
-  if (staleKnowledgeCount > 0) {
-    parts.push(
-      `withheldStaleKnowledge: ${staleKnowledgeCount} candidate(s) conflicted with the current public MCP surface.`,
-      '',
-    );
-  }
   parts.push(
     `degradedReason: ${reason}`,
     '上記は raw 候補と prefetch 状態に基づく限定回答です。採用判断や実装前には、該当ファイルまたは一次情報で確認してください。',
@@ -351,15 +317,17 @@ function buildKnowledgeFallbackAnswer(
 }
 
 function classifyAgenticLoopFailureCode(message: string): string {
-  if (/tool_calling_unsupported/i.test(message)) return 'TOOL_CALLING_UNSUPPORTED';
+  const normalized = message.toLowerCase();
+  if (normalized.includes('tool_calling_unsupported')) return 'TOOL_CALLING_UNSUPPORTED';
   if (
-    /reached maximum agentic rounds|maximum agentic rounds|max(?:imum)?(?: agentic)? (?:tool )?loops?|reached max loops/i.test(
-      message,
-    )
+    normalized.includes('reached maximum agentic rounds') ||
+    normalized.includes('maximum agentic rounds') ||
+    normalized.includes('max tool loops') ||
+    normalized.includes('reached max loops')
   ) {
     return 'MAX_TOOL_LOOPS_REACHED';
   }
-  if (/invalid_agentic_tool_message_sequence/i.test(message)) {
+  if (normalized.includes('invalid_agentic_tool_message_sequence')) {
     return 'TOOL_MESSAGE_SEQUENCE_INVALID';
   }
   return 'AGENTIC_LOOP_FAILED';
@@ -404,10 +372,6 @@ export class AgenticSearchRunner {
         ok: result.ok,
         errorCode: result.error?.code,
       });
-    }
-    const stalePrefetchCount = countStaleKnowledgeItems(prefetchResults);
-    if (stalePrefetchCount > 0) {
-      trace.staleKnowledge = { withheldCount: stalePrefetchCount };
     }
     messages.push({
       role: 'system',
@@ -491,21 +455,6 @@ export class AgenticSearchRunner {
       trace.loopCount = loopResult.loopCount;
       const answer = loopResult.finalText.trim();
       if (answer.length > 0) {
-        if (!inspectDeprecatedLifecycleToolMentions(answer).ok) {
-          trace.staleKnowledge = {
-            withheldCount: trace.staleKnowledge?.withheldCount ?? 0,
-            finalAnswerRejected: true,
-          };
-          return {
-            answer: buildPublicSurfaceFallbackAnswer(),
-            toolTrace: trace,
-            degraded: {
-              code: 'STALE_PUBLIC_SURFACE_ANSWER',
-              message: 'Final answer conflicted with current public MCP surface.',
-            },
-            usage,
-          };
-        }
         let savedMemoryId: string | undefined;
         try {
           savedMemoryId = await saveAgenticAnswer({

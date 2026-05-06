@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { type LlmLogEvent, runLlmTask } from '../../../adapters/llm.js';
+import { type LlmLogEvent, LlmOutputRejectedError, runLlmTask } from '../../../adapters/llm.js';
 import type { Retriever } from '../../../adapters/retriever/mcpRetriever.js';
 import { type LlmClientConfig, config } from '../../../config.js';
 import { db as defaultDb } from '../../../db/index.js';
@@ -286,24 +286,43 @@ export const createMcpEvidenceProvider = (
       ? await options.getExistingKnowledge(task.topic)
       : null;
 
-    const noteResult = await _runLlmTask(
-      {
-        task: 'research_note',
-        context: {
-          topic: task.topic,
-          seed_context: formatSeedContext(task),
-          existing_knowledge: formatExistingKnowledge(existingKnowledge),
-          source_texts: formatFetchedSourceTexts(fetchedContents),
+    let noteResult: Awaited<ReturnType<typeof _runLlmTask>>;
+    try {
+      noteResult = await _runLlmTask(
+        {
+          task: 'research_note',
+          context: {
+            topic: task.topic,
+            seed_context: formatSeedContext(task),
+            existing_knowledge: formatExistingKnowledge(existingKnowledge),
+            source_texts: formatFetchedSourceTexts(fetchedContents),
+          },
+          requestId: task.id,
+          priority: 'low',
         },
-        requestId: task.id,
-        priority: 'low',
-      },
-      {
-        config: options?.llmConfig,
-        deps: options?.llmLogger ? { logger: options.llmLogger } : undefined,
-        signal,
-      },
-    );
+        {
+          config: options?.llmConfig,
+          deps: options?.llmLogger ? { logger: options.llmLogger } : undefined,
+          signal,
+        },
+      );
+    } catch (error) {
+      if (!(error instanceof LlmOutputRejectedError)) {
+        throw error;
+      }
+      return {
+        referenceUrls: fetchedUrls,
+        queryCountUsed,
+        searchQueries,
+        usefulPageFound: false,
+        usefulPageCount: 0,
+        fetchedPageCount: fetchedUrls.length,
+        diagnostics: {
+          outcome: 'no_research_note',
+          messages: [error.message, ...diagnostics].slice(0, 5),
+        },
+      };
+    }
 
     const researchNote = noteResult.text.trim();
     const usableNote = isUsableResearchNote(task.topic, researchNote) ? researchNote : undefined;
@@ -337,13 +356,12 @@ const NON_FAILURE_NOOP_OUTCOMES = new Set([
   'no_search_results',
   'no_fetched_pages',
   'no_research_note',
+  'fetch_failed',
 ]);
 
 const isNonFailureNoopOutcome = (task: TopicTask, outcome: string): boolean => {
-  if (NON_FAILURE_NOOP_OUTCOMES.has(outcome)) return true;
-  return (
-    task.source === 'cron' && task.requestedBy === 'phrase-scout' && outcome === 'fetch_failed'
-  );
+  if (task.source !== 'cron' || task.requestedBy !== 'phrase-scout') return false;
+  return NON_FAILURE_NOOP_OUTCOMES.has(outcome);
 };
 
 const defaultEvidenceProvider: EvidenceProvider = async () => EMPTY_EVIDENCE;

@@ -10,47 +10,30 @@ describe('reviewWithPseudoTools', () => {
     maxToolRounds: 2,
   };
 
-  it('should handle a successful tool call loop', async () => {
+  it('returns the local LLM response without parsing pseudo tool calls', async () => {
     const mockLLM: Partial<ReviewLLMService> = {
       provider: 'local',
       generate: vi
         .fn()
-        .mockResolvedValueOnce('<tool_call name="read_file" args=\'{"file_path": "test.ts"}\' />')
-        .mockResolvedValueOnce('The file looks good.'),
-    };
-
-    // We need to mock the registry execution or just let it fail/succeed if tools were registered
-    // For unit testing pseudoToolReviewer logic, we mainly care about parsing and loop
-    const result = await reviewWithPseudoTools(mockLLM as ReviewLLMService, [], ctx);
-
-    expect(result).toBe('The file looks good.');
-    expect(mockLLM.generate).toHaveBeenCalledTimes(2);
-
-    // Check that history was updated (implicitly by seeing 2nd generate call)
-    // In a more detailed test we'd inspect the messages passed to 2nd call
-  });
-
-  it('should handle malformed JSON args in tool call', async () => {
-    const mockLLM: Partial<ReviewLLMService> = {
-      provider: 'local',
-      generate: vi
-        .fn()
-        .mockResolvedValueOnce('<tool_call name="read_file" args=\'invalid json\' />')
-        .mockResolvedValueOnce('Error handled.'),
+        .mockResolvedValue('<tool_call name="read_file" args=\'{"file_path": "test.ts"}\' />'),
     };
 
     const result = await reviewWithPseudoTools(mockLLM as ReviewLLMService, [], ctx);
-    expect(result).toBe('Error handled.');
+
+    expect(result).toBe('<tool_call name="read_file" args=\'{"file_path": "test.ts"}\' />');
+    expect(mockLLM.generate).toHaveBeenCalledTimes(1);
   });
 
-  it('should terminate after max rounds', async () => {
+  it('adds a local-only instruction instead of pseudo tool specs', async () => {
+    const generate = vi.fn().mockResolvedValue('The file looks good.');
     const mockLLM: Partial<ReviewLLMService> = {
       provider: 'local',
-      generate: vi.fn().mockResolvedValue('<tool_call name="loop" args="{}" />'),
+      generate,
     };
 
-    await expect(
-      reviewWithPseudoTools(mockLLM as ReviewLLMService, [], { ...ctx, maxToolRounds: 1 }),
-    ).rejects.toThrow(/maximum agentic rounds/);
+    await reviewWithPseudoTools(mockLLM as ReviewLLMService, [], ctx);
+    const prompt = generate.mock.calls[0]?.[0] as string;
+    expect(prompt).toContain('疑似ツール呼び出し構文を使わず');
+    expect(prompt).not.toContain('<tool_call name=');
   });
 });

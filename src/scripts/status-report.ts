@@ -94,7 +94,8 @@ export function classifyQueueFailureReason(reason: string): string {
   if (normalized.length === 0 || normalized === 'unknown') return 'unknown';
   if (
     normalized.includes('tool/think block parse failure') ||
-    normalized.includes('tool call or think block')
+    normalized.includes('tool call or think block') ||
+    normalized.includes('empty-output sentinel')
   ) {
     return 'llm_control_parse_failure';
   }

@@ -208,7 +208,7 @@ describe('AgenticSearchRunner', () => {
     ).toBe(true);
   });
 
-  it('withholds stale lifecycle knowledge from compact context', async () => {
+  it('passes prefetched knowledge through without substring-based stale filtering', async () => {
     const seenMessages: Array<Array<{ role: string; content: string }>> = [];
     const adapter = {
       generate: mock(async (messages) => {
@@ -240,9 +240,9 @@ describe('AgenticSearchRunner', () => {
     const result = await runner.run({ userRequest: 'Gnosis tool flow' });
 
     const firstTurnText = (seenMessages[0] ?? []).map((message) => message.content).join('\n');
-    expect(firstTurnText).toContain('Withheld stale Gnosis knowledge');
-    expect(firstTurnText).not.toContain('activate_project');
-    expect(result.toolTrace.staleKnowledge?.withheldCount).toBe(1);
+    expect(firstTurnText).toContain('Prefetched Gnosis knowledge');
+    expect(firstTurnText).toContain('activate_project');
+    expect(result.toolTrace.staleKnowledge).toBeUndefined();
   });
 
   it('keeps graceful prefetch degraded details in compact context', async () => {
@@ -363,7 +363,7 @@ describe('AgenticSearchRunner', () => {
     expect(result.savedMemoryId).toBeUndefined();
   });
 
-  it('rejects final answers that mention deprecated lifecycle tools', async () => {
+  it('does not rewrite final answers with deprecated lifecycle tool mentions', async () => {
     const adapter = {
       generate: mock(async () => ({
         text: 'Use activate_project before agentic_search.',
@@ -383,11 +383,10 @@ describe('AgenticSearchRunner', () => {
 
     const result = await runner.run({ userRequest: 'Gnosis tool flow' });
 
-    expect(result.answer).toContain('Gnosis の主導線は agentic_search');
-    expect(result.answer).not.toContain('activate_project');
-    expect(result.degraded?.code).toBe('STALE_PUBLIC_SURFACE_ANSWER');
-    expect(result.toolTrace.staleKnowledge?.finalAnswerRejected).toBe(true);
-    expect(mockSaveAgenticAnswer).not.toHaveBeenCalled();
+    expect(result.answer).toBe('Use activate_project before agentic_search.');
+    expect(result.degraded).toBeUndefined();
+    expect(result.toolTrace.staleKnowledge).toBeUndefined();
+    expect(mockSaveAgenticAnswer).toHaveBeenCalledTimes(1);
   });
 
   it('returns knowledge fallback when LLM finalization fails after prefetch', async () => {

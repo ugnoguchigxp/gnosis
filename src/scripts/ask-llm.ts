@@ -12,7 +12,7 @@ import {
   resolveEffectiveReviewCloudProvider,
 } from '../services/review/llm/cloudProvider.js';
 import type { ChatMessage } from '../services/review/llm/types.js';
-import { buildToolInstruction, runConversationTurn } from './llmConversation.js';
+import { runConversationTurn } from './llmConversation.js';
 import { createLocalMcpToolClient } from './localMcpClient.js';
 
 type CliMode = 'interactive' | 'single';
@@ -176,8 +176,6 @@ function ensureSystemPrompt(
 - fetch_content: 指定URLのページ内容を取得。検索結果のスニペットだけでは情報が不足する場合、URLを指定して詳細を取得する。
 
 重要: 検索結果のスニペットに具体的な数値や詳細が含まれていない場合は、必ず fetch_content で該当URLの中身を取得してから回答してください。推測や「確認できませんでした」という回答は避けてください。`;
-  } else if (includeTools) {
-    systemContent += `\n\n${buildToolInstruction()}`;
   }
 
   if (history[0]?.role === 'system') {

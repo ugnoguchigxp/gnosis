@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { LlmOutputRejectedError } from '../../src/adapters/llm.js';
 
 mock.module('../../src/config.js', () => ({
   config: {
@@ -143,6 +144,29 @@ describe('createMcpEvidenceProvider', () => {
     expect(evidence.researchNote).toBeUndefined();
     expect(evidence.diagnostics?.outcome).toBe('fetch_failed');
   });
+
+  it('returns no-note diagnostics when the LLM rejects unusable output', async () => {
+    const retriever = {
+      search: mock().mockResolvedValue(`- TS docs (https://typescriptlang.org/docs)
+Compiler API documentation.`),
+      fetch: mock().mockResolvedValue('Compiler API exposes TypeChecker.'),
+      disconnect: mock(),
+    };
+    mockRunLlmTask.mockRejectedValue(
+      new LlmOutputRejectedError('research_note', 'control_parse_failure', [
+        'LLM backend returned a tool/think block parse failure.',
+      ]),
+    );
+
+    const provider = createMcpEvidenceProvider(retriever, {
+      runLlmTask: mockRunLlmTask,
+    });
+    const evidence = await provider(makeTask());
+
+    expect(evidence.researchNote).toBeUndefined();
+    expect(evidence.diagnostics?.outcome).toBe('no_research_note');
+    expect(evidence.diagnostics?.messages?.[0]).toContain('control_parse_failure');
+  });
 });
 
 describe('createKnowFlowTaskHandler', () => {
@@ -177,24 +201,37 @@ describe('createKnowFlowTaskHandler', () => {
     ]);
   });
 
-  it('completes without creating an entity when no useful note is available', async () => {
-    const db = makeDatabase();
-    const handler = createKnowFlowTaskHandler({
-      database: db.database,
-      evidenceProvider: mock().mockResolvedValue({
-        referenceUrls: ['https://example.com'],
-        fetchedPageCount: 1,
-        diagnostics: { outcome: 'no_research_note', messages: [] },
-      }),
-    });
+  it('keeps user and UI tasks retryable when exploration produces no useful note', async () => {
+    const retryableOutcomes = [
+      'no_search_results',
+      'no_fetched_pages',
+      'no_research_note',
+    ] as const;
 
-    const result = await handler(makeTask());
+    for (const outcome of retryableOutcomes) {
+      const db = makeDatabase();
+      const handler = createKnowFlowTaskHandler({
+        database: db.database,
+        evidenceProvider: mock().mockResolvedValue({
+          referenceUrls: ['https://example.com'],
+          fetchedPageCount: 1,
+          diagnostics: { outcome, messages: [] },
+        }),
+      });
 
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.summary).toContain('research_note_skipped outcome=no_research_note');
+      const userResult = await handler(makeTask({ dedupeKey: `user-${outcome}` }));
+      const uiResult = await handler(makeTask({ source: 'ui', dedupeKey: `ui-${outcome}` }));
+
+      expect(userResult.ok).toBe(false);
+      if (!userResult.ok) {
+        expect(userResult.error).toContain(outcome);
+      }
+      expect(uiResult.ok).toBe(false);
+      if (!uiResult.ok) {
+        expect(uiResult.error).toContain(outcome);
+      }
+      expect(db.insert).not.toHaveBeenCalled();
     }
-    expect(db.insert).not.toHaveBeenCalled();
   });
 
   it('does not record local LLM empty-output sentinel text as a note', async () => {
@@ -209,9 +246,44 @@ describe('createKnowFlowTaskHandler', () => {
       }),
     });
 
-    const result = await handler(makeTask());
+    const result = await handler(
+      makeTask({
+        source: 'cron',
+        requestedBy: 'phrase-scout',
+        dedupeKey: 'typescript-compiler-api-cron-sentinel',
+      }),
+    );
 
     expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.summary).toContain('research_note_skipped outcome=no_research_note');
+    }
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it('completes cron Phrase Scout no-note outcomes as no-op exploration misses', async () => {
+    const db = makeDatabase();
+    const handler = createKnowFlowTaskHandler({
+      database: db.database,
+      evidenceProvider: mock().mockResolvedValue({
+        referenceUrls: ['https://example.com'],
+        fetchedPageCount: 1,
+        diagnostics: { outcome: 'no_research_note', messages: [] },
+      }),
+    });
+
+    const result = await handler(
+      makeTask({
+        source: 'cron',
+        requestedBy: 'phrase-scout',
+        dedupeKey: 'typescript-compiler-api-cron-no-note',
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.summary).toContain('research_note_skipped outcome=no_research_note');
+    }
     expect(db.insert).not.toHaveBeenCalled();
   });
 

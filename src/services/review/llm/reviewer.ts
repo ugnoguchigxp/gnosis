@@ -2,7 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ReviewError } from '../errors.js';
-import type { Finding, ReviewContextV1, ReviewContextV2, ReviewContextV3 } from '../types.js';
+import type {
+  DegradedMode,
+  Finding,
+  ReviewContextV1,
+  ReviewContextV2,
+  ReviewContextV3,
+} from '../types.js';
 import { createCloudReviewLLMService } from './cloudProvider.js';
 import {
   generateFingerprint,
@@ -54,21 +60,6 @@ function syncAzureEndpointToGnosisBaseUrl(): void {
   }
 }
 
-function extractJsonPayload(rawOutput: string): string {
-  const fenced = rawOutput.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenced?.[1]?.trim()) {
-    return fenced[1].trim();
-  }
-
-  const trimmed = rawOutput.trim();
-  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-    return trimmed;
-  }
-
-  const objectMatch = trimmed.match(/\{[\s\S]*\}/);
-  return objectMatch?.[0] ?? trimmed;
-}
-
 function toTextList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
 
@@ -76,6 +67,20 @@ function toTextList(value: unknown): string[] {
     .filter((item): item is string => typeof item === 'string')
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function buildUnparseableReviewResult(): {
+  findings: Finding[];
+  summary: string;
+  next_actions: string[];
+  degradedReason: DegradedMode;
+} {
+  return {
+    findings: [],
+    summary: 'Review LLM returned output outside the review JSON contract.',
+    next_actions: [],
+    degradedReason: 'llm_unparseable',
+  };
 }
 
 function normalizeFinding(
@@ -328,7 +333,12 @@ export async function getReviewLLMService(
 export async function reviewWithLLM(
   context: ReviewContextV1 | ReviewContextV2 | ReviewContextV3,
   llmService: ReviewLLMService,
-): Promise<{ findings: Finding[]; summary: string; next_actions: string[] }> {
+): Promise<{
+  findings: Finding[];
+  summary: string;
+  next_actions: string[];
+  degradedReason?: DegradedMode;
+}> {
   const prompt =
     'recalledPrinciples' in context
       ? buildReviewPromptV3(context)
@@ -349,13 +359,17 @@ export async function reviewWithLLM(
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(extractJsonPayload(rawOutput));
+    parsed = JSON.parse(rawOutput.trim());
   } catch {
-    return {
-      findings: [],
-      summary: rawOutput.trim().slice(0, 200),
-      next_actions: [],
-    };
+    return buildUnparseableReviewResult();
+  }
+  if (
+    !parsed ||
+    typeof parsed !== 'object' ||
+    Array.isArray(parsed) ||
+    !Array.isArray((parsed as { findings?: unknown }).findings)
+  ) {
+    return buildUnparseableReviewResult();
   }
 
   const source: Finding['source'] = llmService.provider === 'local' ? 'local_llm' : 'heavy_llm';

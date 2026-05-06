@@ -7,18 +7,17 @@ function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
 
-function parseConfidenceByIndex(raw: string): Map<number, number> {
+export function parseConfidenceByIndex(raw: string, expectedCount: number): Map<number, number> {
   const parsed = new Map<number, number>();
-  const pattern = /(?:^|\n)\s*(\d+)\s*[:\-]\s*confidence\s*=\s*([01](?:\.\d+)?)\b/gi;
-  let match: RegExpExecArray | null = null;
-  while (true) {
-    match = pattern.exec(raw);
-    if (!match) break;
-    const index = Number.parseInt(match[1] ?? '', 10);
-    const confidence = Number.parseFloat(match[2] ?? '');
-    if (!Number.isFinite(index) || index <= 0) continue;
-    if (!Number.isFinite(confidence)) continue;
-    parsed.set(index, clamp01(confidence));
+  const lines = raw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (lines.length !== expectedCount) return parsed;
+  for (const [lineIndex, line] of lines.entries()) {
+    const confidence = Number(line);
+    if (!Number.isFinite(confidence)) return new Map();
+    parsed.set(lineIndex + 1, clamp01(confidence));
   }
   return parsed;
 }
@@ -48,8 +47,8 @@ export async function refineCandidatesWithLlm(
       maxTokens: 900,
       allowCloudFallback: false,
     });
-    const byIndex = parseConfidenceByIndex(routed.output);
-    if (byIndex.size === 0) throw new Error('No confidence=... lines found in LLM output');
+    const byIndex = parseConfidenceByIndex(routed.output, deterministicCandidates.length);
+    if (byIndex.size === 0) throw new Error('No confidence lines found in LLM output');
     const candidates: KnowledgeCandidate[] = deterministicCandidates.map((candidate, idx) => {
       const assigned = byIndex.get(idx + 1);
       return {

@@ -158,7 +158,7 @@ export class AgenticSearchLlmAdapter {
   async generate(messages: AgenticSearchMessage[]): Promise<AgenticSearchLlmResult> {
     validateToolMessageSequence(messages);
     const llm = await this.getLlmService();
-    if (llm.provider !== 'cloud' || !llm.generateMessagesStructured) {
+    if (!llm.generateMessagesStructured) {
       throw new Error('tool_calling_unsupported');
     }
     const tools = listAgenticSearchToolSpecs().map((tool) => ({

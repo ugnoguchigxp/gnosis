@@ -13,7 +13,7 @@ describe('AgenticSearchLlmAdapter', () => {
     mockGetReviewLlmService.mockReset();
   });
 
-  it('throws tool_calling_unsupported for non-cloud provider', async () => {
+  it('throws tool_calling_unsupported when provider lacks structured tool calls', async () => {
     mockGetReviewLlmService.mockResolvedValue({
       provider: 'local',
       generate: mock(async () => ''),
@@ -25,6 +25,22 @@ describe('AgenticSearchLlmAdapter', () => {
         { role: 'user', content: 'q' },
       ]),
     ).rejects.toThrow('tool_calling_unsupported');
+  });
+
+  it('allows local providers that expose structured tool calls', async () => {
+    const generateMessagesStructured = mock(async () => ({ text: 'ok', toolCalls: [] }));
+    mockGetReviewLlmService.mockResolvedValue({
+      provider: 'local',
+      generate: mock(async () => ''),
+      generateMessagesStructured,
+    });
+    const adapter = new AgenticSearchLlmAdapter();
+    const result = await adapter.generate([
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'q' },
+    ]);
+    expect(result.text).toBe('ok');
+    expect(generateMessagesStructured).toHaveBeenCalledTimes(1);
   });
 
   it('reuses resolved llm service between calls', async () => {

@@ -1,41 +1,29 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  parseToolCall,
-  runConversationTurn,
-  sanitizeAssistantResponse,
-} from '../src/scripts/llmConversation.js';
+import { acceptAssistantResponse, runConversationTurn } from '../src/scripts/llmConversation.js';
 
 describe('local LLM conversation helpers', () => {
-  test('parses tool call syntax from model output', () => {
-    expect(parseToolCall('<|tool_call|>call:search_web{query:"bun test"}<tool_call|>')).toEqual({
-      name: 'search_web',
-      arguments: { query: 'bun test' },
-    });
-
-    expect(
-      parseToolCall(
-        '<tool_call>{"name":"fetch_content","arguments":{"url":"https://example.com"}}</tool_call>',
-      ),
-    ).toEqual({
-      name: 'fetch_content',
-      arguments: { url: 'https://example.com' },
-    });
+  test('does not rewrite model text with tag sanitizers', () => {
+    expect(acceptAssistantResponse('hello <think>noise</think> world')).toBe(
+      'hello <think>noise</think> world',
+    );
   });
 
-  test('sanitizes tool tags and preserves plain text', () => {
-    expect(sanitizeAssistantResponse('hello <think>noise</think> world')).toBe('hello  world');
-  });
-
-  test('runs a tool loop and records the conversation history', async () => {
+  test('runs a native structured tool loop and records the conversation history', async () => {
     const history = [{ role: 'system', content: 'system prompt' } as const];
     const toolCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    let calls = 0;
 
     const service = {
-      async generateMessages(messages: Array<{ role: string; content: string }>) {
-        if (messages.filter((message) => message.role === 'user').length === 1) {
-          return '<|tool_call|>call:web_search{query:"gnosis"}<tool_call|>';
+      async generateMessagesStructured() {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            text: '',
+            toolCalls: [{ id: 'call-1', name: 'search_web', arguments: { query: 'gnosis' } }],
+            rawAssistantContent: { tool_calls: [{ id: 'call-1' }] },
+          };
         }
-        return '最終回答です。';
+        return { text: '最終回答です。', toolCalls: [] };
       },
       async generate() {
         return '最終回答です。';
@@ -55,14 +43,18 @@ describe('local LLM conversation helpers', () => {
     });
 
     expect(response).toBe('最終回答です。');
-    expect(toolCalls).toEqual([{ name: 'web_search', args: { query: 'gnosis' } }]);
+    expect(toolCalls).toEqual([{ name: 'search_web', args: { query: 'gnosis' } }]);
     expect(history.map((message) => message.role as string)).toEqual([
       'system',
       'user',
       'assistant',
-      'user',
+      'tool',
+      'system',
       'assistant',
     ]);
+    expect((history[2] as { rawAssistantContent?: unknown }).rawAssistantContent).toEqual({
+      tool_calls: [{ id: 'call-1' }],
+    });
   });
 
   test('falls back to generate() when generateMessages is unavailable', async () => {
@@ -96,10 +88,10 @@ describe('local LLM conversation helpers', () => {
 
     const service = {
       async generateMessages() {
-        return '```json\n{"ok":true}\n```';
+        return '{"ok":true}';
       },
       async generate() {
-        return '```json\n{"ok":true}\n```';
+        return '{"ok":true}';
       },
     };
 
@@ -111,5 +103,27 @@ describe('local LLM conversation helpers', () => {
     });
 
     expect(response).toBe('{"ok":true}');
+  });
+
+  test('rejects fenced JSON instead of extracting it', async () => {
+    const history = [{ role: 'system', content: 'system prompt' } as const];
+
+    const service = {
+      async generateMessages() {
+        return '```json\n{"ok":true}\n```';
+      },
+      async generate() {
+        return '```json\n{"ok":true}\n```';
+      },
+    };
+
+    await expect(
+      runConversationTurn(history as never, 'return json', service, {
+        maxTokens: 128,
+        temperature: 0,
+        allowTools: false,
+        forceJson: true,
+      }),
+    ).rejects.toThrow();
   });
 });

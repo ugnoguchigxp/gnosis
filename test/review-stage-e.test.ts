@@ -30,6 +30,15 @@ const fakeCloudLlm = {
   generate: async () => '',
 };
 
+const noOpPersistence = {
+  persistReviewCaseFn: async () => {
+    // no-op in tests
+  },
+  recordReviewResultFn: async () => {
+    return { updated: 0 };
+  },
+};
+
 beforeEach(() => {
   process.env.GNOSIS_ALLOWED_ROOTS = '/tmp';
   process.env.GNOSIS_REVIEW_EMPTY_KNOWLEDGE_MODE = undefined;
@@ -93,6 +102,7 @@ describe('review agentic (knowledge policy)', () => {
       });
 
     const result = await runReviewAgentic(baseRequest, {
+      ...noOpPersistence,
       diffProvider: async () => DIFF,
       llmService: fakeCloudLlm as never,
       retrieveGuidanceFn,
@@ -154,6 +164,7 @@ describe('review agentic (knowledge policy)', () => {
       });
 
     const result = await runReviewAgentic(baseRequest, {
+      ...noOpPersistence,
       diffProvider: async () => DIFF,
       llmService: fakeCloudLlm as never,
       retrieveGuidanceFn,
@@ -163,5 +174,40 @@ describe('review agentic (knowledge policy)', () => {
     expect(result.metadata.knowledge_retrieval_status).toBe('empty_index');
     expect(result.metadata.degraded_mode).toBe(true);
     expect(result.metadata.degraded_reasons).toContain('knowledge_empty_index');
+  });
+
+  it('marks prose-wrapped review JSON as llm_unparseable instead of salvaging it', async () => {
+    const principle: GuidanceItem = {
+      id: 'guidance-1',
+      title: 'Validate new branches',
+      content: 'Check added branches for null handling.',
+      guidanceType: 'rule',
+      scope: 'on_demand',
+      priority: 10,
+      tags: ['principle'],
+    };
+    const retrieveGuidanceFn = async () => ({
+      principles: [principle],
+      heuristics: [],
+      patterns: [],
+      skills: [],
+      benchmarks: [],
+    });
+    const reviewWithToolsFn = async () =>
+      'Here is the JSON:\n{"findings":[],"summary":"ok","next_actions":[]}';
+
+    const result = await runReviewAgentic(baseRequest, {
+      ...noOpPersistence,
+      diffProvider: async () => DIFF,
+      llmService: fakeCloudLlm as never,
+      retrieveGuidanceFn,
+      reviewWithToolsFn,
+    });
+
+    expect(result.findings).toHaveLength(0);
+    expect(result.review_status).toBe('needs_confirmation');
+    expect(result.metadata.degraded_mode).toBe(true);
+    expect(result.metadata.degraded_reasons).toContain('llm_unparseable');
+    expect(result.summary).toBe('Review LLM returned output outside the review JSON contract.');
   });
 });

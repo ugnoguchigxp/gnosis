@@ -113,17 +113,6 @@ function isWithin(base: string, target: string): boolean {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
-function extractJsonPayload(rawOutput: string): string {
-  const fenced = rawOutput.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenced?.[1]?.trim()) return fenced[1].trim();
-
-  const trimmed = rawOutput.trim();
-  if (trimmed.startsWith('{') && trimmed.endsWith('}')) return trimmed;
-
-  const objectMatch = trimmed.match(/\{[\s\S]*\}/);
-  return objectMatch?.[0] ?? trimmed;
-}
-
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
@@ -365,7 +354,7 @@ export async function reviewDocument(
 
       let parsed: Record<string, unknown>;
       try {
-        parsed = JSON.parse(extractJsonPayload(rawOutput)) as Record<string, unknown>;
+        parsed = JSON.parse(rawOutput.trim()) as Record<string, unknown>;
       } catch {
         throw new ReviewError('E017', 'Document review LLM returned non-JSON payload');
       }

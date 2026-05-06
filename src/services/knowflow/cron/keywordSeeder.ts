@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { asc, desc, eq, gte, sql } from 'drizzle-orm';
-import { runLlmTask } from '../../../adapters/llm.js';
+import { LlmOutputRejectedError, runLlmTask } from '../../../adapters/llm.js';
 import { config } from '../../../config.js';
 import { db as defaultDb } from '../../../db/index.js';
 import {
@@ -233,15 +233,23 @@ const defaultScoutPhrases = async (input: {
   maxTopics: number;
   requestId: string;
 }): Promise<string[]> => {
-  const result = await runLlmTask({
-    task: 'phrase_scout',
-    context: {
-      context: input.context,
-      max_topics: input.maxTopics,
-    },
-    requestId: input.requestId,
-    priority: 'low',
-  });
+  let result: Awaited<ReturnType<typeof runLlmTask>>;
+  try {
+    result = await runLlmTask({
+      task: 'phrase_scout',
+      context: {
+        context: input.context,
+        max_topics: input.maxTopics,
+      },
+      requestId: input.requestId,
+      priority: 'low',
+    });
+  } catch (error) {
+    if (error instanceof LlmOutputRejectedError) {
+      return [];
+    }
+    throw error;
+  }
   return parsePhraseLines(result.text, input.maxTopics);
 };
 

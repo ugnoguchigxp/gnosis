@@ -54,6 +54,14 @@ describe('llm service (legacy local LLM)', () => {
       expect(result).toEqual([]);
     });
 
+    it('does not salvage JSON arrays from prose-wrapped output', async () => {
+      const spawnSync = makeSpawnSync(
+        'Here is the result:\n[{"name":"Alice","type":"Person","description":"主人公"}]',
+      );
+      const result = await extractEntitiesFromText('text', { ...testDeps, spawnSync });
+      expect(result).toEqual([]);
+    });
+
     it('returns empty array when LLM output is empty', async () => {
       const spawnSync = makeSpawnSync('');
       const result = await extractEntitiesFromText('text', { ...testDeps, spawnSync });
@@ -63,9 +71,7 @@ describe('llm service (legacy local LLM)', () => {
 
   describe('summarizeCommunity', () => {
     it('parses community summary from LLM output', async () => {
-      const spawnSync = makeSpawnSync(
-        'Name: 日本の地理\nSummary: 日本の主要都市と地形に関する知識群',
-      );
+      const spawnSync = makeSpawnSync('日本の地理\n日本の主要都市と地形に関する知識群');
       const result = await summarizeCommunity('Entities: Tokyo, Osaka', {
         ...testDeps,
         spawnSync,
@@ -82,12 +88,20 @@ describe('llm service (legacy local LLM)', () => {
       expect(result.name).toBe('Unknown Community');
     });
 
-    it('supports plain text fallback when output has no labels', async () => {
+    it('returns fallback when output does not satisfy the two-line contract', async () => {
       const result = await summarizeCommunity('context', {
         ...testDeps,
         spawnSync: makeSpawnSync('no json here'),
       });
-      expect(result.name).toBe('no json here');
+      expect(result.name).toBe('Unknown Community');
+    });
+
+    it('returns fallback instead of partially accepting extra summary lines', async () => {
+      const result = await summarizeCommunity('context', {
+        ...testDeps,
+        spawnSync: makeSpawnSync('name\nsummary\nextra'),
+      });
+      expect(result.name).toBe('Unknown Community');
     });
   });
 
@@ -96,16 +110,22 @@ describe('llm service (legacy local LLM)', () => {
     const entityB = { name: '東京', type: 'City', description: 'Japan capital' };
 
     it('returns shouldMerge: true when LLM says merge', async () => {
-      const spawnSync = makeSpawnSync(
-        '{"shouldMerge":true,"merged":{"name":"Tokyo","type":"City","description":"日本の首都"}}',
-      );
+      const spawnSync = makeSpawnSync('merge');
       const result = await judgeAndMergeEntities(entityA, entityB, { ...testDeps, spawnSync });
       expect(result.shouldMerge).toBe(true);
-      expect(result.merged?.name).toBe('Tokyo');
+      expect(result.merged?.name).toBe('東京');
     });
 
     it('returns shouldMerge: false when LLM says do not merge', async () => {
-      const spawnSync = makeSpawnSync('{"shouldMerge":false}');
+      const spawnSync = makeSpawnSync('separate');
+      const result = await judgeAndMergeEntities(entityA, entityB, { ...testDeps, spawnSync });
+      expect(result.shouldMerge).toBe(false);
+    });
+
+    it('does not repair JSON-like merge output', async () => {
+      const spawnSync = makeSpawnSync(
+        '{"shouldMerge":true,"merged":{"name":"Tokyo","type":"City","description":"日本の首都",}}',
+      );
       const result = await judgeAndMergeEntities(entityA, entityB, { ...testDeps, spawnSync });
       expect(result.shouldMerge).toBe(false);
     });

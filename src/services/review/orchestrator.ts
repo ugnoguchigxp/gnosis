@@ -71,6 +71,29 @@ interface LLMReviewResult {
   next_actions: string[];
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseLlmReviewResult(raw: string): LLMReviewResult | null {
+  const parsed = JSON.parse(raw.trim()) as unknown;
+  if (!isRecord(parsed) || !Array.isArray(parsed.findings)) return null;
+  return {
+    findings: parsed.findings as LLMReviewResult['findings'],
+    summary: typeof parsed.summary === 'string' ? parsed.summary : '',
+    next_actions: Array.isArray(parsed.next_actions)
+      ? parsed.next_actions.filter((item): item is string => typeof item === 'string')
+      : [],
+  };
+}
+
+function knowledgeDegradedModes(status: KnowledgeRetrievalStatus): DegradedMode[] {
+  if (status === 'failed') return ['knowledge_retrieval_failed'];
+  if (status === 'empty_index') return ['knowledge_empty_index'];
+  if (status === 'no_applicable_knowledge') return ['knowledge_no_applicable'];
+  return [];
+}
+
 type RunReviewDeps = {
   llmService?: ReviewLLMService;
   now?: () => number;
@@ -331,7 +354,7 @@ export async function runReviewStageA(
   const maskedDiff = maskOrThrow(rawDiff, llmService.provider === 'cloud');
 
   try {
-    const { findings, summary, next_actions } = await reviewWithLLM(
+    const { findings, summary, next_actions, degradedReason } = await reviewWithLLM(
       {
         instruction: req.taskGoal ?? '',
         projectInfo: detectProjectInfo(req.repoPath, rawDiff),
@@ -340,11 +363,12 @@ export async function runReviewStageA(
       },
       llmService,
     );
+    const degradedReasons = degradedReason ? [degradedReason] : [];
 
     const result = ReviewOutputSchema.parse({
       review_id: randomUUID(),
       task_id: req.taskId,
-      review_status: deriveReviewStatusWithContext(findings, [], summary),
+      review_status: deriveReviewStatusWithContext(findings, degradedReasons, summary),
       findings,
       summary,
       next_actions,
@@ -354,8 +378,8 @@ export async function runReviewStageA(
         risk_level: determineRiskLevel(findings),
         static_analysis_used: false,
         knowledge_applied: [],
-        degraded_mode: false,
-        degraded_reasons: [],
+        degraded_mode: degradedReasons.length > 0,
+        degraded_reasons: degradedReasons,
         local_llm_used: llmService.provider === 'local',
         heavy_llm_used: llmService.provider === 'cloud',
         review_duration_ms: now() - startTime,
@@ -497,6 +521,7 @@ export async function runReviewStageB(
     findings: llmFindings,
     summary,
     next_actions,
+    degradedReason: llmDegradedReason,
   } = await reviewWithLLM(
     {
       instruction: req.taskGoal ?? '',
@@ -518,6 +543,9 @@ export async function runReviewStageB(
     },
     llmService,
   );
+  if (llmDegradedReason) {
+    state.degradedModes.push(llmDegradedReason);
+  }
 
   const mergedFindings = validateFindingsFull(
     mergeFindings(state.staticAnalysisFindings, llmFindings),
@@ -828,6 +856,7 @@ async function runReviewKnowledgeAware(
     findings: llmFindings,
     summary,
     next_actions,
+    degradedReason: llmDegradedReason,
   } = await reviewWithLLM(
     {
       instruction: [req.taskGoal ?? '', failureFirewallPromptContext].filter(Boolean).join('\n\n'),
@@ -858,6 +887,9 @@ async function runReviewKnowledgeAware(
     },
     llmService,
   );
+  if (llmDegradedReason) {
+    state.degradedModes.push(llmDegradedReason);
+  }
 
   const mergedFindingsRaw = deduplicateFindings(
     mergeFindings(state.staticAnalysisFindings, validateFindingsFull(llmFindings, state.diffs)),
@@ -1051,18 +1083,19 @@ async function runReviewAgenticCore(
   try {
     const finalResponse = await reviewWithToolsFn(llmService, messages, ctx);
 
-    // Attempt to parse JSON from the final response
     let parsed: LLMReviewResult;
+    let llmDegradedModes: DegradedMode[] = [];
     try {
-      const jsonMatch = finalResponse.match(/\{[\s\S]*\}/);
-      parsed = JSON.parse(jsonMatch ? jsonMatch[0] : finalResponse);
-    } catch (e) {
-      // Fallback if not JSON
+      const exactParsed = parseLlmReviewResult(finalResponse);
+      if (!exactParsed) throw new Error('Review LLM output did not match the JSON contract.');
+      parsed = exactParsed;
+    } catch {
       parsed = {
         findings: [],
-        summary: finalResponse,
+        summary: 'Review LLM returned output outside the review JSON contract.',
         next_actions: [],
       };
+      llmDegradedModes = ['llm_unparseable'];
     }
 
     const findingsRaw: Finding[] = (parsed.findings ?? []).map((f) => {
@@ -1093,20 +1126,15 @@ async function runReviewAgenticCore(
     }
     const rubricEvaluation = buildRubricEvaluation(rubric, findings);
 
+    const degradedReasons = [
+      ...knowledgeDegradedModes(knowledgeRetrievalStatus),
+      ...llmDegradedModes,
+    ];
+
     const result = ReviewOutputSchema.parse({
       review_id: randomUUID(),
       task_id: req.taskId,
-      review_status: deriveReviewStatusWithContext(
-        findings,
-        knowledgeRetrievalStatus === 'failed'
-          ? ['knowledge_retrieval_failed']
-          : knowledgeRetrievalStatus === 'empty_index'
-            ? ['knowledge_empty_index']
-            : knowledgeRetrievalStatus === 'no_applicable_knowledge'
-              ? ['knowledge_no_applicable']
-              : [],
-        parsed.summary,
-      ),
+      review_status: deriveReviewStatusWithContext(findings, degradedReasons, parsed.summary),
       findings,
       summary: parsed.summary || 'Review completed successfully.',
       next_actions: parsed.next_actions || [],
@@ -1116,15 +1144,8 @@ async function runReviewAgenticCore(
         risk_level: determineRiskLevel(findings),
         static_analysis_used: true, // Agentic review implicitly uses static tools if needed
         knowledge_applied: buildKnowledgeApplied(findings),
-        degraded_mode: knowledgeRetrievalStatus !== 'success' && knowledgePolicy !== 'off',
-        degraded_reasons:
-          knowledgeRetrievalStatus === 'failed'
-            ? (['knowledge_retrieval_failed'] as DegradedMode[])
-            : knowledgeRetrievalStatus === 'empty_index'
-              ? (['knowledge_empty_index'] as DegradedMode[])
-              : knowledgeRetrievalStatus === 'no_applicable_knowledge'
-                ? (['knowledge_no_applicable'] as DegradedMode[])
-                : [],
+        degraded_mode: degradedReasons.length > 0,
+        degraded_reasons: degradedReasons,
         local_llm_used: llmService.provider === 'local',
         heavy_llm_used: llmService.provider === 'cloud',
         review_duration_ms: now() - startTime,

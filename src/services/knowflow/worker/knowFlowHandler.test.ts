@@ -95,7 +95,7 @@ describe('knowFlowHandler', () => {
     );
   });
 
-  it('completes without creating an entity when research note is missing', async () => {
+  it('completes cron Phrase Scout tasks without creating an entity when research note is missing', async () => {
     const db = makeDatabase();
     const mockEvidenceProvider = vi.fn().mockResolvedValue({
       referenceUrls: ['https://example.com'],
@@ -110,7 +110,11 @@ describe('knowFlowHandler', () => {
       cronRunWindowMs: 3_600_000,
     });
 
-    const result = await handler(defaultTask);
+    const result = await handler({
+      ...defaultTask,
+      requestedBy: 'phrase-scout',
+      dedupeKey: 'test-topic:expand:cron:phrase-scout',
+    });
 
     expect(result.ok).toBe(true);
     if (result.ok) {

@@ -142,4 +142,35 @@ describe('stage A review flow', () => {
     expect(result.metadata.degraded_mode).toBe(true);
     expect(result.metadata.degraded_reasons).toContain('llm_timeout');
   });
+
+  test('returns llm_unparseable when LLM returns non-contract JSON', async () => {
+    const repoPath = '/tmp';
+    process.env.GNOSIS_ALLOWED_ROOTS = '/tmp';
+
+    const result = await runReviewStageA(
+      {
+        taskId: 'task-unparseable',
+        repoPath,
+        baseRef: 'main',
+        headRef: 'HEAD',
+        trigger: 'manual',
+        sessionId: 'code-review-repo:main',
+        mode: 'git_diff',
+      },
+      {
+        diffProvider: async () => SAMPLE_DIFF,
+        llmService: {
+          provider: 'cloud',
+          async generate() {
+            return '[]';
+          },
+        },
+      },
+    );
+
+    expect(result.review_status).toBe('needs_confirmation');
+    expect(result.metadata.degraded_mode).toBe(true);
+    expect(result.metadata.degraded_reasons).toContain('llm_unparseable');
+    expect(result.summary).toBe('Review LLM returned output outside the review JSON contract.');
+  });
 });

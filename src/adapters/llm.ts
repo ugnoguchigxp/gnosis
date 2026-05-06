@@ -26,12 +26,26 @@ export type RunLlmTaskResult = {
   warnings: string[];
 };
 
+export type LlmOutputRejectedReason = 'control_parse_failure' | 'empty_output_sentinel';
+
+export class LlmOutputRejectedError extends Error {
+  constructor(
+    public readonly task: LlmTaskName,
+    public readonly reason: LlmOutputRejectedReason,
+    public readonly warnings: string[],
+  ) {
+    super(`LLM ${task} output rejected: ${reason}. ${warnings.join(' | ')}`);
+    this.name = 'LlmOutputRejectedError';
+  }
+}
+
 export type LlmLogEvent = {
   event:
     | 'llm.task.start'
     | 'llm.task.attempt'
     | 'llm.task.success'
     | 'llm.task.retry'
+    | 'llm.task.degraded'
     | 'llm.task.failed'
     | 'llm.task.raw_response'
     | 'ops.evidence_extractor.done';
@@ -362,38 +376,33 @@ const assertModelText = (text: string): string => {
 const isModelControlParseFailure = (text: string): boolean =>
   text.startsWith(MODEL_CONTROL_PARSE_FAILURE_PREFIX);
 
-const isModelControlParseFailureMessage = (message: string): boolean =>
-  message.includes(MODEL_CONTROL_PARSE_FAILURE_MESSAGE);
-
-const didBackendFailOnlyWithControlParse = (error: unknown): boolean =>
-  error instanceof LlmBackendAttemptsError &&
-  error.attemptMessages.length > 0 &&
-  error.attemptMessages.every(isModelControlParseFailureMessage);
-
-const EMPTY_OUTPUT_ALLOWED_AFTER_CONTROL_FAILURE_TASKS = new Set<LlmTaskName>([
-  'phrase_scout',
-  'research_note',
-]);
 const LOCAL_LLM_EMPTY_OUTPUT_SENTINELS = new Set([
   '回答を生成できませんでした。',
   '上限に達しました。',
 ]);
 
-const isEmptyOutputAllowedTask = (task: LlmTaskName): boolean =>
-  EMPTY_OUTPUT_ALLOWED_AFTER_CONTROL_FAILURE_TASKS.has(task);
-
 const isLocalLlmEmptyOutputSentinel = (text: string): boolean =>
   LOCAL_LLM_EMPTY_OUTPUT_SENTINELS.has(text.trim());
 
-const canAcceptEmptyAfterControlParseFailure = (
+const localLlmEmptyOutputSentinelWarning = (task: LlmTaskName, sentinel: string): string =>
+  `LLM ${task} output matched empty-output sentinel: ${sentinel}`;
+
+const classifyBackendOutputRejectedReason = (
   task: LlmTaskName,
-  warnings: string[],
-  controlParseFailureBackendCount: number,
-): boolean =>
-  isEmptyOutputAllowedTask(task) &&
-  warnings.length > 0 &&
-  controlParseFailureBackendCount > 0 &&
-  warnings.length === controlParseFailureBackendCount;
+  error: unknown,
+): LlmOutputRejectedReason | null => {
+  if (!(error instanceof LlmBackendAttemptsError) || error.attemptMessages.length === 0) {
+    return null;
+  }
+  if (error.attemptMessages.every((message) => message === MODEL_CONTROL_PARSE_FAILURE_MESSAGE)) {
+    return 'control_parse_failure';
+  }
+  const sentinelPrefix = `LLM ${task} output matched empty-output sentinel:`;
+  if (error.attemptMessages.every((message) => message.startsWith(sentinelPrefix))) {
+    return 'empty_output_sentinel';
+  }
+  return null;
+};
 
 const buildPlainTextRetryPrompt = (prompt: string): string =>
   [
@@ -426,7 +435,7 @@ const attemptBackend = async (
   llmConfig: LlmClientConfig,
   deps: AdapterDependencies,
   signal?: AbortSignal,
-): Promise<{ text: string; attempt: number }> => {
+): Promise<{ text: string; attempt: number; warnings: string[] }> => {
   let promptForAttempt = prompt;
   const attemptMessages: string[] = [];
 
@@ -464,13 +473,23 @@ const attemptBackend = async (
         promptForAttempt = buildPlainTextRetryPrompt(prompt);
       }
       const text = assertModelText(unwrapped).trim();
-      if (isEmptyOutputAllowedTask(input.task) && isLocalLlmEmptyOutputSentinel(text)) {
-        return { text: '', attempt };
+      if (isLocalLlmEmptyOutputSentinel(text)) {
+        const warning = localLlmEmptyOutputSentinelWarning(input.task, text);
+        deps.logger({
+          event: 'llm.task.degraded',
+          task: input.task,
+          backend,
+          attempt,
+          requestId: input.requestId,
+          message: warning,
+          level: 'warn',
+        });
+        throw new Error(warning);
       }
       if (text.length === 0) {
         throw new Error(`LLM ${input.task} output is empty.`);
       }
-      return { text, attempt };
+      return { text, attempt, warnings: [] };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       attemptMessages.push(message);
@@ -522,7 +541,7 @@ export const runLlmTextTask = async (
   });
 
   const warnings: string[] = [];
-  let controlParseFailureBackendCount = 0;
+  const rejectedOutputReasons: LlmOutputRejectedReason[] = [];
   const template = await deps.loadPromptTemplate(task);
   const prompt = renderPrompt(template, task, context);
 
@@ -535,10 +554,16 @@ export const runLlmTextTask = async (
       attempt: apiResult.attempt,
       requestId: input.requestId,
     });
-    return { task, text: apiResult.text, backend: 'api', warnings };
+    return {
+      task,
+      text: apiResult.text,
+      backend: 'api',
+      warnings: warnings.concat(apiResult.warnings),
+    };
   } catch (error) {
-    if (didBackendFailOnlyWithControlParse(error)) {
-      controlParseFailureBackendCount += 1;
+    const rejectedReason = classifyBackendOutputRejectedReason(task, error);
+    if (rejectedReason) {
+      rejectedOutputReasons.push(rejectedReason);
     }
     warnings.push(error instanceof Error ? error.message : String(error));
   }
@@ -560,30 +585,35 @@ export const runLlmTextTask = async (
         attempt: cliResult.attempt,
         requestId: input.requestId,
       });
-      return { task, text: cliResult.text, backend: 'cli', warnings };
+      return {
+        task,
+        text: cliResult.text,
+        backend: 'cli',
+        warnings: warnings.concat(cliResult.warnings),
+      };
     } catch (error) {
-      if (didBackendFailOnlyWithControlParse(error)) {
-        controlParseFailureBackendCount += 1;
+      const rejectedReason = classifyBackendOutputRejectedReason(task, error);
+      if (rejectedReason) {
+        rejectedOutputReasons.push(rejectedReason);
       }
       warnings.push(error instanceof Error ? error.message : String(error));
     }
   }
 
-  if (canAcceptEmptyAfterControlParseFailure(task, warnings, controlParseFailureBackendCount)) {
+  const outputRejectedReason =
+    warnings.length > 0 && rejectedOutputReasons.length === warnings.length
+      ? rejectedOutputReasons[0]
+      : null;
+  if (outputRejectedReason) {
     deps.logger({
-      event: 'llm.task.success',
+      event: 'llm.task.failed',
       task,
       backend: llmConfig.enableCliFallback ? 'cli' : 'api',
       requestId: input.requestId,
-      message: 'empty output accepted after repeated tool/think block parse failure',
-      level: 'warn',
+      message: warnings.join(' | '),
+      level: 'error',
     });
-    return {
-      task,
-      text: '',
-      backend: llmConfig.enableCliFallback ? 'cli' : 'api',
-      warnings,
-    };
+    throw new LlmOutputRejectedError(task, outputRejectedReason, warnings);
   }
 
   deps.logger({

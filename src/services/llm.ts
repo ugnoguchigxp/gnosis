@@ -101,14 +101,7 @@ export async function extractEntitiesFromText(
     const output = result.stdout?.trim();
     if (!output) return [];
 
-    // JSON 部分のみを抽出（念のため）
-    const jsonMatch = output.match(/\[\s*\{[\s\S]*\}\s*\]/);
-    if (!jsonMatch) {
-      console.warn('Failed to find JSON in LLM response:', output);
-      return [];
-    }
-
-    const parsed = JSON.parse(jsonMatch[0]);
+    const parsed = JSON.parse(output);
     return ExtractedEntitySchema.array().parse(parsed);
   } catch (error) {
     console.error('Failed to extract entities from text using LLM:', error);
@@ -131,9 +124,9 @@ export async function summarizeCommunity(
 以下のナレッジグラフ断片（エンティティと関係性）を読み取り、この知識の塊が「何に関するものか」を要約してください。
 JSON整形は不要です。自然言語のテキストで出力してください。
 
-出力形式（プレーンテキスト）:
-Name: この知識群を表す短い名前
-Summary: このコミュニティが含む主要トピックや関係性の概要（100文字程度）
+出力形式（プレーンテキスト、2行のみ）:
+1行目: この知識群を表す短い名前だけ
+2行目: このコミュニティが含む主要トピックや関係性の概要だけ（100文字程度）
 
 対象データ:
 """
@@ -159,36 +152,17 @@ ${context}
       throw new Error('Empty LLM response');
     }
 
-    const nameMatch = output.match(/^\s*name\s*:\s*(.+)$/im);
-    const summaryMatch = output.match(/^\s*summary\s*:\s*(.+)$/im);
-    if (nameMatch?.[1] && summaryMatch?.[1]) {
-      return {
-        name: nameMatch[1].trim(),
-        summary: summaryMatch[1].trim(),
-      };
-    }
-
-    // 互換: JSONが返ってきた場合も読み込めるようにする
-    const jsonMatch = output.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]) as { name?: string; summary?: string };
-      if (typeof parsed.name === 'string' && typeof parsed.summary === 'string') {
-        return { name: parsed.name, summary: parsed.summary };
-      }
-    }
-
-    // 最終フォールバック: 1行目をname, 残りをsummaryとして扱う
     const lines = output
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
-    if (lines.length > 0) {
+    if (lines.length === 2) {
       return {
         name: lines[0] ?? 'Unknown Community',
-        summary: lines.slice(1).join(' ') || '要約の生成に失敗しました。',
+        summary: lines[1] ?? '要約の生成に失敗しました。',
       };
     }
-    throw new Error('Empty summary output');
+    throw new Error('Community summary output did not match the two-line contract.');
   } catch (error) {
     console.error('Failed to summarize community:', error);
     return { name: 'Unknown Community', summary: '要約の生成に失敗しました。' };
@@ -332,17 +306,12 @@ export async function judgeAndMergeEntities(
   const lockFn = deps.withLock ?? defaultLock;
   const prompt = `
 以下の2つのエンティティ（実体）が、同じ対象を指しているか判定してください。
-名前の揺らぎ（別名、略称、英語表記とカタカナ表記等）があっても、文脈上同じであれば「同一」とみなしてください。
+名前の揺らぎ（別名、略称、英語表記とカタカナ表記等）があっても、文脈上同じであれば merge と判定してください。
+別物である場合は separate と判定してください。
 
-同一である場合は shouldMerge: true とし、2つの情報を統合した最適な name, type, description を出力してください。
-別物である場合は shouldMerge: false としてください。
-
-出力は必ず以下のJSON形式のみで返してください。余計な解説は不要です。
-
-{
-  "shouldMerge": true/false,
-  "merged": { "name": "統合後の名前", "type": "種別", "description": "統合された説明" }
-}
+出力は次のどちらか1語のみ:
+merge
+separate
 
 対象1:
 - 名前: ${entityA.name}
@@ -367,11 +336,20 @@ export async function judgeAndMergeEntities(
     const output = result.stdout?.trim();
     if (!output) return { shouldMerge: false };
 
-    const jsonMatch = output.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return { shouldMerge: false };
+    const decision = output.toLowerCase();
+    if (decision !== 'merge') return { shouldMerge: false };
 
-    const parsed = JSON.parse(jsonMatch[0].replace(/,\s*([\}\]])/g, '$1'));
-    return MergedEntityResultSchema.parse(parsed);
+    return MergedEntityResultSchema.parse({
+      shouldMerge: true,
+      merged: {
+        name: entityB.name,
+        type: entityB.type,
+        description: [entityB.description, entityA.description]
+          .map((item) => item.trim())
+          .filter((item, index, items) => item.length > 0 && items.indexOf(item) === index)
+          .join('\n'),
+      },
+    });
   } catch (error) {
     console.error('Failed to judge and merge entities:', error);
   }

@@ -118,57 +118,87 @@ describe('llm adapter', () => {
     expect(result.warnings.length).toBeGreaterThan(0);
   });
 
-  it('accepts empty output for KnowFlow tasks after repeated tool or think block parse failures', async () => {
-    const result = await runLlmTask(
-      {
-        task: 'research_note',
-        context: { topic: 'Boundary testing' },
-        requestId: 'req-control-empty',
-      },
-      {
-        config: {
-          maxRetries: 2,
-          retryDelayMs: 0,
-          enableCliFallback: false,
+  it('rejects repeated tool or think block parse failures instead of returning empty success', async () => {
+    await expect(
+      runLlmTask(
+        {
+          task: 'research_note',
+          context: { topic: 'Boundary testing' },
+          requestId: 'req-control-empty',
         },
-        deps: {
-          loadPromptTemplate: async () => 'Topic: {{topic}}',
-          invokeApi: async () =>
-            JSON.stringify({
-              response: '[System] Tool call or think block was generated but failed to parse.',
-            }),
-          invokeCli: async () => 'should not be used',
-          logger: noopLogger,
+        {
+          config: {
+            maxRetries: 2,
+            retryDelayMs: 0,
+            enableCliFallback: false,
+          },
+          deps: {
+            loadPromptTemplate: async () => 'Topic: {{topic}}',
+            invokeApi: async () =>
+              JSON.stringify({
+                response: '[System] Tool call or think block was generated but failed to parse.',
+              }),
+            invokeCli: async () => 'should not be used',
+            logger: noopLogger,
+          },
         },
-      },
-    );
-
-    expect(result.text).toBe('');
-    expect(result.warnings.join(' | ')).toContain('tool/think block parse failure');
+      ),
+    ).rejects.toThrow('control_parse_failure');
   });
 
-  it('treats local LLM empty-output sentinels as empty KnowFlow output', async () => {
-    const result = await runLlmTask(
-      {
-        task: 'research_note',
-        context: { topic: 'Boundary testing' },
-        requestId: 'req-empty-sentinel',
-      },
-      {
-        config: {
-          maxRetries: 1,
-          enableCliFallback: false,
+  it('rejects local LLM empty-output sentinels with observable evidence', async () => {
+    const events: Array<{ event?: string; message?: string }> = [];
+    await expect(
+      runLlmTask(
+        {
+          task: 'research_note',
+          context: { topic: 'Boundary testing' },
+          requestId: 'req-empty-sentinel',
         },
-        deps: {
-          loadPromptTemplate: async () => 'Topic: {{topic}}',
-          invokeApi: async () => '回答を生成できませんでした。',
-          invokeCli: async () => 'should not be used',
-          logger: noopLogger,
+        {
+          config: {
+            maxRetries: 1,
+            enableCliFallback: false,
+          },
+          deps: {
+            loadPromptTemplate: async () => 'Topic: {{topic}}',
+            invokeApi: async () => '回答を生成できませんでした。',
+            invokeCli: async () => 'should not be used',
+            logger: (event) => events.push(event),
+          },
         },
-      },
+      ),
+    ).rejects.toThrow('empty_output_sentinel');
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'llm.task.degraded',
+        message: expect.stringContaining('empty-output sentinel'),
+      }),
     );
+  });
 
-    expect(result.text).toBe('');
+  it('rejects local LLM empty-output sentinels for tasks that require text', async () => {
+    await expect(
+      runLlmTask(
+        {
+          task: 'custom_task',
+          context: { topic: 'Boundary testing' },
+          requestId: 'req-custom-empty-sentinel',
+        },
+        {
+          config: {
+            maxRetries: 1,
+            enableCliFallback: false,
+          },
+          deps: {
+            loadPromptTemplate: async () => 'Topic: {{topic}}',
+            invokeApi: async () => '上限に達しました。',
+            invokeCli: async () => 'should not be used',
+            logger: noopLogger,
+          },
+        },
+      ),
+    ).rejects.toThrow('empty_output_sentinel');
   });
 
   it('keeps control parse failures fatal for tasks that require non-empty text', async () => {

@@ -1,12 +1,11 @@
 #!/usr/bin/env bun
 
 import { recordQualityGate } from '../../scripts/lib/quality-gates.js';
-import { inspectDeprecatedLifecycleToolMentions } from '../services/agenticSearch/publicSurface.js';
 import { AgenticSearchRunner } from '../services/agenticSearch/runner.js';
 
 type SmokeResult = {
   ok: boolean;
-  deprecatedMentionCount: number;
+  answerChars: number;
   degradedCode?: string;
   toolCalls: number;
   loopCount: number;
@@ -19,7 +18,7 @@ function renderResult(result: SmokeResult, json: boolean): string {
   }
   return [
     'agentic-search semantic smoke failed',
-    `deprecatedMentionCount=${result.deprecatedMentionCount}`,
+    `answerChars=${result.answerChars}`,
     `degradedCode=${result.degradedCode ?? 'none'}`,
     '',
   ].join('\n');
@@ -35,11 +34,11 @@ async function run(): Promise<void> {
     technologies: ['TypeScript', 'Bun', 'MCP'],
     intent: 'plan',
   });
-  const inspection = inspectDeprecatedLifecycleToolMentions(output.answer);
-  const ok = inspection.ok && output.degraded?.code !== 'STALE_PUBLIC_SURFACE_ANSWER';
+  const answerChars = output.answer.trim().length;
+  const ok = answerChars > 0 && !output.degraded;
   const result: SmokeResult = {
     ok,
-    deprecatedMentionCount: inspection.mentionCount,
+    answerChars,
     degradedCode: output.degraded?.code,
     toolCalls: output.toolTrace.toolCalls.length,
     loopCount: output.toolTrace.loopCount,
@@ -58,7 +57,9 @@ async function run(): Promise<void> {
   recordQualityGate(
     'semanticSmoke',
     'failed',
-    `agentic-search semantic smoke failed (${result.deprecatedMentionCount} deprecated mentions)`,
+    `agentic-search semantic smoke failed (answer chars=${result.answerChars}, degraded=${
+      result.degradedCode ?? 'none'
+    })`,
   );
   process.stderr.write(renderResult(result, json));
   process.exitCode = 1;
