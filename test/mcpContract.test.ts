@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
-import { server, shouldInjectAlwaysContext } from '../src/mcp/server';
+import { formatAlwaysContextRows, server, shouldInjectAlwaysContext } from '../src/mcp/server';
 import {
   resetMemoryFetchRunnerForTest,
   resetMemorySearchRunnerForTest,
@@ -93,6 +93,33 @@ describe('mcp contract', () => {
     for (const [toolName, expected] of Object.entries(matrix)) {
       expect(shouldInjectAlwaysContext(toolName)).toBe(expected);
     }
+  });
+
+  it('formats bootstrap guidance as compact rules plus tool usage', () => {
+    const text = formatAlwaysContextRows([
+      {
+        name: 'KISS + YAGNI: シンプル優先、未確定機能作成禁止 / DRY: 重複コード共通化',
+        type: 'constraint',
+        description:
+          '## 設計原則\n- **DRY**: 重複コード共通化\n- **KISS + YAGNI**: シンプル優先、未確定機能作成禁止',
+        metadata: {},
+      },
+      {
+        name: 'KISS + YAGNI: シンプル優先、未確定機能作成禁止 / DRY: 重複コード共通化',
+        type: 'rule',
+        description:
+          '## 設計原則\n- **DRY**: 重複コード共通化\n- **KISS + YAGNI**: シンプル優先、未確定機能作成禁止',
+        metadata: {},
+      },
+    ]);
+
+    expect(text.startsWith('## 常用ルール')).toBe(true);
+    expect(text).toContain('## MCPツール種別');
+    expect(text).toContain('`agentic_search`');
+    expect(text).not.toContain('現行ユーザー指示と AGENTS.md');
+    expect(text).not.toContain('必要な context だけを取り込み');
+    expect(text).not.toContain('Gnosis MCP ツール利用ガイド');
+    expect(text.match(/設計は KISS\/YAGNI/g)?.length).toBe(1);
   });
 
   it('review_task call is wired to a review runner instead of the minimal stub', async () => {

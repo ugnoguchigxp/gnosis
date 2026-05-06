@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { ReviewerToolRegistry } from './index.js';
+import { ReviewerToolRegistry, createDefaultReviewerToolRegistry } from './index.js';
 import type { ReviewerToolContext, ReviewerToolEntry } from './types.js';
 
 describe('ReviewerToolRegistry', () => {
@@ -61,5 +61,16 @@ describe('ReviewerToolRegistry', () => {
       description: 'd1',
       parameters: { s1: 1 },
     });
+  });
+
+  it('default registry exposes current Gnosis review tools only', () => {
+    const toolNames = createDefaultReviewerToolRegistry()
+      .toLLMToolDefinitions()
+      .map((tool) => tool.name);
+
+    expect(toolNames).toContain('search_knowledge');
+    expect(toolNames).toContain('get_guidance');
+    expect(toolNames).not.toContain('search_memory');
+    expect(toolNames).not.toContain('query_procedure');
   });
 });

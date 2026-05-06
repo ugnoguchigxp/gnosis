@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 
 const mockGetReviewLlmService = mock();
 
@@ -6,11 +6,46 @@ mock.module('../../src/services/review/llm/reviewer.js', () => ({
   getReviewLLMService: mockGetReviewLlmService,
 }));
 
-import { AgenticSearchLlmAdapter } from '../../src/services/agenticSearch/llmAdapter.js';
+import { GNOSIS_CONSTANTS } from '../../src/constants.js';
+import {
+  AgenticSearchLlmAdapter,
+  resolveAgenticSearchLlmTimeoutMs,
+} from '../../src/services/agenticSearch/llmAdapter.js';
 
 describe('AgenticSearchLlmAdapter', () => {
   beforeEach(() => {
     mockGetReviewLlmService.mockReset();
+  });
+
+  afterEach(() => {
+    process.env.GNOSIS_AGENTIC_SEARCH_LLM_TIMEOUT_MS = undefined;
+    process.env.GNOSIS_MCP_REVIEW_LLM_TIMEOUT_MS = undefined;
+  });
+
+  it('uses a five-minute LLM timeout by default', () => {
+    expect(resolveAgenticSearchLlmTimeoutMs()).toBe(
+      GNOSIS_CONSTANTS.MCP_REVIEW_LLM_TIMEOUT_MS_DEFAULT,
+    );
+  });
+
+  it('passes the agentic search LLM timeout to the review LLM service', async () => {
+    process.env.GNOSIS_AGENTIC_SEARCH_LLM_TIMEOUT_MS = '240000';
+    const generateMessagesStructured = mock(async () => ({ text: 'ok', toolCalls: [] }));
+    mockGetReviewLlmService.mockResolvedValue({
+      provider: 'cloud',
+      generate: mock(async () => ''),
+      generateMessagesStructured,
+    });
+    const adapter = new AgenticSearchLlmAdapter(resolveAgenticSearchLlmTimeoutMs());
+    await adapter.generate([
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'q' },
+    ]);
+
+    expect(mockGetReviewLlmService).toHaveBeenCalledWith(undefined, {
+      invoker: 'service',
+      timeoutMs: 240_000,
+    });
   });
 
   it('throws tool_calling_unsupported when provider lacks structured tool calls', async () => {

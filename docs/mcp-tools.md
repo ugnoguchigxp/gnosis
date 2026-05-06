@@ -2,7 +2,7 @@
 
 Gnosis は、エージェントが長期記憶、知識グラフ、自律調査能力、計画レビューを利用するための MCP ツール群を提供します。
 
-現在の一次導線は lifecycle event ではなく、`agentic_search` による task-aware retrieval と、`review_task` による knowledge-aware review です。
+現在の一次導線は、`agentic_search` による task-aware retrieval と、`review_task` による knowledge-aware review です。
 
 ## 公開ツール一覧
 
@@ -52,18 +52,19 @@ bun test test/mcpHostServices.test.ts test/mcpStdioIntegration.test.ts
 
 ### `initial_instructions`
 
-- **用途**: Gnosis の現在の知識取得・レビュー・保存ツール方針を確認します。
-- **出力**: `agentic_search`, `search_knowledge`, `review_task`, `record_task_note`, `doctor`, `memory_search`, `memory_fetch` の使い分けガイド。
-- **注意**: `activate_project` first-call や `start_task` / `finish_task` は推奨しません。
+- **用途**: Gnosis の常用ルールと、いつどの MCP tool を使うべきかを短く確認します。
+- **出力**: `## 常用ルール` と `## MCPツール種別` の2セクションを返します。各 tool の「使う時 / 避ける時」は残し、Astmend / DiffGuard の詳細説明や長い API reference は返しません。
 - **運用ルール**:
-  - Failure Firewall / Golden Path context は常時実行ではなく、`agentic_search` または review 判断で必要な場合だけ参照します。
-  - 実装から得た知見を `record_task_note` で登録する前に、関連する verify gate を合格させます。
-  - verify 合格後かつユーザーが commit を承認した場合、再利用可能な教訓・ルール・手続き・成功/失敗 pattern 候補の登録を検討します。
-  - 完了報告前に変更内容をセルフレビューし、改善点を潰してから関連する verify gate を実行します。
+  - Gnosis の現行ツール方針が不明な場合だけ呼びます。
+  - 非自明な実装・レビュー前は、過去知識が結果を変え得る場合だけ `agentic_search` を使います。
+  - raw候補やスコア確認だけ `search_knowledge` を使います。
+  - フローが不明瞭な場合は `doctor` で状態確認します。
 
 ### `agentic_search`
 
 - **用途**: ユーザー依頼をタスク文脈として解釈し、今回の作業に本当に必要な知識だけを返します。
+- **LLM**: `review_task` と同じ review LLM service を使います。既定は Azure OpenAI です。`provider: "openai"` 相当の alias も Azure OpenAI として扱います。
+- **Timeout**: LLM request timeout は既定で5分です。`GNOSIS_AGENTIC_SEARCH_LLM_TIMEOUT_MS`、または `GNOSIS_MCP_REVIEW_LLM_TIMEOUT_MS` で上書きできます。
 - **処理**:
   - `agentic_search` handler は `AgenticSearchRunner` を呼び出します。
   - Runner は native tool calling で `knowledge_search` / `brave_search` / `fetch` を必要時に実行します。
@@ -185,15 +186,3 @@ bun test test/mcpHostServices.test.ts test/mcpStdioIntegration.test.ts
 - **用途**: MCP サーバーのランタイム状態、DB 接続、知識インデックスの鮮度、メタデータの整合性を診断します。
 - **入力**:
   - `clientSnapshot` (任意): クライアント側で保持しているツール情報のスナップショット
-
----
-
-## 非公開・廃止方針
-
-以下は通常の MCP 公開面から外します。
-
-- `activate_project`: project activation 状態を持たず、診断は `doctor`、知識取得は `agentic_search` に寄せます。
-- `start_task`: 低情報量の `task_trace` は新規作成しません。ユーザー依頼の要約と検索は `agentic_search` が行います。
-- `finish_task`: 完了ログではなく、再利用可能な知識だけを `record_task_note` または scheduled synthesis で保存します。
-
-旧 memory CRUD / graph / experience / review 系の細かいツールは、primary tool の内部実装または CLI / diagnostics 用として扱います。raw memory の確認は `memory_search` / `memory_fetch` の2段導線に限定します。

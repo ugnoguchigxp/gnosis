@@ -20,8 +20,120 @@ let alwaysCache: { content: string; expiresAt: number } | null = null;
 const ALWAYS_CACHE_TTL_MS = 5 * 60 * 1000;
 const FULL_ALWAYS_CONTEXT_TOOLS = new Set(['initial_instructions']);
 
+type AlwaysContextRow = {
+  name: string;
+  type: string;
+  description: string | null;
+  metadata: unknown;
+};
+
+const BOOTSTRAP_OPERATION_RULES = [
+  '作業完了前にセルフレビューし、この repo に合う verify gate を実行する。',
+  'Git 操作と commit/PR はユーザー指示または確認後に行う。',
+];
+
+const BOOTSTRAP_TOOL_USAGE = [
+  '`initial_instructions`: Gnosis の現行ツール方針が不明な時だけ最初に使う。毎タスクの前置きにはしない。',
+  '`agentic_search`: 非自明な実装・レビュー・調査で、過去知識や成功/失敗例が判断を変え得る時に使う主導線。`userRequest` に goal、files、changeTypes、intent を含める。',
+  '`search_knowledge`: raw候補、スコア、近い語句を直接確認したい時だけ使う。通常回答や方針判断は `agentic_search` を優先する。',
+  '`review_task`: コード差分、ドキュメント、計画、仕様、設計をレビューする時に使う。根拠必須なら `knowledgePolicy: "required"` を検討する。',
+  '`record_task_note`: verify 後、次回も使える rule / lesson / procedure / decision が得られた時だけ保存する。作業ログ丸ごとは保存しない。',
+  '`doctor`: tool visibility、DB、MCP host、metadata、timeout/Transport closed など runtime が怪しい時、または復旧後の確認に使う。',
+  '`memory_search` / `memory_fetch`: context 圧縮後に raw memory の具体的根拠が必要な時だけ使う。まず search で候補を見て、必要分だけ fetch する。',
+];
+
 export function shouldInjectAlwaysContext(toolName: string): boolean {
   return FULL_ALWAYS_CONTEXT_TOOLS.has(toolName);
+}
+
+function normalizeRuleKey(value: string): string {
+  return value
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[`*_#>\-:：/／（）()。、，,\s]+/g, '');
+}
+
+function metadataContent(metadata: unknown): string {
+  if (!metadata || typeof metadata !== 'object') return '';
+  const content = (metadata as Record<string, unknown>).content;
+  return typeof content === 'string' ? content.trim() : '';
+}
+
+function compactFallbackRule(row: AlwaysContextRow, rawText: string): string {
+  const lines = rawText
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) =>
+      line
+        .replace(/^#+\s*/, '')
+        .replace(/^[-*]\s*/, '')
+        .replace(/\*\*/g, '')
+        .trim(),
+    )
+    .filter((line) => line.length > 0 && !line.endsWith(':'));
+  const firstLine = lines[0] ?? row.name;
+  const text = firstLine.replace(/\s+/g, ' ').trim();
+  return text.endsWith('。') ? text : `${text}。`;
+}
+
+function compactAlwaysRule(row: AlwaysContextRow): string {
+  const rawText = metadataContent(row.metadata) || row.description || row.name;
+  const haystack = `${row.name}\n${rawText}`;
+
+  if (/\.envファイル変更|\.env/.test(haystack)) {
+    return '明示的な許可なく `.env` ファイルを変更しない。';
+  }
+
+  if (/pnpm build\/test|ESLint|型チェック|コードレビュー|既存共通部品/.test(haystack)) {
+    return 'コード変更では型チェック、lint、test/build など該当する verify gate を実行し、既存共通部品を優先する。docs-only 変更では不要な build/lint を増やさない。';
+  }
+
+  if (/verifyコマンド|品質チェック|tsc|vitest|vite build|biome check/.test(haystack)) {
+    return 'タスク完了時は、この repo の実態に合う verify コマンドで品質を確認する。';
+  }
+
+  if (
+    /サーバー独自起動|認証バイパス|Git操作|コミット・PR|useRef|useEffect|useQueryClient|invalidateQueries/.test(
+      haystack,
+    )
+  ) {
+    return '独自サーバー起動、認証バイパス実装、React hook の無限ループを避ける。Git 操作と commit/PR はユーザー指示または確認後に行い、API mutation は query invalidation まで含める。';
+  }
+
+  if (/KISS|YAGNI|DRY|単一責任|関心分離|依存性逆転|合成|最小驚愕/.test(haystack)) {
+    return '設計は KISS/YAGNI、DRY、単一責任、関心分離、依存性逆転、合成優先、最小驚愕を基本にする。';
+  }
+
+  return compactFallbackRule(row, rawText);
+}
+
+export function formatAlwaysContextRows(rows: AlwaysContextRow[]): string {
+  const rules: string[] = [];
+  const seen = new Set<string>();
+
+  for (const rule of BOOTSTRAP_OPERATION_RULES) {
+    const key = normalizeRuleKey(rule);
+    seen.add(key);
+    rules.push(rule);
+  }
+
+  for (const row of rows) {
+    const rule = compactAlwaysRule(row);
+    const key = normalizeRuleKey(rule);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rules.push(rule);
+  }
+
+  return [
+    '## 常用ルール',
+    '',
+    rules.map((rule) => `- ${rule}`).join('\n'),
+    '',
+    '## MCPツール種別',
+    '',
+    BOOTSTRAP_TOOL_USAGE.map((rule) => `- ${rule}`).join('\n'),
+  ].join('\n');
 }
 
 async function getAlwaysContext(): Promise<string> {
@@ -39,36 +151,11 @@ async function getAlwaysContext(): Promise<string> {
       .from(entities)
       .where(eq(entities.scope, 'always'));
 
-    if (rows.length === 0) {
-      alwaysCache = { content: '', expiresAt: now + ALWAYS_CACHE_TTL_MS };
-      return '';
-    }
-
-    const lines: string[] = [];
-    for (const r of rows) {
-      const meta =
-        r.metadata && typeof r.metadata === 'object' ? (r.metadata as Record<string, unknown>) : {};
-      const metaContent = typeof meta.content === 'string' ? meta.content.trim() : '';
-      const desc = r.description ?? '';
-
-      // 本文が metadata.content にある場合はそれを優先表示し、省略しない
-      if (metaContent.length > 0) {
-        lines.push(`### [${r.type}] ${r.name}`);
-        if (desc.length > 0 && desc !== metaContent) {
-          lines.push(desc);
-        }
-        lines.push(metaContent);
-        lines.push('');
-      } else {
-        lines.push(`- [${r.type}] ${r.name}: ${desc}`);
-      }
-    }
-
-    const content = `## 常時適用ルール・制約 (scope:always)\n${lines.join('\n')}\n---`;
+    const content = formatAlwaysContextRows(rows);
     alwaysCache = { content, expiresAt: now + ALWAYS_CACHE_TTL_MS };
     return content;
   } catch {
-    return '';
+    return formatAlwaysContextRows([]);
   }
 }
 
@@ -106,7 +193,7 @@ export async function callGnosisTool(name: string, args: unknown): Promise<ToolR
     if (alwaysCtx && result.content && Array.isArray(result.content)) {
       return {
         ...result,
-        content: [{ type: 'text', text: alwaysCtx }, ...result.content],
+        content: [{ type: 'text', text: alwaysCtx }],
       };
     }
     return result;

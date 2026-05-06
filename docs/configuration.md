@@ -41,6 +41,21 @@ Gnosis は環境変数を中心に構成されています。一部の機能（K
 - macOS ログイン時から MCP host を常駐させる場合は `scripts/setup-automation.sh install` と `scripts/setup-automation.sh load` を実行します。`com.gnosis.mcp-host` は `RunAtLoad` / `KeepAlive` で起動し、stdio adapter はこの host へ接続します。既存の手動 host が残っている場合は LaunchAgent 側が shutdown して引き継ぎます。
 - Gnosis MCP host は Gnosis / Astmend / diffGuard の service factory を同一 process に読み込みます。Codex 側では Astmend / diffGuard を個別 MCP server として起動せず、Gnosis adapter だけを登録します。
 
+Codex の推奨設定:
+
+```toml
+[mcp_servers.gnosis]
+command = "/Users/y.noguchi/.bun/bin/bun"
+args = [ "run", "src/index.ts" ]
+cwd = "/Users/y.noguchi/Code/gnosis"
+
+[mcp_servers.gnosis.env]
+GNOSIS_NO_WORKERS = "true"
+GNOSIS_MCP_ADAPTER_LOG_FILE = "/Users/y.noguchi/Code/gnosis/logs/mcp-adapter.log"
+```
+
+tool 別の approval 設定は不要です。公開 tool surface はサーバー側の `src/mcp/tools/index.ts` と contract test で管理します。
+
 ### 埋め込み (Embedding)
 
 | 変数名 | デフォルト値 | 説明 |

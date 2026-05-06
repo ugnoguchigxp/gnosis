@@ -49,6 +49,16 @@ function buildUserTaskMessage(input: AgenticSearchRunnerInput): string {
   ].join('\n');
 }
 
+function agenticSearchRunLog(event: string, fields: Record<string, unknown> = {}): void {
+  console.error(
+    `[AgenticSearch] ${JSON.stringify({
+      ts: new Date().toISOString(),
+      event,
+      ...fields,
+    })}`,
+  );
+}
+
 function buildPrefetchKnowledgeQuery(input: AgenticSearchRunnerInput): string {
   return [
     input.userRequest,
@@ -345,6 +355,14 @@ export class AgenticSearchRunner {
   ) {}
 
   async run(input: AgenticSearchRunnerInput): Promise<AgenticSearchRunnerOutput> {
+    const startedAt = Date.now();
+    agenticSearchRunLog('start', {
+      intent: input.intent ?? 'edit',
+      repoPath: input.repoPath ?? null,
+      fileCount: input.files?.length ?? 0,
+      changeTypes: input.changeTypes ?? [],
+      technologies: input.technologies ?? [],
+    });
     const messages: AgenticLoopMessage[] = [
       { role: 'system', content: buildInitialSystemContext() },
       { role: 'user', content: buildUserTaskMessage(input) },
@@ -376,6 +394,11 @@ export class AgenticSearchRunner {
         errorCode: result.error?.code,
       });
     }
+    agenticSearchRunLog('prefetch_complete', {
+      durationMs: Date.now() - startedAt,
+      toolCount: prefetchResults.length,
+      failedTools: prefetchResults.filter((result) => !result.ok).map((result) => result.toolName),
+    });
     messages.push({
       role: 'system',
       content: buildPrefetchContextMessage(prefetchResults),
@@ -479,10 +502,24 @@ export class AgenticSearchRunner {
         } catch {
           savedMemoryId = undefined;
         }
+        agenticSearchRunLog('end', {
+          status: 'ok',
+          durationMs: Date.now() - startedAt,
+          loopCount: trace.loopCount,
+          toolCallCount: trace.toolCalls.length,
+          saved: Boolean(savedMemoryId),
+        });
         return { answer, toolTrace: trace, usage, savedMemoryId };
       }
       const fallback = buildKnowledgeFallbackAnswer(prefetchResults, 'EMPTY_ASSISTANT_RESPONSE');
       if (fallback) {
+        agenticSearchRunLog('end', {
+          status: 'degraded',
+          code: 'EMPTY_ASSISTANT_RESPONSE',
+          durationMs: Date.now() - startedAt,
+          loopCount: trace.loopCount,
+          toolCallCount: trace.toolCalls.length,
+        });
         return {
           answer: fallback,
           toolTrace: trace,
@@ -490,6 +527,13 @@ export class AgenticSearchRunner {
           usage,
         };
       }
+      agenticSearchRunLog('end', {
+        status: 'degraded',
+        code: 'EMPTY_ASSISTANT_RESPONSE',
+        durationMs: Date.now() - startedAt,
+        loopCount: trace.loopCount,
+        toolCallCount: trace.toolCalls.length,
+      });
       return {
         answer: '結果が見つかりませんでした。',
         toolTrace: trace,
@@ -502,6 +546,14 @@ export class AgenticSearchRunner {
       const code = classifyAgenticLoopFailureCode(message);
       const fallback = buildKnowledgeFallbackAnswer(prefetchResults, message);
       if (fallback) {
+        agenticSearchRunLog('end', {
+          status: 'degraded',
+          code,
+          durationMs: Date.now() - startedAt,
+          loopCount: trace.loopCount,
+          toolCallCount: trace.toolCalls.length,
+          message,
+        });
         return {
           answer: fallback,
           toolTrace: trace,
@@ -512,6 +564,14 @@ export class AgenticSearchRunner {
           usage,
         };
       }
+      agenticSearchRunLog('end', {
+        status: 'degraded',
+        code,
+        durationMs: Date.now() - startedAt,
+        loopCount: trace.loopCount,
+        toolCallCount: trace.toolCalls.length,
+        message,
+      });
       return {
         answer: '結果が見つかりませんでした。',
         toolTrace: trace,

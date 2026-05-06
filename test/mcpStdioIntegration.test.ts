@@ -209,7 +209,12 @@ describe('MCP stdio integration', () => {
     expect(result.content.length).toBeGreaterThanOrEqual(1);
     expect(
       result.content.some(
-        (item) => item.type === 'text' && String(item.text).includes('agentic_search'),
+        (item) => item.type === 'text' && String(item.text).includes('## 常用ルール'),
+      ),
+    ).toBe(true);
+    expect(
+      result.content.some(
+        (item) => item.type === 'text' && String(item.text).includes('## MCPツール種別'),
       ),
     ).toBe(true);
   });

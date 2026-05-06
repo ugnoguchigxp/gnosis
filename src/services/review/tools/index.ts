@@ -10,10 +10,8 @@ import {
 import {
   getGuidanceToolEntry,
   queryGraphToolEntry,
-  queryProcedureToolEntry,
   recallLessonsToolEntry,
   searchKnowledgeToolEntry,
-  searchMemoryToolEntry,
 } from './gnosisTools.js';
 import { listDirToolEntry, readFileToolEntry } from './readFile.js';
 import { searchCodeToolEntry } from './searchCode.js';
@@ -82,10 +80,8 @@ export function createDefaultReviewerToolRegistry(): ReviewerToolRegistry {
   registry.register(runTypecheckToolEntry);
   registry.register(runLintToolEntry);
   registry.register(recallLessonsToolEntry);
-  registry.register(searchMemoryToolEntry);
   registry.register(searchKnowledgeToolEntry);
   registry.register(getGuidanceToolEntry);
-  registry.register(queryProcedureToolEntry);
   registry.register(queryGraphToolEntry);
   registry.register(lookupFailureFirewallContextToolEntry);
   registry.register(webSearchToolEntry);

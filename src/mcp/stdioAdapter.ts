@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import { appendFileSync, mkdirSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -19,15 +21,21 @@ import {
 } from './hostProtocol.js';
 
 function adapterLog(event: string, fields: Record<string, unknown> = {}): void {
-  console.error(
-    `[McpAdapter] ${JSON.stringify({
-      ts: new Date().toISOString(),
-      event,
-      pid: process.pid,
-      ppid: process.ppid,
-      ...fields,
-    })}`,
-  );
+  const line = `[McpAdapter] ${JSON.stringify({
+    ts: new Date().toISOString(),
+    event,
+    pid: process.pid,
+    ppid: process.ppid,
+    ...fields,
+  })}`;
+  console.error(line);
+  try {
+    const logFile = resolve(process.env.GNOSIS_MCP_ADAPTER_LOG_FILE || 'logs/mcp-adapter.log');
+    mkdirSync(dirname(logFile), { recursive: true });
+    appendFileSync(logFile, `${line}\n`);
+  } catch {
+    // Adapter logging must never interfere with MCP stdio.
+  }
 }
 
 function toErrorResult(error: unknown) {

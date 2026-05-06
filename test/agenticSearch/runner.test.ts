@@ -297,7 +297,7 @@ describe('AgenticSearchRunner', () => {
               id: 'old-1',
               type: 'procedure',
               title: 'Old startup flow',
-              content: 'Call activate_project before searching.',
+              content: 'Call legacy_bootstrap before searching.',
               score: 0.99,
             },
           ],
@@ -315,7 +315,7 @@ describe('AgenticSearchRunner', () => {
 
     const firstTurnText = (seenMessages[0] ?? []).map((message) => message.content).join('\n');
     expect(firstTurnText).toContain('Prefetched Gnosis knowledge');
-    expect(firstTurnText).toContain('activate_project');
+    expect(firstTurnText).toContain('legacy_bootstrap');
     expect(result.toolTrace.staleKnowledge).toBeUndefined();
   });
 
@@ -443,10 +443,10 @@ describe('AgenticSearchRunner', () => {
     expect(result.savedMemoryId).toBeUndefined();
   });
 
-  it('does not rewrite final answers with deprecated lifecycle tool mentions', async () => {
+  it('does not rewrite final answers with deprecated tool mentions', async () => {
     const adapter = {
       generate: mock(async () => ({
-        text: 'Use activate_project before agentic_search.',
+        text: 'Use legacy_bootstrap before agentic_search.',
         toolCalls: [],
       })),
     };
@@ -465,7 +465,7 @@ describe('AgenticSearchRunner', () => {
 
     const result = await runner.run({ userRequest: 'Gnosis tool flow' });
 
-    expect(result.answer).toBe('Use activate_project before agentic_search.');
+    expect(result.answer).toBe('Use legacy_bootstrap before agentic_search.');
     expect(result.degraded).toBeUndefined();
     expect(result.toolTrace.staleKnowledge).toBeUndefined();
     expect(mockSaveAgenticAnswer).toHaveBeenCalledTimes(1);

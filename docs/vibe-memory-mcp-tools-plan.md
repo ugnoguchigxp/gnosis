@@ -379,7 +379,7 @@ runner 実装時の注意:
 - query embedding の短期 cache は追加しない。まずは検索ごとに embedding を生成し、性能問題が実測されたら別計画で扱う。
 - `memory_search` を `agentic_search` の初回 prefetch に入れない。
 - entity knowledge と vibe memory を同じ tool に混ぜない。`search_knowledge` は entity、`memory_search` は vibe memory と分ける。
-- lifecycle tool (`activate_project`, `start_task`, `finish_task`) は復活させない。
+- retired startup/task lifecycle tools は復活させない。
 
 ## テスト計画
 

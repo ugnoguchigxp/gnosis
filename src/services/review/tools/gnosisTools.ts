@@ -1,7 +1,6 @@
 import { recallExperienceLessons } from '../../experience.js';
 import { getGuidanceContext } from '../../guidance/search.js';
 import { searchKnowledgeClaims } from '../../knowledge.js';
-import { searchMemory } from '../../memory.js';
 import type { ReviewerToolEntry } from './types.js';
 
 export const recallLessonsToolEntry: ReviewerToolEntry = {
@@ -28,35 +27,6 @@ export const recallLessonsToolEntry: ReviewerToolEntry = {
       return JSON.stringify(lessons, null, 2);
     } catch (error) {
       return `[Error recalling lessons]: ${error instanceof Error ? error.message : String(error)}`;
-    }
-  },
-};
-
-export const searchMemoryToolEntry: ReviewerToolEntry = {
-  definition: {
-    name: 'search_memory',
-    description:
-      'Gnosis の記憶（Vibe Memory）を検索します。関連する文脈や設計意図の確認に役立ちます。',
-    inputSchema: {
-      type: 'object',
-      required: ['query'],
-      properties: {
-        query: { type: 'string', description: '検索クエリ' },
-        limit: { type: 'integer', default: 5 },
-      },
-    },
-  },
-  async handler(args, ctx) {
-    try {
-      const results = await searchMemory(
-        ctx.gnosisSessionId,
-        String(args.query),
-        Number(args.limit ?? 5),
-      );
-      if (results.length === 0) return 'No matching memory found.';
-      return JSON.stringify(results, null, 2);
-    } catch (error) {
-      return `[Error searching memory]: ${error instanceof Error ? error.message : String(error)}`;
     }
   },
 };
@@ -105,39 +75,6 @@ export const getGuidanceToolEntry: ReviewerToolEntry = {
       return guidance || 'No relevant guidance found.';
     } catch (error) {
       return `[Error getting guidance]: ${error instanceof Error ? error.message : String(error)}`;
-    }
-  },
-};
-
-export const queryProcedureToolEntry: ReviewerToolEntry = {
-  definition: {
-    name: 'query_procedure',
-    description: '特定の目標（Goal）に関連する推奨手順と制約事項を取得します。',
-    inputSchema: {
-      type: 'object',
-      required: ['goal'],
-      properties: {
-        goal: { type: 'string', description: '達成したい目標 (例: "TypeScriptのコードレビュー")' },
-        context: { type: 'string', description: '追加の文脈情報' },
-        project: { type: 'string', description: 'プロジェクト名 (例: "gnosis")' },
-        languages: { type: 'array', items: { type: 'string' }, description: '対象言語' },
-      },
-    },
-  },
-  async handler(args, ctx) {
-    const { queryProcedure } = await import('../../procedure.js');
-    try {
-      const result = await queryProcedure(String(args.goal), {
-        context: args.context as string,
-        project: args.project as string,
-        languages: args.languages as string[],
-      });
-      if (!result) return 'No matching procedure found for this goal.';
-      return JSON.stringify(result, null, 2);
-    } catch (error) {
-      return `[Error querying procedure]: ${
-        error instanceof Error ? error.message : String(error)
-      }`;
     }
   },
 };

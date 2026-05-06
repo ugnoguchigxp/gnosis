@@ -1,3 +1,4 @@
+import { GNOSIS_CONSTANTS } from '../../constants.js';
 import { getReviewLLMService } from '../review/llm/reviewer.js';
 import type {
   ChatMessage,
@@ -14,6 +15,23 @@ export type AgenticSearchLlmResult = {
   usage?: LLMUsage;
   raw?: unknown;
 };
+
+export function resolveAgenticSearchLlmTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.GNOSIS_AGENTIC_SEARCH_LLM_TIMEOUT_MS ?? env.GNOSIS_MCP_REVIEW_LLM_TIMEOUT_MS;
+  const parsed = raw ? Number(raw) : Number.NaN;
+  if (Number.isFinite(parsed) && parsed > 0) return Math.trunc(parsed);
+  return GNOSIS_CONSTANTS.MCP_REVIEW_LLM_TIMEOUT_MS_DEFAULT;
+}
+
+function agenticSearchLlmLog(event: string, fields: Record<string, unknown> = {}): void {
+  console.error(
+    `[AgenticSearchLLM] ${JSON.stringify({
+      ts: new Date().toISOString(),
+      event,
+      ...fields,
+    })}`,
+  );
+}
 
 function toChatMessages(messages: AgenticSearchMessage[]): ChatMessage[] {
   const converted: ChatMessage[] = [];
@@ -148,9 +166,20 @@ function validateToolMessageSequence(messages: AgenticSearchMessage[]): void {
 export class AgenticSearchLlmAdapter {
   private llmServicePromise: Promise<ReviewLLMService> | null = null;
 
+  constructor(private readonly timeoutMs = resolveAgenticSearchLlmTimeoutMs()) {}
+
   private async getLlmService(): Promise<ReviewLLMService> {
     if (!this.llmServicePromise) {
-      this.llmServicePromise = getReviewLLMService(undefined, { invoker: 'service' });
+      this.llmServicePromise = getReviewLLMService(undefined, {
+        invoker: 'service',
+        timeoutMs: this.timeoutMs,
+      }).then((service) => {
+        agenticSearchLlmLog('service_resolved', {
+          provider: service.provider,
+          timeoutMs: this.timeoutMs,
+        });
+        return service;
+      });
     }
     return this.llmServicePromise;
   }
