@@ -206,7 +206,10 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
   );
   const requestTimeoutMs = Math.max(
     0,
-    envNumber(process.env.GNOSIS_MCP_HOST_REQUEST_TIMEOUT_MS, 180_000),
+    envNumber(
+      process.env.GNOSIS_MCP_HOST_REQUEST_TIMEOUT_MS,
+      GNOSIS_CONSTANTS.MCP_HOST_REQUEST_TIMEOUT_MS_DEFAULT,
+    ),
   );
 
   lifecycle.addCleanupStep(async () => {

@@ -9,12 +9,29 @@ import { topicTasks } from '../db/schema.js';
 import { parseArgMap, readNumberFlag, readStringFlag } from '../services/knowflow/utils/args';
 import { renderOutput, resolveOutputFormat } from '../services/knowflow/utils/output';
 import { EMBEDDING_SYSTEM_TOPIC } from './monitor-queue-utils.js';
+import { classifyQueueFailureReason } from './status-report.js';
 
 type QueueSnapshot = {
   pending: number;
   running: number;
   deferred: number;
   failed: number;
+};
+
+type FailedQueueReasonClass = {
+  reason: string;
+  count: number;
+  classification: string;
+};
+
+type QueueInterpretation = {
+  runtimeStatus: KnowFlowSnapshot['status'];
+  backlogStatus: 'unknown' | 'clear' | 'needs_attention' | 'blocked';
+  failedCount: number;
+  deferredCount: number;
+  failedReasonClasses: FailedQueueReasonClass[];
+  humanSummary: string;
+  nextCommand: string;
 };
 
 type WorkerSnapshot = {
@@ -69,6 +86,7 @@ type QualityGateSnapshot = {
   onboardingSmoke: QualityGateRecord;
   smoke: QualityGateRecord;
   semanticSmoke: QualityGateRecord;
+  freshCloneValueSmoke: QualityGateRecord;
   verifyFast: QualityGateRecord;
   verify: QualityGateRecord;
   verifyStrict: QualityGateRecord;
@@ -79,6 +97,7 @@ type MonitorSnapshot = {
   ts: number;
   queue: QueueSnapshot;
   embeddingQueue: QueueSnapshot;
+  queueInterpretation: QueueInterpretation;
   worker: WorkerSnapshot;
   eval: EvalSnapshot;
   automation: AutomationSnapshot;
@@ -103,6 +122,7 @@ const QUALITY_GATE_KEYS = [
   'onboardingSmoke',
   'smoke',
   'semanticSmoke',
+  'freshCloneValueSmoke',
   'verifyFast',
   'verify',
   'verifyStrict',
@@ -293,6 +313,90 @@ const countQueueStatuses = async (): Promise<{
 
   return { queue, embeddingQueue };
 };
+
+const collectFailedQueueReasonClasses = async (): Promise<FailedQueueReasonClass[]> => {
+  let rows: Array<{ error_reason?: unknown; count?: unknown }>;
+  try {
+    const result = await db.execute(
+      sql.raw(`
+        SELECT
+          COALESCE(payload->>'errorReason', 'unknown') AS error_reason,
+          count(*)::int AS count
+        FROM topic_tasks
+        WHERE status = 'failed'
+        GROUP BY COALESCE(payload->>'errorReason', 'unknown')
+      `),
+    );
+    rows = result.rows as Array<{ error_reason?: unknown; count?: unknown }>;
+  } catch {
+    return [];
+  }
+
+  return rows.map((row) => {
+    const reason = typeof row.error_reason === 'string' ? row.error_reason : 'unknown';
+    return {
+      reason,
+      count: toNumber(row.count) ?? 0,
+      classification: classifyQueueFailureReason(reason),
+    };
+  });
+};
+
+export function buildQueueInterpretation(input: {
+  queue: QueueSnapshot;
+  knowflow: KnowFlowSnapshot;
+  failedReasonClasses?: FailedQueueReasonClass[];
+  databaseReachable?: boolean;
+}): QueueInterpretation {
+  if (input.databaseReachable === false) {
+    return {
+      runtimeStatus: input.knowflow.status,
+      backlogStatus: 'unknown',
+      failedCount: 0,
+      deferredCount: 0,
+      failedReasonClasses: [],
+      humanSummary: 'Queue backlog could not be read; check DATABASE_URL and Postgres.',
+      nextCommand: 'bun run doctor',
+    };
+  }
+
+  const failedReasonClasses = input.failedReasonClasses ?? [];
+  const failedCount = input.queue.failed;
+  const deferredCount = input.queue.deferred;
+  if (failedCount === 0 && deferredCount === 0) {
+    return {
+      runtimeStatus: input.knowflow.status,
+      backlogStatus: 'clear',
+      failedCount,
+      deferredCount,
+      failedReasonClasses,
+      humanSummary: `KnowFlow runtime is ${input.knowflow.status}; queue backlog is clear.`,
+      nextCommand: 'bun run monitor:snapshot -- --json',
+    };
+  }
+
+  const blockingClasses = new Set(['db_connectivity', 'input_validation', 'worker_runtime']);
+  const hasBlockingFailure = failedReasonClasses.some((row) =>
+    blockingClasses.has(row.classification),
+  );
+  const backlogStatus = failedCount > 0 && hasBlockingFailure ? 'blocked' : 'needs_attention';
+
+  return {
+    runtimeStatus: input.knowflow.status,
+    backlogStatus,
+    failedCount,
+    deferredCount,
+    failedReasonClasses,
+    humanSummary:
+      backlogStatus === 'blocked'
+        ? `KnowFlow runtime is ${input.knowflow.status}, but failed backlog has blocking reason classes.`
+        : `KnowFlow runtime is ${input.knowflow.status}; failed/deferred backlog should be inspected separately.`,
+    nextCommand:
+      failedCount > 0
+        ? 'bun run monitor:knowflow-failures -- --json'
+        : 'bun run task:knowflow:once',
+  };
+}
 
 const collectTaskIndex = async (limit: number): Promise<TaskIndexEntry[]> => {
   let rows: Array<{
@@ -580,6 +684,7 @@ const run = async (): Promise<void> => {
   const { queue, embeddingQueue } = databaseReachable
     ? await countQueueStatuses()
     : { queue: emptyQueueSnapshot(), embeddingQueue: emptyQueueSnapshot() };
+  const failedReasonClasses = databaseReachable ? await collectFailedQueueReasonClasses() : [];
   const { worker, evalResult, knowflow } = await collectWorkerEvalAndKnowFlow(
     logsRoot,
     Math.max(1, fileLimit),
@@ -590,6 +695,12 @@ const run = async (): Promise<void> => {
     ts: Date.now(),
     queue,
     embeddingQueue,
+    queueInterpretation: buildQueueInterpretation({
+      queue,
+      knowflow,
+      failedReasonClasses,
+      databaseReachable,
+    }),
     worker,
     eval: evalResult,
     automation: collectAutomation(),

@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { Socket } from 'node:net';
 import { join, resolve } from 'node:path';
+import { GNOSIS_CONSTANTS } from '../constants.js';
 import type {
   FailureFirewallContext,
   FailureFirewallLearningCandidatesOutput,
@@ -176,7 +177,7 @@ export function sendMcpHostRequest<T>(
   } = {},
 ): Promise<T> {
   const socketPath = options.socketPath ?? getMcpHostSocketPath(options.rootDir);
-  const timeoutMs = options.timeoutMs ?? 180_000;
+  const timeoutMs = options.timeoutMs ?? GNOSIS_CONSTANTS.MCP_HOST_REQUEST_TIMEOUT_MS_DEFAULT;
   const id = nextMcpHostRequestId();
   const payload = { ...request, id } as McpHostRequest;
 

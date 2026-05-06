@@ -23,6 +23,7 @@ type ValueReport = {
   generatedAt: string;
   qualityGates: Record<string, QualityGateRecord>;
   evidence: Record<string, unknown>;
+  projectValueEvidence: ProjectValueEvidence;
   missingEvidence: string[];
   commands: Record<string, string>;
 };
@@ -33,11 +34,67 @@ const QUALITY_GATE_NAMES = [
   'onboardingSmoke',
   'smoke',
   'semanticSmoke',
+  'freshCloneValueSmoke',
   'verifyFast',
   'verify',
   'verifyStrict',
   'mcpContract',
 ] as const;
+
+const VALUE_EVIDENCE_MAX_DURATION_MS = 300_000;
+
+type QueueBacklogStatus = 'unknown' | 'clear' | 'needs_attention' | 'blocked';
+
+type QueueBacklogEvidence = {
+  reachable: boolean;
+  statuses: {
+    pending: number;
+    running: number;
+    deferred: number;
+    failed: number;
+  } | null;
+  failedReasonClasses: FailedQueueReasonRow[];
+};
+
+export type QueueBacklogInterpretation = {
+  status: QueueBacklogStatus;
+  failedCount: number | null;
+  deferredCount: number | null;
+  failedReasonClasses: string[];
+  humanSummary: string;
+  nextCommand: string;
+};
+
+type ClaimAllowed =
+  | 'stable_ok'
+  | 'single_run_ok'
+  | 'structured_degraded_only'
+  | 'skipped_with_reason'
+  | 'missing_evidence';
+
+type ProjectValueEvidenceItem = {
+  status: 'passed' | 'failed' | 'degraded' | 'skipped' | 'missing';
+  claimAllowed: ClaimAllowed;
+  command?: string;
+  reason?: string;
+  details?: Record<string, unknown>;
+};
+
+type ProjectValueEvidence = {
+  scoreReady: boolean;
+  missingEvidence: string[];
+  claimAllowed: {
+    reviewTaskLocal: ClaimAllowed;
+    monitorBacklog: ClaimAllowed;
+    freshCloneValueArrival: ClaimAllowed;
+  };
+  reviewTaskLocal: ProjectValueEvidenceItem;
+  reviewTaskDegradedSemantics: ProjectValueEvidenceItem;
+  monitorBacklogInterpretation: ProjectValueEvidenceItem;
+  freshCloneValueArrival: ProjectValueEvidenceItem;
+  successExamples: ProjectValueEvidenceItem;
+  docsLinks: ProjectValueEvidenceItem;
+};
 
 async function showNotification(message: string, subtitle = 'Gnosis Metrics') {
   const title = 'Gnosis System Report';
@@ -81,6 +138,15 @@ function readQualityGates(): Record<string, QualityGateRecord> {
 
 function gateStatus(gates: Record<string, QualityGateRecord>, name: string): string {
   return gates[name]?.status ?? 'unknown';
+}
+
+function readJsonArtifact(filePath: string): unknown | null {
+  if (!existsSync(filePath)) return null;
+  try {
+    return JSON.parse(readFileSync(filePath, 'utf8'));
+  } catch {
+    return null;
+  }
 }
 
 type FailedQueueReasonRow = {
@@ -152,16 +218,268 @@ export function classifyQueueFailureReason(reason: string): string {
   return 'task_failure';
 }
 
-async function collectQueueBacklogEvidence(): Promise<{
-  reachable: boolean;
-  statuses: {
-    pending: number;
-    running: number;
-    deferred: number;
-    failed: number;
-  } | null;
-  failedReasonClasses: FailedQueueReasonRow[];
-}> {
+export function interpretQueueBacklog(
+  queueBacklog: QueueBacklogEvidence,
+): QueueBacklogInterpretation {
+  if (!queueBacklog.reachable || !queueBacklog.statuses) {
+    return {
+      status: 'unknown',
+      failedCount: null,
+      deferredCount: null,
+      failedReasonClasses: [],
+      humanSummary: 'Queue backlog could not be read; check DATABASE_URL and Postgres.',
+      nextCommand: 'bun run doctor',
+    };
+  }
+
+  const failedCount = queueBacklog.statuses.failed;
+  const deferredCount = queueBacklog.statuses.deferred;
+  const failedReasonClasses = [
+    ...new Set(queueBacklog.failedReasonClasses.map((row) => row.classification)),
+  ];
+  if (failedCount === 0 && deferredCount === 0) {
+    return {
+      status: 'clear',
+      failedCount,
+      deferredCount,
+      failedReasonClasses,
+      humanSummary: 'Queue backlog is clear.',
+      nextCommand: 'bun run monitor:snapshot -- --json',
+    };
+  }
+
+  const blockingClasses = new Set(['db_connectivity', 'input_validation', 'worker_runtime']);
+  const hasBlockingClass = failedReasonClasses.some((classification) =>
+    blockingClasses.has(classification),
+  );
+  const status: QueueBacklogStatus =
+    failedCount > 0 && hasBlockingClass ? 'blocked' : 'needs_attention';
+  const nextCommand =
+    failedCount > 0 ? 'bun run monitor:knowflow-failures -- --json' : 'bun run task:knowflow:once';
+
+  return {
+    status,
+    failedCount,
+    deferredCount,
+    failedReasonClasses,
+    humanSummary:
+      status === 'blocked'
+        ? `Queue backlog has ${failedCount} failed task(s) with blocking reason classes.`
+        : `Queue runtime may be healthy, but backlog still needs attention: failed=${failedCount}, deferred=${deferredCount}.`,
+    nextCommand,
+  };
+}
+
+function latestArtifactRecord(fileName: string): Record<string, unknown> | null {
+  const value = readJsonArtifact(join(process.cwd(), 'logs', fileName));
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return null;
+}
+
+function evidenceFromGate(
+  gates: Record<string, QualityGateRecord>,
+  gate: string,
+  command: string,
+): ProjectValueEvidenceItem {
+  const status = gateStatus(gates, gate);
+  if (status === 'passed') {
+    return { status: 'passed', claimAllowed: 'stable_ok', command };
+  }
+  if (status === 'failed') {
+    return {
+      status: 'failed',
+      claimAllowed: 'missing_evidence',
+      command,
+      reason: gates[gate]?.message ?? `${gate} failed`,
+    };
+  }
+  return {
+    status: 'missing',
+    claimAllowed: 'missing_evidence',
+    command,
+    reason: `${gate} has not been recorded`,
+  };
+}
+
+export function buildProjectValueEvidence(
+  qualityGates: Record<string, QualityGateRecord>,
+  queueBacklog: QueueBacklogEvidence,
+): ProjectValueEvidence {
+  const missingEvidence: string[] = [];
+  const queueInterpretation = interpretQueueBacklog(queueBacklog);
+  const reviewTaskArtifact = latestArtifactRecord('review-task-local-smoke.json');
+  const freshCloneArtifact = latestArtifactRecord('fresh-clone-value-smoke.json');
+
+  const reviewTaskLocal = (() => {
+    if (!reviewTaskArtifact) {
+      missingEvidence.push('reviewTaskLocal');
+      return {
+        status: 'missing',
+        claimAllowed: 'missing_evidence',
+        command: 'bun run review:local-smoke',
+        reason: 'logs/review-task-local-smoke.json is missing',
+      } satisfies ProjectValueEvidenceItem;
+    }
+    const status = String(reviewTaskArtifact.status ?? 'missing');
+    const durationMs =
+      typeof reviewTaskArtifact.durationMs === 'number' ? reviewTaskArtifact.durationMs : null;
+    const consecutiveOkRuns =
+      typeof reviewTaskArtifact.consecutiveOkRuns === 'number'
+        ? reviewTaskArtifact.consecutiveOkRuns
+        : status === 'ok'
+          ? 1
+          : 0;
+    if (
+      reviewTaskArtifact.passed !== false &&
+      status === 'ok' &&
+      durationMs !== null &&
+      durationMs <= VALUE_EVIDENCE_MAX_DURATION_MS
+    ) {
+      if (consecutiveOkRuns < 3) {
+        missingEvidence.push('reviewTaskLocalStableOk');
+      }
+      return {
+        status: 'passed',
+        claimAllowed: consecutiveOkRuns >= 3 ? 'stable_ok' : 'single_run_ok',
+        command: String(reviewTaskArtifact.command ?? 'MCP review_task provider=local'),
+        details: {
+          durationMs,
+          provider: reviewTaskArtifact.provider ?? 'local',
+          consecutiveOkRuns,
+        },
+      } satisfies ProjectValueEvidenceItem;
+    }
+    if (status === 'degraded') {
+      return {
+        status: 'degraded',
+        claimAllowed: 'structured_degraded_only',
+        command: String(reviewTaskArtifact.command ?? 'MCP review_task provider=local'),
+        reason: 'local review returned structured degraded evidence',
+        details: reviewTaskArtifact,
+      } satisfies ProjectValueEvidenceItem;
+    }
+    missingEvidence.push('reviewTaskLocalStableOk');
+    return {
+      status: 'skipped',
+      claimAllowed: 'skipped_with_reason',
+      command: String(reviewTaskArtifact.command ?? 'MCP review_task provider=local'),
+      reason: String(
+        reviewTaskArtifact.reason ?? 'local review did not produce stable ok evidence',
+      ),
+      details: reviewTaskArtifact,
+    } satisfies ProjectValueEvidenceItem;
+  })();
+
+  const reviewTaskDegradedSemantics = evidenceFromGate(
+    qualityGates,
+    'mcpContract',
+    'bun test test/mcpContract.test.ts test/mcp/tools/agentFirst.test.ts',
+  );
+
+  const monitorBacklogInterpretation: ProjectValueEvidenceItem =
+    queueInterpretation.status === 'unknown'
+      ? {
+          status: 'missing',
+          claimAllowed: 'missing_evidence',
+          command: 'bun run monitor:snapshot -- --json',
+          reason: queueInterpretation.humanSummary,
+        }
+      : {
+          status: queueInterpretation.status === 'clear' ? 'passed' : 'degraded',
+          claimAllowed:
+            queueInterpretation.status === 'clear' ? 'stable_ok' : 'structured_degraded_only',
+          command: queueInterpretation.nextCommand,
+          reason: queueInterpretation.humanSummary,
+          details: { queueInterpretation },
+        };
+
+  if (queueInterpretation.status === 'unknown') {
+    missingEvidence.push('monitorBacklogInterpretation');
+  }
+
+  const freshCloneValueArrival = (() => {
+    const gateEvidence = evidenceFromGate(
+      qualityGates,
+      'freshCloneValueSmoke',
+      'bun run fresh-clone:value-smoke',
+    );
+    if (gateEvidence.status !== 'passed') {
+      missingEvidence.push('freshCloneValueArrival');
+      return gateEvidence;
+    }
+    const durationMs =
+      freshCloneArtifact && typeof freshCloneArtifact.totalDurationMs === 'number'
+        ? freshCloneArtifact.totalDurationMs
+        : null;
+    const withinFiveMinutes =
+      freshCloneArtifact?.passed !== false &&
+      durationMs !== null &&
+      durationMs <= VALUE_EVIDENCE_MAX_DURATION_MS;
+    if (!withinFiveMinutes) {
+      missingEvidence.push('freshCloneUnderFiveMinutes');
+    }
+    return {
+      status: withinFiveMinutes ? 'passed' : 'degraded',
+      claimAllowed: withinFiveMinutes ? 'stable_ok' : 'structured_degraded_only',
+      command: 'bun run fresh-clone:value-smoke',
+      reason: withinFiveMinutes
+        ? 'fresh clone value smoke completed within five minutes'
+        : 'fresh clone value smoke has not proven five-minute value arrival',
+      details: freshCloneArtifact ?? {},
+    } satisfies ProjectValueEvidenceItem;
+  })();
+
+  const successExamplesExist = [
+    'docs/examples/agentic-search-success.md',
+    'docs/examples/review-task-success.md',
+    'docs/examples/failure-firewall-success.md',
+  ].every((filePath) => existsSync(join(process.cwd(), filePath)));
+  if (!successExamplesExist) {
+    missingEvidence.push('successExamples');
+  }
+
+  const successExamples: ProjectValueEvidenceItem = successExamplesExist
+    ? {
+        status: 'passed',
+        claimAllowed: 'stable_ok',
+        command: 'test -e docs/examples/agentic-search-success.md',
+      }
+    : {
+        status: 'missing',
+        claimAllowed: 'missing_evidence',
+        command: 'test -e docs/examples/agentic-search-success.md',
+        reason: 'docs/examples success fixtures are missing',
+      };
+
+  const docsLinks: ProjectValueEvidenceItem = {
+    status: 'skipped',
+    claimAllowed: 'skipped_with_reason',
+    command: 'rg -n "TODO|存在しない|unavailable_in_minimal_mode" README.md docs',
+    reason: 'docs link check is manual until a dedicated checker is added',
+  };
+
+  const claimAllowed = {
+    reviewTaskLocal: reviewTaskLocal.claimAllowed,
+    monitorBacklog: monitorBacklogInterpretation.claimAllowed,
+    freshCloneValueArrival: freshCloneValueArrival.claimAllowed,
+  };
+
+  return {
+    scoreReady: missingEvidence.length === 0,
+    missingEvidence,
+    claimAllowed,
+    reviewTaskLocal,
+    reviewTaskDegradedSemantics,
+    monitorBacklogInterpretation,
+    freshCloneValueArrival,
+    successExamples,
+    docsLinks,
+  };
+}
+
+async function collectQueueBacklogEvidence(): Promise<QueueBacklogEvidence> {
   try {
     const statusRows = await db
       .select({
@@ -224,10 +542,17 @@ async function collectQueueBacklogEvidence(): Promise<{
 async function buildValueReport(): Promise<ValueReport> {
   const qualityGates = readQualityGates();
   const queueBacklog = await collectQueueBacklogEvidence();
+  const queueBacklogInterpretation = interpretQueueBacklog(queueBacklog);
+  const projectValueEvidence = buildProjectValueEvidence(qualityGates, queueBacklog);
   const missingEvidence: string[] = [];
   for (const gate of QUALITY_GATE_NAMES) {
     if (gateStatus(qualityGates, gate) !== 'passed') {
       missingEvidence.push(`${gate}: ${gateStatus(qualityGates, gate)}`);
+    }
+  }
+  for (const item of projectValueEvidence.missingEvidence) {
+    if (!missingEvidence.includes(item)) {
+      missingEvidence.push(item);
     }
   }
 
@@ -268,6 +593,7 @@ async function buildValueReport(): Promise<ValueReport> {
         note: 'Use monitor snapshot for live queue, KnowFlow, and backlog interpretation.',
       },
       queueBacklog,
+      queueBacklogInterpretation,
       latestAgenticSearchSmoke: {
         command: 'bun run agentic-search:semantic-smoke',
         status: gateStatus(qualityGates, 'semanticSmoke'),
@@ -282,12 +608,14 @@ async function buildValueReport(): Promise<ValueReport> {
       },
       knownDegradedReasons,
     },
+    projectValueEvidence,
     missingEvidence,
     commands: {
       doctor: 'bun run doctor',
       doctorStrict: 'GNOSIS_DOCTOR_STRICT=1 bun run doctor',
       smoke: 'bun run smoke',
       semanticSmoke: 'bun run agentic-search:semantic-smoke',
+      freshCloneValueSmoke: 'bun run fresh-clone:value-smoke',
       verifyFast: 'bun run verify:fast',
       verify: 'bun run verify',
       verifyStrict: 'bun run verify:strict',
@@ -312,6 +640,12 @@ function renderValueReport(report: ValueReport): string {
     '',
     '## Evidence Commands',
     ...Object.entries(report.commands).map(([name, command]) => `- ${name}: ${command}`),
+    '',
+    '## Project Value Evidence',
+    `- scoreReady: ${report.projectValueEvidence.scoreReady}`,
+    `- reviewTaskLocal: ${report.projectValueEvidence.reviewTaskLocal.status} (${report.projectValueEvidence.reviewTaskLocal.claimAllowed})`,
+    `- monitorBacklogInterpretation: ${report.projectValueEvidence.monitorBacklogInterpretation.status} (${report.projectValueEvidence.monitorBacklogInterpretation.claimAllowed})`,
+    `- freshCloneValueArrival: ${report.projectValueEvidence.freshCloneValueArrival.status} (${report.projectValueEvidence.freshCloneValueArrival.claimAllowed})`,
     '',
     '## Missing Evidence',
     ...(report.missingEvidence.length > 0

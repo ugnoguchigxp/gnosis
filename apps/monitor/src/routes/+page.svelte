@@ -39,6 +39,8 @@ const QUALITY_GATE_LABELS: Array<{ key: QualityGateKey; label: string }> = [
   { key: 'doctorStrict', label: 'doctor strict' },
   { key: 'onboardingSmoke', label: 'onboarding smoke' },
   { key: 'smoke', label: 'smoke' },
+  { key: 'semanticSmoke', label: 'semantic smoke' },
+  { key: 'freshCloneValueSmoke', label: 'fresh clone value' },
   { key: 'verifyFast', label: 'verify fast' },
   { key: 'verify', label: 'verify' },
   { key: 'verifyStrict', label: 'verify strict' },
@@ -63,6 +65,15 @@ const createInitialSnapshot = (): MonitorSnapshotData => ({
     running: 0,
     deferred: 0,
     failed: 0,
+  },
+  queueInterpretation: {
+    runtimeStatus: 'unknown',
+    backlogStatus: 'unknown',
+    failedCount: 0,
+    deferredCount: 0,
+    failedReasonClasses: [],
+    humanSummary: 'Queue interpretation has not been loaded.',
+    nextCommand: 'bun run monitor:snapshot -- --json',
   },
   worker: {
     lastSuccessTs: null,
@@ -95,6 +106,8 @@ const createInitialSnapshot = (): MonitorSnapshotData => ({
     doctorStrict: emptyQualityGate(),
     onboardingSmoke: emptyQualityGate(),
     smoke: emptyQualityGate(),
+    semanticSmoke: emptyQualityGate(),
+    freshCloneValueSmoke: emptyQualityGate(),
     verifyFast: emptyQualityGate(),
     verify: emptyQualityGate(),
     verifyStrict: emptyQualityGate(),
@@ -240,9 +253,12 @@ const formatBoolean = (value: boolean): string => (value ? 'on' : 'off');
 const statusTone = (status: string): string => {
   if (status === 'healthy') return 'connected';
   if (status === 'passed') return 'connected';
+  if (status === 'clear') return 'connected';
   if (status === 'degraded') return 'offline';
   if (status === 'failed') return 'offline';
+  if (status === 'blocked') return 'offline';
   if (status === 'idle') return 'reconnecting';
+  if (status === 'needs_attention') return 'reconnecting';
   return '';
 };
 
@@ -570,6 +586,20 @@ onMount(() => {
 					<div class="metric"><div class="metric-label">running</div><div class="metric-value">{snapshot.queue.running}</div></div>
 					<div class="metric"><div class="metric-label">deferred</div><div class="metric-value">{snapshot.queue.deferred}</div></div>
 					<div class="metric"><div class="metric-label">failed</div><div class="metric-value">{snapshot.queue.failed}</div></div>
+				</div>
+				<div class="stat-row" style="margin-top: 10px;">
+					<div class="metric">
+						<div class="metric-label">runtime</div>
+						<div class={`badge ${statusTone(snapshot.queueInterpretation.runtimeStatus)}`}>{snapshot.queueInterpretation.runtimeStatus}</div>
+					</div>
+					<div class="metric">
+						<div class="metric-label">backlog</div>
+						<div class={`badge ${statusTone(snapshot.queueInterpretation.backlogStatus)}`}>{snapshot.queueInterpretation.backlogStatus}</div>
+					</div>
+					<div class="metric" style="grid-column: span 2;">
+						<div class="metric-label">interpretation</div>
+						<div class="metric-value" style="font-size: 0.72rem;">{snapshot.queueInterpretation.humanSummary}</div>
+					</div>
 				</div>
 			{:else}
 				<div class="stat-row">

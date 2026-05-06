@@ -95,6 +95,44 @@ const sourcePriority: Record<EntityKnowledgeSearchSource, number> = {
   recent: 1,
 };
 
+const entityTypePriority: Record<string, number> = {
+  procedure: 7,
+  skill: 6,
+  command_recipe: 5,
+  rule: 4,
+  constraint: 3,
+  lesson: 2,
+  decision: 1,
+};
+
+const getEntityTypePriority = (type: string | undefined): number => {
+  if (!type) return 0;
+  return entityTypePriority[type] ?? 0;
+};
+
+const exactMetadataArrayFields = [
+  'triggerPhrases',
+  'appliesWhen',
+  'tags',
+  'files',
+  'changeTypes',
+  'technologies',
+] as const;
+
+const exactMetadataScalarFields = ['intent', 'category', 'kind', 'source', 'title'] as const;
+
+const exactMetadataConditions = (query: string) => {
+  const terms = Array.from(new Set([query, query.toLowerCase()])).filter(Boolean);
+  return terms.flatMap((term) => [
+    ...exactMetadataArrayFields.map(
+      (field) => sql`${entities.metadata} @> ${JSON.stringify({ [field]: [term] })}::jsonb`,
+    ),
+    ...exactMetadataScalarFields.map(
+      (field) => sql`${entities.metadata} @> ${JSON.stringify({ [field]: term })}::jsonb`,
+    ),
+  ]);
+};
+
 const weightedScore = (source: EntityKnowledgeSearchSource, rawScore: number): number => {
   if (source === 'exact') return Math.max(1, rawScore);
   if (source === 'direct_text') return Math.max(0.2, rawScore);
@@ -165,6 +203,9 @@ const mergeResults = (
       Math.max(...a.matchSources.map((source) => sourcePriority[source]));
     if (priorityDelta !== 0) return priorityDelta;
 
+    const typeDelta = getEntityTypePriority(b.type) - getEntityTypePriority(a.type);
+    if (typeDelta !== 0) return typeDelta;
+
     const freshnessDelta = rowTime(b.freshness) - rowTime(a.freshness);
     if (freshnessDelta !== 0) return freshnessDelta;
     return rowTime(b.createdAt) - rowTime(a.createdAt);
@@ -203,10 +244,11 @@ export async function searchEntityKnowledgeDetailed(input: {
   const type = input.type ?? 'all';
   const database = input.database ?? db;
   const generateQueryEmbedding = input.generateQueryEmbedding ?? generateEmbedding;
-  const searchableText = sql<string>`concat_ws(' ', ${entities.name}, ${entities.description})`;
+  const searchableText = sql<string>`concat_ws(' ', ${entities.name}, ${entities.description}, ${entities.metadata}::text)`;
   const tsvectorExpr = sql`to_tsvector('simple', ${searchableText})`;
   const tsqueryExpr = sql`websearch_to_tsquery('simple', ${query})`;
   const rankExpr = sql<number>`ts_rank_cd(${tsvectorExpr}, ${tsqueryExpr})`;
+  const metadataExactConditions = exactMetadataConditions(query);
   let telemetry: EntityKnowledgeSearchTelemetry = {
     queryText: query,
     vectorHitCount: 0,
@@ -244,8 +286,7 @@ export async function searchEntityKnowledgeDetailed(input: {
           or(
             sql`lower(${entities.id}) = lower(${query})`,
             sql`lower(${entities.name}) = lower(${query})`,
-            sql`${entities.metadata} @> ${JSON.stringify({ triggerPhrases: [query] })}::jsonb`,
-            sql`${entities.metadata} @> ${JSON.stringify({ appliesWhen: [query] })}::jsonb`,
+            ...metadataExactConditions,
           ),
         ),
       )
@@ -324,10 +365,7 @@ export async function searchEntityKnowledgeDetailed(input: {
       .where(
         and(
           ...baseConditions(type),
-          or(
-            sql`position(lower(${query}) in lower(${entities.name})) > 0`,
-            sql`position(lower(${query}) in lower(${entities.description})) > 0`,
-          ),
+          sql`position(lower(${query}) in lower(${searchableText})) > 0`,
         ),
       )
       .orderBy(desc(entities.freshness), desc(entities.createdAt))

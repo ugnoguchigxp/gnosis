@@ -149,12 +149,81 @@ describe('review stage C', () => {
       },
       getOnDemandGuidance: async () => [rows[1]],
       database,
+      generateEmbedding: async () => {
+        throw new Error('skip entity guidance in this unit test');
+      },
       searchMemory: async () => [], // Add mock for retrieving benchmarks
     });
 
     expect(alwaysCalled).toBe(false);
     expect(result.principles.map((item) => item.id)).not.toContain('guide-1');
     expect(result.heuristics).toHaveLength(0);
+  });
+
+  test('keeps entity knowledge rows in review guidance buckets', async () => {
+    let selectCount = 0;
+    const database = {
+      select() {
+        selectCount++;
+        if (selectCount === 1) {
+          return {
+            from() {
+              return {
+                where() {
+                  return {
+                    orderBy() {
+                      return {
+                        limit: async () => [
+                          {
+                            id: 'note/procedure',
+                            type: 'procedure',
+                            content: 'Run the focused MCP regression test first.',
+                            metadata: { tags: ['mcp'] },
+                            similarity: 0.91,
+                          },
+                          {
+                            id: 'note/rule',
+                            type: 'rule',
+                            content: 'Review knowledge_refs whenever knowledge is applied.',
+                            metadata: { tags: ['review'] },
+                            similarity: 0.9,
+                          },
+                          {
+                            id: 'note/lesson',
+                            type: 'lesson',
+                            content: 'Preserve lesson ids when Firewall evidence is used.',
+                            metadata: { tags: ['failure-firewall'] },
+                            similarity: 0.89,
+                          },
+                        ],
+                      };
+                    },
+                  };
+                },
+              };
+            },
+          };
+        }
+        return {
+          from() {
+            return {
+              where: async () => [],
+            };
+          },
+        };
+      },
+    } as never;
+
+    const result = await retrieveGuidance('repo', ['mcp'], 'TypeScript', undefined, {
+      getOnDemandGuidance: async () => [],
+      database,
+      generateEmbedding: async () => [0.1],
+      searchMemory: async () => [],
+    });
+
+    expect(result.skills.map((item) => item.id)).toContain('note/procedure');
+    expect(result.principles.map((item) => item.id)).toContain('note/rule');
+    expect(result.patterns.map((item) => item.id)).toContain('note/lesson');
   });
 
   test('persists review case, experience, and findings memory', async () => {

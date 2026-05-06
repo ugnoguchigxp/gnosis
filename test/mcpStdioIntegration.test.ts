@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { GNOSIS_CONSTANTS } from '../src/constants.js';
 import {
   MCP_HOST_SOURCE_FINGERPRINT,
   computeMcpHostSourceFingerprint,
@@ -248,7 +249,7 @@ describe('MCP stdio integration', () => {
     expect(stale.shutdowns()).toBe(1);
     expect(tools.tools.map((tool) => tool.name)).toContain('initial_instructions');
     expect(health.sourceFingerprint).toBe(MCP_HOST_SOURCE_FINGERPRINT);
-    expect(health.requestTimeoutMs).toBe(180000);
+    expect(health.requestTimeoutMs).toBe(GNOSIS_CONSTANTS.MCP_HOST_REQUEST_TIMEOUT_MS_DEFAULT);
 
     await sendMcpHostRequest({ type: 'shutdown' }, { socketPath, timeoutMs: 1_000 }).catch(
       () => undefined,

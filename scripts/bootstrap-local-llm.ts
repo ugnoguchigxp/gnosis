@@ -383,7 +383,7 @@ async function run(): Promise<void> {
   printStep('Starting PostgreSQL with pgvector');
   await runCommand({
     command: dockerCompose.command,
-    args: [...dockerCompose.args, 'up', '-d', 'db'],
+    args: [...dockerCompose.args, 'up', '-d', 'gnosis'],
   });
   printSuccess('Database container is running.');
 

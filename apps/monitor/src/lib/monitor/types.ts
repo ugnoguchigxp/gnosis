@@ -35,6 +35,20 @@ export type KnowFlowSnapshot = {
   lastFailureTs: number | null;
 };
 
+export type QueueInterpretation = {
+  runtimeStatus: KnowFlowSnapshot['status'];
+  backlogStatus: 'unknown' | 'clear' | 'needs_attention' | 'blocked';
+  failedCount: number;
+  deferredCount: number;
+  failedReasonClasses: Array<{
+    reason: string;
+    count: number;
+    classification: string;
+  }>;
+  humanSummary: string;
+  nextCommand: string;
+};
+
 export type QualityGateRecord = {
   status: 'passed' | 'failed' | 'unknown';
   updatedAtTs: number | null;
@@ -46,6 +60,8 @@ export type QualityGateSnapshot = {
   doctorStrict: QualityGateRecord;
   onboardingSmoke: QualityGateRecord;
   smoke: QualityGateRecord;
+  semanticSmoke: QualityGateRecord;
+  freshCloneValueSmoke: QualityGateRecord;
   verifyFast: QualityGateRecord;
   verify: QualityGateRecord;
   verifyStrict: QualityGateRecord;
@@ -55,6 +71,7 @@ export type QualityGateSnapshot = {
 export type MonitorSnapshotData = {
   queue: QueueSnapshot;
   embeddingQueue: QueueSnapshot;
+  queueInterpretation: QueueInterpretation;
   worker: WorkerSnapshot;
   eval: EvalSnapshot;
   automation: AutomationSnapshot;

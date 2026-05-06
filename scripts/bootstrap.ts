@@ -296,10 +296,10 @@ async function run(): Promise<void> {
     await installEmbeddingService(python);
   });
 
-  await runStep('Starting PostgreSQL with pgvector', 'docker compose up -d db', async () => {
+  await runStep('Starting PostgreSQL with pgvector', 'docker compose up -d gnosis', async () => {
     await runCommand({
       command: dockerCompose.command,
-      args: [...dockerCompose.args, 'up', '-d', 'db'],
+      args: [...dockerCompose.args, 'up', '-d', 'gnosis'],
     });
   });
 

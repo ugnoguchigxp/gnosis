@@ -290,63 +290,6 @@ function toFailurePattern(row: {
   };
 }
 
-function toExperienceGoldenPath(row: {
-  scenarioId: string;
-  content: string;
-  type: string;
-  metadata: unknown;
-}): GoldenPath | undefined {
-  if (row.type !== 'success') return undefined;
-  const metadata = asRecord(row.metadata) ?? {};
-  const pathId = typeof metadata.pathId === 'string' ? metadata.pathId : row.scenarioId;
-  const riskSignals = asStringArray(metadata.riskSignals);
-  if (!pathId && riskSignals.length === 0) return undefined;
-
-  return {
-    id: pathId,
-    title: typeof metadata.title === 'string' ? metadata.title : `Success path ${pathId}`,
-    pathType: typeof metadata.pathType === 'string' ? metadata.pathType : 'experience_success',
-    appliesWhen: asStringArray(metadata.appliesWhen),
-    requiredSteps: asStringArray(metadata.reusableSteps),
-    allowedAlternatives: asStringArray(metadata.allowedAlternatives),
-    blockWhenMissing: asStringArray(metadata.blockWhenMissing),
-    severityWhenMissing: 'warning',
-    riskSignals,
-    languages: asStringArray(metadata.languages).map((item) => item.toLowerCase()),
-    frameworks: asStringArray(metadata.frameworks),
-    tags: ['failure-firewall', 'golden-path', ...riskSignals],
-    status: 'needs_review',
-    source: 'experience',
-  };
-}
-
-function toExperienceFailurePattern(row: {
-  scenarioId: string;
-  content: string;
-  type: string;
-  failureType: string | null;
-  metadata: unknown;
-}): FailurePattern | undefined {
-  if (row.type !== 'failure') return undefined;
-  const metadata = asRecord(row.metadata) ?? {};
-  const riskSignals = asStringArray(metadata.riskSignals);
-  return {
-    id: typeof metadata.patternId === 'string' ? metadata.patternId : row.scenarioId,
-    title: typeof metadata.title === 'string' ? metadata.title : row.content.slice(0, 80),
-    patternType: row.failureType ?? 'experience_failure',
-    severity: asSeverity(metadata.severity),
-    riskSignals,
-    languages: asStringArray(metadata.languages).map((item) => item.toLowerCase()),
-    frameworks: asStringArray(metadata.frameworks),
-    matchHints: asStringArray(metadata.matchHints),
-    requiredEvidence: asStringArray(metadata.requiredEvidence),
-    goldenPathId: typeof metadata.goldenPathId === 'string' ? metadata.goldenPathId : undefined,
-    status: 'needs_review',
-    falsePositiveCount: 0,
-    source: 'experience',
-  };
-}
-
 function toDedicatedGoldenPath(row: {
   id: string;
   title: string;
@@ -440,48 +383,29 @@ function dedupeById<T extends { id: string }>(items: T[]): T[] {
 }
 
 async function loadEntityExperienceKnowledge(database: typeof db): Promise<FailureKnowledgeSource> {
-  const [entityRows, experienceRows] = await Promise.all([
-    database
-      .select({
-        id: entities.id,
-        name: entities.name,
-        description: entities.description,
-        type: entities.type,
-        metadata: entities.metadata,
-      })
-      .from(entities),
-    database
-      .select({
-        scenarioId: experienceLogs.scenarioId,
-        type: experienceLogs.type,
-        failureType: experienceLogs.failureType,
-        content: experienceLogs.content,
-        metadata: experienceLogs.metadata,
-      })
-      .from(experienceLogs),
-  ]);
+  const entityRows = await database
+    .select({
+      id: entities.id,
+      name: entities.name,
+      description: entities.description,
+      type: entities.type,
+      metadata: entities.metadata,
+    })
+    .from(entities);
 
   return {
-    goldenPaths: [
-      ...entityRows.flatMap((row) => {
+    goldenPaths: entityRows
+      .flatMap((row) => {
         const path = toGoldenPath(row);
         return path ? [path] : [];
-      }),
-      ...experienceRows.flatMap((row) => {
-        const path = toExperienceGoldenPath(row);
-        return path ? [path] : [];
-      }),
-    ].filter((path) => path.status !== 'deprecated'),
-    failurePatterns: [
-      ...entityRows.flatMap((row) => {
+      })
+      .filter((path) => path.status !== 'deprecated'),
+    failurePatterns: entityRows
+      .flatMap((row) => {
         const pattern = toFailurePattern(row);
         return pattern ? [pattern] : [];
-      }),
-      ...experienceRows.flatMap((row) => {
-        const pattern = toExperienceFailurePattern(row);
-        return pattern ? [pattern] : [];
-      }),
-    ].filter((pattern) => pattern.status !== 'deprecated'),
+      })
+      .filter((pattern) => pattern.status !== 'deprecated'),
   };
 }
 

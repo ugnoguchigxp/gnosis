@@ -2,7 +2,10 @@ import { describe, expect, it } from 'bun:test';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { collectWorkerEvalAndKnowFlow } from '../src/scripts/monitor-snapshot';
+import {
+  buildQueueInterpretation,
+  collectWorkerEvalAndKnowFlow,
+} from '../src/scripts/monitor-snapshot';
 
 describe('monitor snapshot log collection', () => {
   it('does not mark KnowFlow degraded for unrelated background task failures', async () => {
@@ -86,5 +89,32 @@ describe('monitor snapshot log collection', () => {
     expect(evalResult.passRate).toBe(100);
     expect(knowflow.lastSeedTs).toBe(Date.parse('2026-04-29T10:00:00.000Z'));
     expect(knowflow.lastSeedSummary).toBe('phrase scout: sources=1 phrases=2 enqueued=2');
+  });
+
+  it('reports healthy runtime and failed backlog as separate states', () => {
+    const interpretation = buildQueueInterpretation({
+      queue: { pending: 0, running: 0, deferred: 0, failed: 1 },
+      knowflow: {
+        lastWorkerTs: Date.parse('2026-04-29T10:02:00.000Z'),
+        lastWorkerSummary: 'done',
+        lastSeedTs: null,
+        lastSeedSummary: null,
+        lastKeywordSeedTs: null,
+        lastFailureTs: null,
+        status: 'healthy',
+      },
+      failedReasonClasses: [
+        {
+          reason: 'LLM task failed: All api attempts failed.',
+          count: 1,
+          classification: 'llm_provider_unavailable',
+        },
+      ],
+      databaseReachable: true,
+    });
+
+    expect(interpretation.runtimeStatus).toBe('healthy');
+    expect(interpretation.backlogStatus).toBe('needs_attention');
+    expect(interpretation.humanSummary).toContain('runtime is healthy');
   });
 });

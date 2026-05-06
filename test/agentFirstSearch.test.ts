@@ -144,6 +144,9 @@ describe('agentFirst minimal utilities', () => {
         appliesWhen: ['mcp search'],
         metadata: { triggerPhrases: ['embedding search'] },
         tags: ['Retrieval'],
+        intent: 'edit',
+        changeTypes: ['mcp', 'backend'],
+        technologies: ['TypeScript', 'pgvector'],
       },
       {
         database: { insert } as never,
@@ -171,9 +174,20 @@ describe('agentFirst minimal utilities', () => {
         tags: ['retrieval'],
         triggerPhrases: ['embedding search', 'knowledge retrieval'],
         appliesWhen: ['mcp search'],
+        intent: 'edit',
+        changeTypes: ['mcp', 'backend'],
+        technologies: ['TypeScript', 'pgvector'],
       },
       provenance: 'manual',
       scope: 'task_note',
+    });
+    expect(generateKnowledgeEmbedding).toHaveBeenCalledWith(expect.stringContaining('TypeScript'), {
+      type: 'passage',
+      priority: 'normal',
+    });
+    expect(generateKnowledgeEmbedding).toHaveBeenCalledWith(expect.stringContaining('pgvector'), {
+      type: 'passage',
+      priority: 'normal',
     });
   });
 });

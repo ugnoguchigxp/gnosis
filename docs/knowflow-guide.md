@@ -38,12 +38,15 @@ KnowFlow は、Gnosis の知識収集・検証タスクを queue 化して実行
 
 - KnowFlow queue counts
 - embedding queue counts
+- queue interpretation (`runtimeStatus` と `backlogStatus`)
 - worker / eval / KnowFlow latest event
 - automation gate
 - quality gate latest status
 - task index
 
 Monitor UI は同じ snapshot を WebSocket で受け取り、queue と gate を表示します。
+
+`knowflow.status` は runtime の状態、`queueInterpretation.backlogStatus` は failed/deferred backlog の状態です。`knowflow.status=healthy` かつ `backlogStatus=needs_attention` は、worker は動いているが失敗済み task の確認が必要な状態として扱います。
 
 ## 運用手順
 
@@ -54,6 +57,7 @@ Monitor UI は同じ snapshot を WebSocket で受け取り、queue と gate を
 5. 失敗分類: `bun run monitor:knowflow-failures -- --json`
 6. 再試行: `bun run monitor:task-action -- --action retry --task-id <id> --json`
 7. 詳細確認: `logs/runs/*.jsonl` の最新 `task.failed` / `background.task.failed` を見る
+8. 価値証跡: `bun run status-report --json` の `projectValueEvidence` を見る
 
 ## 注意点
 

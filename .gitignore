@@ -8,6 +8,8 @@ services/local-llm/.debug/
 *.bak
 logs/runs/
 logs/quality-gates.json
+logs/fresh-clone-value-smoke.json
+logs/review-task-local-smoke.json
 
 # vscode
 .vscode/

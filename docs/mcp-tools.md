@@ -35,6 +35,7 @@ bun test test/mcpHostServices.test.ts test/mcpStdioIntegration.test.ts
 - `test/mcpHostServices.test.ts` は `gnosis-memory-kg`, `astmend-mcp`, `diffguard-mcp` が同一 router に読み込まれることを確認します。
 - `test/mcpStdioIntegration.test.ts` は stdio adapter 経由の `tools/list` に Gnosis primary tool と Astmend / diffGuard tool が含まれることを確認します。
 - `review_task` は既定で Azure OpenAI reviewer を使います。`provider: "openai"` も Azure OpenAI alias として扱います。
+- MCP `review_task` の LLM timeout 既定は `GNOSIS_MCP_REVIEW_LLM_TIMEOUT_MS=300000` です。shared host の request timeout 既定は `GNOSIS_MCP_HOST_REQUEST_TIMEOUT_MS=330000` で、host が review LLM より先に切れないようにします。
 - strict doctor は `smoke` と MCP contract snapshot を実行し、結果を `logs/quality-gates.json` に保存します。
 
 保守ルール:

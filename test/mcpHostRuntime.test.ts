@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { GNOSIS_CONSTANTS } from '../src/constants.js';
 import { startMcpHost } from '../src/mcp/host.js';
 import { MCP_HOST_SOURCE_FINGERPRINT } from '../src/mcp/hostFingerprint.js';
 import {
@@ -28,6 +29,10 @@ function tempRoot(): string {
 
 function setEnv(key: keyof typeof originalEnv, value: string): void {
   process.env[key] = value;
+}
+
+function clearEnv(key: keyof typeof originalEnv): void {
+  delete process.env[key];
 }
 
 function restoreEnv(): void {
@@ -91,6 +96,24 @@ afterEach(() => {
 });
 
 describe('MCP host runtime', () => {
+  it('defaults request timeout above the MCP review LLM timeout', async () => {
+    const rootDir = tempRoot();
+    clearEnv('GNOSIS_MCP_HOST_REQUEST_TIMEOUT_MS');
+    const socketPath = await startTestHost(rootDir, [makeService()]);
+
+    const health = await sendMcpHostRequest<McpHostHealth>(
+      { type: 'health' },
+      { rootDir, socketPath },
+    );
+
+    expect(health.requestTimeoutMs).toBe(GNOSIS_CONSTANTS.MCP_HOST_REQUEST_TIMEOUT_MS_DEFAULT);
+    expect(health.requestTimeoutMs ?? 0).toBeGreaterThan(
+      GNOSIS_CONSTANTS.MCP_REVIEW_LLM_TIMEOUT_MS_DEFAULT,
+    );
+
+    await shutdownHost(rootDir, socketPath);
+  });
+
   it('serves multiple client connections through the same host', async () => {
     const rootDir = tempRoot();
     const socketPath = await startTestHost(rootDir, [makeService()]);

@@ -97,6 +97,7 @@ type ReviewDocumentDeps = {
   searchMemoryFn?: typeof searchMemory;
   getAlwaysGuidanceFn?: typeof getAlwaysOnGuidance;
   getOnDemandGuidanceFn?: typeof getOnDemandGuidance;
+  timeoutMs?: number;
 };
 
 function deriveRepoKey(repoPath: string): string {
@@ -285,6 +286,7 @@ export async function reviewDocument(
   const now = deps.now ?? Date.now;
   const startAt = now();
   const readFile = deps.readFile ?? ((filePath: string) => fs.readFile(filePath, 'utf8'));
+  const timeoutMs = deps.timeoutMs ?? DOCUMENT_REVIEW_TIMEOUT_MS;
 
   return withTimeout(
     (async () => {
@@ -439,7 +441,7 @@ export async function reviewDocument(
       void startAt; // currently reserved for future telemetry.
       return result;
     })(),
-    DOCUMENT_REVIEW_TIMEOUT_MS,
+    timeoutMs,
   );
 }
 

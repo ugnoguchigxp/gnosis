@@ -279,6 +279,52 @@ const deriveKnowledgeTitle = (content: string, title?: string): string => {
   return content.split(/\r?\n/)[0]?.trim().slice(0, 96) || 'Untitled knowledge note';
 };
 
+const searchableMetadataText = (metadata: Record<string, unknown>): string => {
+  const terms: string[] = [];
+  for (const key of [
+    'kind',
+    'category',
+    'purpose',
+    'intent',
+    'source',
+    'taskId',
+    'tags',
+    'files',
+    'evidence',
+    'triggerPhrases',
+    'appliesWhen',
+    'changeTypes',
+    'technologies',
+  ]) {
+    const value = metadata[key];
+    if (typeof value === 'string' && value.trim()) {
+      terms.push(value.trim());
+      continue;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (typeof item === 'string' && item.trim()) terms.push(item.trim());
+        if (item && typeof item === 'object' && !Array.isArray(item)) {
+          for (const nested of Object.values(item)) {
+            if (typeof nested === 'string' && nested.trim()) terms.push(nested.trim());
+          }
+        }
+      }
+    }
+  }
+  return uniqueStrings(terms).join(' ');
+};
+
+const buildTaskNoteEmbeddingText = (
+  title: string,
+  content: string,
+  metadata: Record<string, unknown>,
+): string =>
+  [title, content, searchableMetadataText(metadata)]
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join('\n');
+
 export async function recordTaskNote(
   input: {
     content: string;
@@ -293,6 +339,9 @@ export async function recordTaskNote(
     metadata?: Record<string, unknown>;
     triggerPhrases?: string[];
     appliesWhen?: string[];
+    intent?: 'plan' | 'edit' | 'debug' | 'review' | 'finish';
+    changeTypes?: TaskChangeType[];
+    technologies?: string[];
     confidence?: number;
     source?: 'manual' | 'task' | 'review' | 'onboarding' | 'import';
   },
@@ -349,6 +398,15 @@ export async function recordTaskNote(
     confidence: input.confidence ?? undefined,
     triggerPhrases,
     appliesWhen,
+    intent: input.intent ?? rawMetadata.intent ?? undefined,
+    changeTypes: uniqueStrings([
+      ...normalizeStringArray(rawMetadata.changeTypes),
+      ...(input.changeTypes ?? []),
+    ]),
+    technologies: uniqueStrings([
+      ...normalizeStringArray(rawMetadata.technologies),
+      ...(input.technologies ?? []),
+    ]),
     recordedBy: 'record_task_note',
     recordedAt: now.toISOString(),
   };
@@ -363,10 +421,13 @@ export async function recordTaskNote(
   };
 
   try {
-    embedding = await generateKnowledgeEmbedding(`${title}\n${content}`, {
-      type: 'passage',
-      priority: 'normal',
-    });
+    embedding = await generateKnowledgeEmbedding(
+      buildTaskNoteEmbeddingText(title, content, metadata),
+      {
+        type: 'passage',
+        priority: 'normal',
+      },
+    );
     embeddingStatus = 'stored';
   } catch {
     embeddingStatus = 'unavailable';

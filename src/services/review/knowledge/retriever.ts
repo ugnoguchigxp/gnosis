@@ -1,9 +1,10 @@
-import { eq } from 'drizzle-orm';
+import { desc, eq, sql } from 'drizzle-orm';
 import { db } from '../../../db/index.js';
+import { entities } from '../../../db/schema.js';
 import { reviewOutcomes } from '../../../db/schema.js';
 import { getOnDemandGuidance } from '../../guidance/search.js';
 import type { getAlwaysOnGuidance } from '../../guidance/search.js';
-import { searchMemory } from '../../memory.js';
+import { generateEmbedding, searchMemory } from '../../memory.js';
 import type { GuidanceItem } from '../types.js';
 
 export type GuidanceRow = {
@@ -12,10 +13,19 @@ export type GuidanceRow = {
   similarity?: number;
 };
 
+type EntityGuidanceRow = {
+  id: string;
+  type: string;
+  content: string | null;
+  metadata: unknown;
+  similarity: number;
+};
+
 export interface GuidanceRetrievalDependencies {
   getAlwaysOnGuidance?: typeof getAlwaysOnGuidance;
   getOnDemandGuidance?: typeof getOnDemandGuidance;
   searchMemory?: typeof searchMemory;
+  generateEmbedding?: typeof generateEmbedding;
   database?: typeof db;
 }
 
@@ -41,6 +51,10 @@ function normalizeStringArray(value: unknown): string[] {
         .map((item) => item.trim())
         .filter(Boolean)
     : [];
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.filter((value) => value.trim().length > 0)));
 }
 
 function getMetadataString(metadata: Record<string, unknown>, key: string): string | undefined {
@@ -86,6 +100,15 @@ function classifyGuidance(
   if (item.tags.includes('pattern')) return 'pattern';
   if (item.guidanceType === 'skill' || item.tags.includes('skill')) return 'skill';
   return null;
+}
+
+function classifyEntityKnowledgeType(
+  type: string,
+): 'principle' | 'heuristic' | 'pattern' | 'skill' {
+  if (type === 'procedure' || type === 'skill' || type === 'command_recipe') return 'skill';
+  if (type === 'rule' || type === 'constraint') return 'principle';
+  if (type === 'decision') return 'heuristic';
+  return 'pattern';
 }
 
 function calculateScore(score: RetrievalScore): number {
@@ -212,17 +235,67 @@ export async function retrieveGuidance(
 ): Promise<GuidanceRetrievalResult> {
   const getDemand = deps.getOnDemandGuidance ?? getOnDemandGuidance;
   const database = deps.database ?? db;
+  const embed = deps.generateEmbedding ?? generateEmbedding;
 
   const signalQuery = [riskSignals.join(' '), language, framework ?? '', projectKey]
     .join(' ')
     .trim();
 
-  const [onDemand, benchmarks] = await Promise.all([
+  const retrieveEntityRows = async (): Promise<EntityGuidanceRow[]> => {
+    try {
+      const embedding = await embed(signalQuery, { type: 'query', priority: 'high' });
+      const embeddingStr = JSON.stringify(embedding);
+      const similarity = sql<number>`1 - (${entities.embedding} <=> ${embeddingStr}::vector)`;
+      return await database
+        .select({
+          id: entities.id,
+          type: entities.type,
+          content: entities.description,
+          metadata: entities.metadata,
+          similarity,
+        })
+        .from(entities)
+        .where(
+          sql`${entities.embedding} IS NOT NULL AND ${entities.type} IN ('rule', 'procedure', 'lesson', 'skill', 'risk', 'command_recipe', 'decision') AND ${similarity} >= 0.5`,
+        )
+        .orderBy(desc(similarity))
+        .limit(10);
+    } catch {
+      return [];
+    }
+  };
+
+  const [onDemand, entityRows, benchmarks] = await Promise.all([
     getDemand(signalQuery).catch(() => []),
+    retrieveEntityRows(),
     retrieveSuccessBenchmarks(projectKey, riskSignals, language, deps),
   ]);
 
-  const allRows = onDemand as GuidanceRow[];
+  const allRows = [
+    ...(onDemand as GuidanceRow[]),
+    ...(entityRows as EntityGuidanceRow[]).map((row) => {
+      const metadata = (row.metadata as Record<string, unknown>) ?? {};
+      const entityBucket = classifyEntityKnowledgeType(row.type);
+      const tags = uniqueStrings([
+        ...normalizeStringArray(metadata.tags),
+        entityBucket,
+        row.type,
+        `entity:${row.type}`,
+      ]);
+      return {
+        content: row.content ?? '',
+        metadata: {
+          ...metadata,
+          tags,
+          title: metadata.title ?? row.id,
+          archiveKey: row.id,
+          knowledgeKind: row.type,
+          guidanceType: entityBucket === 'skill' ? 'skill' : 'rule',
+        },
+        similarity: row.similarity,
+      };
+    }),
+  ];
   const candidates = classifyRows(allRows);
   const archiveKeys = candidates
     .map((item) => item.id)

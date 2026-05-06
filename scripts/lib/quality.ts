@@ -30,6 +30,7 @@ export type RunCommandOptions = {
   capture?: boolean;
   env?: NodeJS.ProcessEnv;
   passthrough?: boolean;
+  cwd?: string;
 };
 
 export type CoverageSummary = {
@@ -78,6 +79,7 @@ export const runCommand = (
       stdio: options.capture ? ['inherit', 'pipe', 'pipe'] : 'inherit',
       shell: false,
       env: options.env,
+      cwd: options.cwd,
     });
 
     let stdout = '';

@@ -145,13 +145,12 @@ bun run maintenance
 - [Startup Guide](docs/startup.md)
 - [Configuration](docs/configuration.md)
 - [MCP Tools](docs/mcp-tools.md)
-- [Data Layers](docs/data-layers.md)
 - [KnowFlow Guide](docs/knowflow-guide.md)
 - [Operations Runbook](docs/operations-runbook.md)
-- [Release Checklist](docs/release-checklist.md)
-- [Active-Use Improvement Plan](docs/active-use-improvement-plan.md)
 - [Project Value Improvement Plan](docs/project-value-improvement-plan.md)
-- [Agent-First Refactoring Plan](docs/agent-first-gnosis-refactoring-plan.md)
+- [Review Task Improvement Plan](docs/review-task-improvement-plan.md)
+- [No Local LLM Setup](docs/no-local-llm-setup.md)
+- [Success Examples](docs/examples/agentic-search-success.md)
 
 ## ライセンス
 

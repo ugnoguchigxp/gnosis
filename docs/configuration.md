@@ -29,6 +29,7 @@ Gnosis は環境変数を中心に構成されています。一部の機能（K
 | `GNOSIS_BACKGROUND_WORKER_MAX_CONCURRENCY` | `2` | background worker の同時処理枠。LLM 実行は local-llm daemon の single-thread queue 側で直列化する |
 | `GNOSIS_NO_WORKERS` | `false` | MCP host 内で background workers を起動しない。`scripts/setup-automation.sh` の `com.gnosis.mcp-host` は worker LaunchAgent との二重起動を避けるため `true` を指定 |
 | `GNOSIS_MCP_HOST_REPLACE_EXISTING` | `false` | 起動時に既存 MCP host が健康な場合、それを shutdown して自プロセスが host を引き継ぐ。LaunchAgent の `KeepAlive` ループ防止用 |
+| `GNOSIS_MCP_HOST_REQUEST_TIMEOUT_MS` | `330000` | shared MCP host の1リクエスト上限。MCP `review_task` の既定 LLM timeout より長くし、host が先に切れないようにする |
 | `ASTMEND_REPO_PATH` | `../Astmend` | MCP host が Astmend service factory を読み込むローカル repo path |
 | `DIFFGUARD_REPO_PATH` | `../diffGuard` | MCP host が diffGuard service factory を読み込むローカル repo path |
 
@@ -106,6 +107,7 @@ local-llm は `com.gnosis.local-llm` LaunchAgent で1プロセスだけ常駐し
 | `GNOSIS_REVIEW_MCP_MODE` | `cli` | MCP `review` ツールの実行経路（`cli` / `inproc`）。`cli` は `src/scripts/review.ts` へ委譲 |
 | `GNOSIS_REVIEW_ALLOW_UNSAFE_MLX_IN_SEATBELT` | `false` | `CODEX_SANDBOX=seatbelt` でも review 経路で `LOCAL_LLM_ALLOW_MLX_IN_SEATBELT=1` をそのまま使うか（デバッグ専用） |
 | `GNOSIS_REVIEW_LLM_PROVIDER` | `azure-openai` | Cloud reviewer のプロバイダ（`openai` は Azure OpenAI alias。`azure-openai` / `bedrock` / `anthropic` / `google`） |
+| `GNOSIS_MCP_REVIEW_LLM_TIMEOUT_MS` | `300000` | MCP `review_task` から呼ぶ review LLM の同期 timeout。local provider が最大5分考えられる値にしている |
 | `GNOSIS_REVIEW_LLM_API_BASE_URL` | プロバイダ依存 | Cloud reviewer の API base URL（Azure 利用時は必須） |
 | `AWS_ACCESS_KEY_ID` | - | Bedrock 利用時の AWS access key |
 | `AWS_SECRET_ACCESS_KEY` | - | Bedrock 利用時の AWS secret access key |

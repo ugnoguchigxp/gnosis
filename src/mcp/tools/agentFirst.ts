@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
+import { GNOSIS_CONSTANTS } from '../../constants.js';
 import {
   buildDoctorRuntimeHealth,
   recordTaskNote,
@@ -98,6 +99,9 @@ const recordTaskNoteSchema = z.object({
   metadata: z.record(z.unknown()).optional(),
   triggerPhrases: z.array(z.string()).optional(),
   appliesWhen: z.array(z.string()).optional(),
+  intent: z.enum(['plan', 'edit', 'debug', 'review', 'finish']).optional(),
+  changeTypes: z.array(z.enum(taskChangeTypes)).optional(),
+  technologies: z.array(z.string()).optional(),
   confidence: z.number().optional(),
   source: z.enum(['manual', 'task', 'review', 'onboarding', 'import']).optional(),
 });
@@ -171,10 +175,12 @@ function providerToPreference(
   return provider;
 }
 
-function resolveMcpReviewTimeoutMs(): number {
+export function resolveMcpReviewTimeoutMs(): number {
   const raw = process.env.GNOSIS_MCP_REVIEW_LLM_TIMEOUT_MS?.trim();
-  const parsed = raw ? Number(raw) : 15_000;
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 15_000;
+  const parsed = raw ? Number(raw) : GNOSIS_CONSTANTS.MCP_REVIEW_LLM_TIMEOUT_MS_DEFAULT;
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : GNOSIS_CONSTANTS.MCP_REVIEW_LLM_TIMEOUT_MS_DEFAULT;
 }
 
 async function createMcpReviewLlmService(
@@ -349,12 +355,17 @@ function normalizeReviewTaskError(
   };
 }
 
-function documentReviewDeps(llmService: ReviewLLMService, knowledgePolicy: KnowledgePolicy) {
+function documentReviewDeps(
+  llmService: ReviewLLMService,
+  knowledgePolicy: KnowledgePolicy,
+  timeoutMs: number,
+) {
   if (knowledgePolicy !== 'off') {
-    return { llmService };
+    return { llmService, timeoutMs };
   }
   return {
     llmService,
+    timeoutMs,
     queryProcedureFn: async () => null,
     recallLessonsFn: async () => [],
     searchMemoryFn: async () => [],
@@ -421,7 +432,7 @@ export async function runReviewTaskForMcp(
         sessionId,
         llmPreference: providerToPreference(input.provider),
       },
-      documentReviewDeps(llmService, knowledgePolicy),
+      documentReviewDeps(llmService, knowledgePolicy, resolveMcpReviewTimeoutMs()),
     );
     return normalizeDocumentReviewOutput(input, result, now() - startedAt);
   } catch (error) {

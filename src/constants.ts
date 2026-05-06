@@ -12,6 +12,8 @@ export const GNOSIS_CONSTANTS = {
   REVIEW_LLM_PROVIDER_DEFAULT: 'azure-openai',
   REVIEW_LLM_API_BASE_URL_DEFAULT: 'https://aoai-westus-ynoguchi.openai.azure.com',
   AZURE_OPENAI_MODEL_DEFAULT: 'gpt-5-4-mini',
+  MCP_REVIEW_LLM_TIMEOUT_MS_DEFAULT: 300000,
+  MCP_HOST_REQUEST_TIMEOUT_MS_DEFAULT: 330000,
 
   // Embedding
   EMBED_COMMAND_DEFAULT: 'services/embedding/.venv/bin/embed',
