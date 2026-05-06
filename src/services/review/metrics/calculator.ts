@@ -24,7 +24,7 @@ export async function calculateMetrics(
         rc.id,
         EXTRACT(EPOCH FROM (rc.completed_at - rc.created_at)) * 1000 AS duration_ms,
         COUNT(ro.id) AS finding_count,
-        SUM(CASE WHEN ro.outcome_type = 'adopted' THEN 1 ELSE 0 END) AS adopted_count,
+        SUM(CASE WHEN ro.outcome_type = 'resolved' THEN 1 ELSE 0 END) AS adopted_count,
         SUM(CASE WHEN ro.false_positive = TRUE THEN 1 ELSE 0 END) AS fp_count,
         SUM(CASE WHEN jsonb_array_length(COALESCE(ro.guidance_ids, '[]'::jsonb)) > 0 THEN 1 ELSE 0 END) AS with_guidance_count
       FROM review_cases rc
@@ -88,7 +88,7 @@ async function calculatePrecisionByCategory(
     SELECT
       vm.metadata->>'category' AS category,
       COUNT(*) AS total,
-      SUM(CASE WHEN ro.outcome_type = 'adopted' THEN 1 ELSE 0 END) AS adopted
+      SUM(CASE WHEN ro.outcome_type = 'resolved' THEN 1 ELSE 0 END) AS adopted
     FROM review_outcomes ro
     JOIN vibe_memories vm
       ON vm.metadata->>'reviewCaseId' = ro.review_case_id

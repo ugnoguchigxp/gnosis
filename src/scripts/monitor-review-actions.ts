@@ -1,8 +1,9 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { closeDbPool, db } from '../db/index.js';
 import { reviewCases, reviewOutcomes, vibeMemories } from '../db/schema.js';
 import { parseArgMap, readStringFlag } from '../services/knowflow/utils/args.js';
 import { renderOutput, resolveOutputFormat } from '../services/knowflow/utils/output.js';
+import { detectFeedbackFromCommit } from '../services/review/knowledge/persister.js';
 import { sha256 } from '../utils/crypto.js';
 
 const REVIEW_NOTE_SESSION = 'monitor-review-notes';
@@ -12,9 +13,11 @@ const run = async (): Promise<void> => {
   const outputFormat = resolveOutputFormat(args);
   const action = readStringFlag(args, 'action');
   const reviewCaseId = readStringFlag(args, 'review-case-id');
+  const commitHash = readStringFlag(args, 'commit-hash');
+  const repoPath = readStringFlag(args, 'repo-path');
 
-  if (action !== 'create-task-note') {
-    throw new Error('--action must be create-task-note');
+  if (action !== 'create-task-note' && action !== 'detect-feedback-from-commit') {
+    throw new Error('--action must be create-task-note|detect-feedback-from-commit');
   }
   if (!reviewCaseId) {
     throw new Error('--review-case-id is required');
@@ -34,6 +37,28 @@ const run = async (): Promise<void> => {
   const reviewCase = caseRows[0];
   if (!reviewCase) {
     throw new Error(`review case not found: ${reviewCaseId}`);
+  }
+
+  if (action === 'detect-feedback-from-commit') {
+    if (!commitHash) {
+      throw new Error('--commit-hash is required');
+    }
+    const targetRepoPath = repoPath ?? reviewCase.repoPath;
+    const resolvedCount = await detectFeedbackFromCommit(reviewCaseId, commitHash, targetRepoPath);
+    process.stdout.write(
+      renderOutput(
+        {
+          success: true,
+          action,
+          reviewCaseId,
+          commitHash,
+          repoPath: targetRepoPath,
+          resolvedCount,
+        },
+        outputFormat,
+      ),
+    );
+    return;
   }
 
   const outcomeRows = await db

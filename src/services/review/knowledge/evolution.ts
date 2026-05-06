@@ -37,17 +37,17 @@ export async function extractPatternCandidates(): Promise<GuidanceCandidate[]> {
       vm.metadata->>'category' AS category,
       vm.metadata->>'filePath' AS file_path,
       COUNT(*) AS total_count,
-      SUM(CASE WHEN ro.outcome_type = 'adopted' THEN 1 ELSE 0 END) AS adopted_count,
+      SUM(CASE WHEN ro.outcome_type = 'resolved' THEN 1 ELSE 0 END) AS adopted_count,
       ARRAY_AGG(DISTINCT ro.review_case_id) AS review_ids,
       ARRAY_REMOVE(ARRAY_AGG(DISTINCT guidance_id), NULL) AS guidance_ids
     FROM review_outcomes ro
     JOIN vibe_memories vm
       ON vm.metadata->>'reviewCaseId' = ro.review_case_id
     LEFT JOIN LATERAL jsonb_array_elements_text(COALESCE(vm.metadata->'guidanceRefs', '[]'::jsonb)) AS guidance_id ON true
-    WHERE ro.outcome_type IN ('adopted', 'ignored', 'dismissed')
+    WHERE ro.outcome_type IN ('adopted', 'resolved', 'ignored', 'dismissed')
     GROUP BY vm.metadata->>'category', vm.metadata->>'filePath'
     HAVING COUNT(*) >= 3
-      AND SUM(CASE WHEN ro.outcome_type = 'adopted' THEN 1 ELSE 0 END)::float / COUNT(*) >= 0.6
+      AND SUM(CASE WHEN ro.outcome_type = 'resolved' THEN 1 ELSE 0 END)::float / COUNT(*) >= 0.6
     ORDER BY adopted_count DESC
     LIMIT 20
   `)) as { rows: Array<Record<string, unknown>> };
@@ -66,8 +66,8 @@ export async function extractPatternCandidates(): Promise<GuidanceCandidate[]> {
 
     return {
       type,
-      title: `[候補] 繰り返し採用: ${category} (${filePath})`,
-      content: `採用率: ${((adoptedCount / Math.max(totalCount, 1)) * 100).toFixed(
+      title: `[候補] 繰り返し解消: ${category} (${filePath})`,
+      content: `解消率: ${((adoptedCount / Math.max(totalCount, 1)) * 100).toFixed(
         0,
       )}% (${adoptedCount}/${totalCount}件)\n関連Guidance: ${
         guidanceIds.length > 0 ? guidanceIds.join(', ') : 'なし'
@@ -94,7 +94,7 @@ export async function getGuidanceMetrics(guidanceId: string): Promise<GuidanceMe
   const result = (await db.execute(sql`
     SELECT
       COUNT(*) AS support_count,
-      SUM(CASE WHEN outcome_type = 'adopted' THEN 1 ELSE 0 END) AS adopted_count,
+      SUM(CASE WHEN outcome_type = 'resolved' THEN 1 ELSE 0 END) AS adopted_count,
       SUM(CASE WHEN false_positive = TRUE THEN 1 ELSE 0 END) AS fp_count,
       MAX(created_at) AS last_applied_at
     FROM review_outcomes

@@ -9,6 +9,7 @@ import {
   experienceLogs,
   knowledgeClaims,
   knowledgeTopics,
+  reviewOutcomes,
   topicTasks,
   vibeMemories,
 } from '../db/schema.js';
@@ -42,6 +43,8 @@ const QUALITY_GATE_NAMES = [
 ] as const;
 
 const VALUE_EVIDENCE_MAX_DURATION_MS = 300_000;
+const REVIEW_RESOLUTION_COMMAND =
+  'bun run src/scripts/monitor-review-actions.ts -- --action detect-feedback-from-commit --review-case-id <id> --commit-hash <hash> --repo-path <repo>';
 
 type QueueBacklogStatus = 'unknown' | 'clear' | 'needs_attention' | 'blocked';
 
@@ -85,15 +88,28 @@ type ProjectValueEvidence = {
   missingEvidence: string[];
   claimAllowed: {
     reviewTaskLocal: ClaimAllowed;
+    reviewFindingResolution: ClaimAllowed;
     monitorBacklog: ClaimAllowed;
     freshCloneValueArrival: ClaimAllowed;
   };
   reviewTaskLocal: ProjectValueEvidenceItem;
   reviewTaskDegradedSemantics: ProjectValueEvidenceItem;
+  reviewFindingResolution: ProjectValueEvidenceItem;
   monitorBacklogInterpretation: ProjectValueEvidenceItem;
   freshCloneValueArrival: ProjectValueEvidenceItem;
   successExamples: ProjectValueEvidenceItem;
   docsLinks: ProjectValueEvidenceItem;
+};
+
+type ReviewFindingResolutionEvidence = {
+  reachable: boolean;
+  totalOutcomes: number;
+  pendingOutcomes: number;
+  adoptedWithoutResolution: number;
+  resolvedWithCommit: number;
+  falsePositiveCount: number;
+  latestResolvedAt: string | null;
+  error?: string;
 };
 
 async function showNotification(message: string, subtitle = 'Gnosis Metrics') {
@@ -306,6 +322,15 @@ function evidenceFromGate(
 export function buildProjectValueEvidence(
   qualityGates: Record<string, QualityGateRecord>,
   queueBacklog: QueueBacklogEvidence,
+  reviewFindingResolutionEvidence: ReviewFindingResolutionEvidence = {
+    reachable: true,
+    totalOutcomes: 0,
+    pendingOutcomes: 0,
+    adoptedWithoutResolution: 0,
+    resolvedWithCommit: 0,
+    falsePositiveCount: 0,
+    latestResolvedAt: null,
+  },
 ): ProjectValueEvidence {
   const missingEvidence: string[] = [];
   const queueInterpretation = interpretQueueBacklog(queueBacklog);
@@ -377,6 +402,60 @@ export function buildProjectValueEvidence(
     'mcpContract',
     'bun test test/mcpContract.test.ts test/mcp/tools/agentFirst.test.ts',
   );
+
+  const reviewFindingResolution = (() => {
+    if (!reviewFindingResolutionEvidence.reachable) {
+      missingEvidence.push('reviewFindingResolution');
+      return {
+        status: 'missing',
+        claimAllowed: 'missing_evidence',
+        command: 'bun run status-report --json',
+        reason: reviewFindingResolutionEvidence.error ?? 'review outcome evidence is unreachable',
+        details: reviewFindingResolutionEvidence,
+      } satisfies ProjectValueEvidenceItem;
+    }
+    if (reviewFindingResolutionEvidence.totalOutcomes === 0) {
+      missingEvidence.push('reviewFindingResolution');
+      return {
+        status: 'missing',
+        claimAllowed: 'missing_evidence',
+        command: 'bun run status-report --json',
+        reason: 'review_outcomes has no findings to evaluate',
+        details: reviewFindingResolutionEvidence,
+      } satisfies ProjectValueEvidenceItem;
+    }
+    if (reviewFindingResolutionEvidence.resolvedWithCommit === 0) {
+      missingEvidence.push('reviewFindingResolution');
+      return {
+        status: 'degraded',
+        claimAllowed: 'structured_degraded_only',
+        command: REVIEW_RESOLUTION_COMMAND,
+        reason: 'no review finding has commit-backed resolution evidence',
+        details: reviewFindingResolutionEvidence,
+      } satisfies ProjectValueEvidenceItem;
+    }
+    if (
+      reviewFindingResolutionEvidence.pendingOutcomes > 0 ||
+      reviewFindingResolutionEvidence.adoptedWithoutResolution > 0
+    ) {
+      missingEvidence.push('reviewFindingResolutionComplete');
+      return {
+        status: 'passed',
+        claimAllowed: 'single_run_ok',
+        command: REVIEW_RESOLUTION_COMMAND,
+        reason:
+          'some review findings have commit-backed resolution evidence, but unresolved findings remain',
+        details: reviewFindingResolutionEvidence,
+      } satisfies ProjectValueEvidenceItem;
+    }
+    return {
+      status: 'passed',
+      claimAllowed: 'stable_ok',
+      command: REVIEW_RESOLUTION_COMMAND,
+      reason: 'all tracked review outcomes have explicit resolution or dismissal evidence',
+      details: reviewFindingResolutionEvidence,
+    } satisfies ProjectValueEvidenceItem;
+  })();
 
   const monitorBacklogInterpretation: ProjectValueEvidenceItem =
     queueInterpretation.status === 'unknown'
@@ -462,6 +541,7 @@ export function buildProjectValueEvidence(
 
   const claimAllowed = {
     reviewTaskLocal: reviewTaskLocal.claimAllowed,
+    reviewFindingResolution: reviewFindingResolution.claimAllowed,
     monitorBacklog: monitorBacklogInterpretation.claimAllowed,
     freshCloneValueArrival: freshCloneValueArrival.claimAllowed,
   };
@@ -472,6 +552,7 @@ export function buildProjectValueEvidence(
     claimAllowed,
     reviewTaskLocal,
     reviewTaskDegradedSemantics,
+    reviewFindingResolution,
     monitorBacklogInterpretation,
     freshCloneValueArrival,
     successExamples,
@@ -539,11 +620,56 @@ async function collectQueueBacklogEvidence(): Promise<QueueBacklogEvidence> {
   }
 }
 
+async function collectReviewFindingResolutionEvidence(): Promise<ReviewFindingResolutionEvidence> {
+  try {
+    const result = (await db.execute(sql`
+      SELECT
+        COUNT(*)::int AS total_outcomes,
+        COALESCE(SUM(CASE WHEN outcome_type = 'pending' THEN 1 ELSE 0 END), 0)::int AS pending_outcomes,
+        COALESCE(SUM(CASE WHEN outcome_type = 'adopted' AND followup_commit_hash IS NULL AND resolution_timestamp IS NULL THEN 1 ELSE 0 END), 0)::int AS adopted_without_resolution,
+        COALESCE(SUM(CASE WHEN outcome_type = 'resolved' AND followup_commit_hash IS NOT NULL AND resolution_timestamp IS NOT NULL THEN 1 ELSE 0 END), 0)::int AS resolved_with_commit,
+        COALESCE(SUM(CASE WHEN false_positive = TRUE THEN 1 ELSE 0 END), 0)::int AS false_positive_count,
+        MAX(resolution_timestamp) AS latest_resolved_at
+      FROM ${reviewOutcomes}
+    `)) as { rows: Array<Record<string, unknown>> };
+    const row = result.rows[0] ?? {};
+    const latestResolvedAt = row.latest_resolved_at;
+    return {
+      reachable: true,
+      totalOutcomes: Number(row.total_outcomes ?? 0),
+      pendingOutcomes: Number(row.pending_outcomes ?? 0),
+      adoptedWithoutResolution: Number(row.adopted_without_resolution ?? 0),
+      resolvedWithCommit: Number(row.resolved_with_commit ?? 0),
+      falsePositiveCount: Number(row.false_positive_count ?? 0),
+      latestResolvedAt:
+        latestResolvedAt instanceof Date
+          ? latestResolvedAt.toISOString()
+          : String(latestResolvedAt || '') || null,
+    };
+  } catch (error) {
+    return {
+      reachable: false,
+      totalOutcomes: 0,
+      pendingOutcomes: 0,
+      adoptedWithoutResolution: 0,
+      resolvedWithCommit: 0,
+      falsePositiveCount: 0,
+      latestResolvedAt: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 async function buildValueReport(): Promise<ValueReport> {
   const qualityGates = readQualityGates();
   const queueBacklog = await collectQueueBacklogEvidence();
+  const reviewFindingResolutionEvidence = await collectReviewFindingResolutionEvidence();
   const queueBacklogInterpretation = interpretQueueBacklog(queueBacklog);
-  const projectValueEvidence = buildProjectValueEvidence(qualityGates, queueBacklog);
+  const projectValueEvidence = buildProjectValueEvidence(
+    qualityGates,
+    queueBacklog,
+    reviewFindingResolutionEvidence,
+  );
   const missingEvidence: string[] = [];
   for (const gate of QUALITY_GATE_NAMES) {
     if (gateStatus(qualityGates, gate) !== 'passed') {
@@ -594,6 +720,7 @@ async function buildValueReport(): Promise<ValueReport> {
       },
       queueBacklog,
       queueBacklogInterpretation,
+      reviewFindingResolutionEvidence,
       latestAgenticSearchSmoke: {
         command: 'bun run agentic-search:semantic-smoke',
         status: gateStatus(qualityGates, 'semanticSmoke'),
@@ -644,6 +771,7 @@ function renderValueReport(report: ValueReport): string {
     '## Project Value Evidence',
     `- scoreReady: ${report.projectValueEvidence.scoreReady}`,
     `- reviewTaskLocal: ${report.projectValueEvidence.reviewTaskLocal.status} (${report.projectValueEvidence.reviewTaskLocal.claimAllowed})`,
+    `- reviewFindingResolution: ${report.projectValueEvidence.reviewFindingResolution.status} (${report.projectValueEvidence.reviewFindingResolution.claimAllowed})`,
     `- monitorBacklogInterpretation: ${report.projectValueEvidence.monitorBacklogInterpretation.status} (${report.projectValueEvidence.monitorBacklogInterpretation.claimAllowed})`,
     `- freshCloneValueArrival: ${report.projectValueEvidence.freshCloneValueArrival.status} (${report.projectValueEvidence.freshCloneValueArrival.claimAllowed})`,
     '',

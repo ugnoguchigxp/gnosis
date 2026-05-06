@@ -1,8 +1,13 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { db } from '../../../db/index.js';
-import { reviewCases, reviewOutcomes } from '../../../db/schema.js';
+import { reviewCases, reviewOutcomes, vibeMemories } from '../../../db/schema.js';
 import { saveExperience } from '../../experience.js';
 import { saveMemory } from '../../memory.js';
 import type { Finding, ReviewOutput, ReviewRequest } from '../types.js';
+
+const execFileAsync = promisify(execFile);
 
 export interface ReviewPersistenceDependencies {
   database?: typeof db;
@@ -10,6 +15,36 @@ export interface ReviewPersistenceDependencies {
   saveMemory?: typeof saveMemory;
   now?: () => Date;
 }
+
+export type ReviewOutcomeType = 'adopted' | 'ignored' | 'dismissed' | 'resolved' | 'pending';
+
+export type ReviewFeedbackOptions = {
+  notes?: string;
+  falsePositive?: boolean;
+  guidanceIds?: string[];
+  followupCommitHash?: string;
+  resolutionTimestamp?: Date;
+  autoDetected?: boolean;
+};
+
+type FindingMemoryMetadata = {
+  reviewCaseId?: string;
+  findingId?: string;
+  filePath?: string;
+  category?: string;
+  guidanceRefs?: string[];
+  fingerprint?: string;
+  severity?: string;
+  title?: string;
+  lineNew?: number;
+  evidence?: string;
+};
+
+type CommitEvidence = {
+  message: string;
+  changedFiles: string[];
+  committedAt: Date;
+};
 
 export function getProjectKey(repoPath: string): string {
   const base = repoPath.split('/').filter(Boolean).at(-1) ?? 'repo';
@@ -48,7 +83,7 @@ async function persistReviewOutcomes(
       .values({
         reviewCaseId,
         findingId: finding.id,
-        outcomeType: finding.severity === 'error' ? 'pending' : 'adopted',
+        outcomeType: 'pending',
         followupCommitHash: null,
         resolutionTimestamp: null,
         guidanceIds: finding.knowledge_refs ?? [],
@@ -61,9 +96,7 @@ async function persistReviewOutcomes(
       .onConflictDoUpdate({
         target: [reviewOutcomes.reviewCaseId, reviewOutcomes.findingId],
         set: {
-          outcomeType: finding.severity === 'error' ? 'pending' : 'adopted',
           guidanceIds: finding.knowledge_refs ?? [],
-          notes: finding.rationale,
           updatedAt: now,
         },
       });
@@ -79,11 +112,15 @@ async function persistFindingMemories(
   for (const finding of findings) {
     await deps.saveMemory(`code-review-${projectKey}`, mapFindingMemoryContent(finding), {
       reviewCaseId,
+      findingId: finding.id,
       filePath: finding.file_path,
       category: finding.category,
       guidanceRefs: finding.knowledge_refs ?? [],
       fingerprint: finding.fingerprint,
       severity: finding.severity,
+      title: finding.title,
+      lineNew: finding.line_new,
+      evidence: finding.evidence,
     });
   }
 }
@@ -189,23 +226,36 @@ export async function persistReviewCase(
 export async function recordFeedback(
   reviewCaseId: string,
   findingId: string,
-  outcomeType: 'adopted' | 'ignored' | 'dismissed' | 'resolved' | 'pending',
-  options: { notes?: string; falsePositive?: boolean; guidanceIds?: string[] } = {},
+  outcomeType: ReviewOutcomeType,
+  options: ReviewFeedbackOptions = {},
   database: typeof db = db,
 ): Promise<void> {
+  const notes = options.notes?.trim();
+  const followupCommitHash = options.followupCommitHash?.trim();
+  if (outcomeType !== 'pending' && !notes) {
+    throw new Error(`${outcomeType} review feedback requires notes evidence`);
+  }
+  if (outcomeType === 'resolved' && !followupCommitHash) {
+    throw new Error('resolved review feedback requires followupCommitHash evidence');
+  }
+  if (outcomeType !== 'resolved' && followupCommitHash) {
+    throw new Error('followupCommitHash is only valid for resolved review feedback');
+  }
   const now = new Date();
+  const resolutionTimestamp =
+    outcomeType === 'resolved' ? options.resolutionTimestamp ?? now : null;
   await database
     .insert(reviewOutcomes)
     .values({
       reviewCaseId,
       findingId,
       outcomeType,
-      followupCommitHash: null,
-      resolutionTimestamp: null,
+      followupCommitHash: followupCommitHash ?? null,
+      resolutionTimestamp,
       guidanceIds: options.guidanceIds ?? [],
       falsePositive: options.falsePositive ?? false,
-      notes: options.notes,
-      autoDetected: false,
+      notes,
+      autoDetected: options.autoDetected ?? false,
       createdAt: now,
       updatedAt: now,
     })
@@ -213,21 +263,141 @@ export async function recordFeedback(
       target: [reviewOutcomes.reviewCaseId, reviewOutcomes.findingId],
       set: {
         outcomeType,
+        followupCommitHash: followupCommitHash ?? null,
+        resolutionTimestamp,
         guidanceIds: options.guidanceIds ?? [],
         falsePositive: options.falsePositive ?? false,
-        notes: options.notes,
+        notes,
+        autoDetected: options.autoDetected ?? false,
         updatedAt: now,
       },
     });
+}
+
+function normalizeRepoPath(filePath: string): string {
+  return filePath.replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');
+}
+
+function metadataRecord(value: unknown): FindingMemoryMetadata {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as FindingMemoryMetadata)
+    : {};
+}
+
+export function shouldResolveFindingFromCommit(input: {
+  reviewCaseId: string;
+  findingId: string;
+  filePath?: string | null;
+  commitMessage: string;
+  changedFiles: string[];
+}): boolean {
+  const message = input.commitMessage.toLowerCase();
+  const findingId = input.findingId.toLowerCase();
+  const reviewCaseId = input.reviewCaseId.toLowerCase();
+  const mentionsFinding = message.includes(findingId);
+  const mentionsReviewCase = message.includes(reviewCaseId);
+  if (!mentionsFinding || !mentionsReviewCase || !input.filePath) return false;
+
+  const findingPath = normalizeRepoPath(input.filePath);
+  return input.changedFiles.some((filePath) => normalizeRepoPath(filePath) === findingPath);
+}
+
+async function readCommitEvidence(repoPath: string, commitHash: string): Promise<CommitEvidence> {
+  const [{ stdout: message }, { stdout: changedFiles }, { stdout: committedAtSeconds }] =
+    await Promise.all([
+      execFileAsync('git', ['-C', repoPath, 'show', '--format=%B', '--no-patch', commitHash]),
+      execFileAsync('git', ['-C', repoPath, 'show', '--format=', '--name-only', commitHash]),
+      execFileAsync('git', ['-C', repoPath, 'show', '--format=%ct', '--no-patch', commitHash]),
+    ]);
+  const timestamp = Number.parseInt(committedAtSeconds.trim(), 10);
+  return {
+    message,
+    changedFiles: changedFiles
+      .split(/\r?\n/)
+      .map((filePath) => filePath.trim())
+      .filter(Boolean),
+    committedAt: Number.isFinite(timestamp) ? new Date(timestamp * 1000) : new Date(),
+  };
 }
 
 export async function detectFeedbackFromCommit(
   reviewCaseId: string,
   commitHash: string,
   repoPath: string,
-): Promise<void> {
-  void reviewCaseId;
-  void commitHash;
-  void repoPath;
-  // Stage C does not require auto-detection wiring in this iteration.
+  database: typeof db = db,
+): Promise<number> {
+  const [commit, outcomes, memoryRows] = await Promise.all([
+    readCommitEvidence(repoPath, commitHash),
+    database
+      .select({
+        findingId: reviewOutcomes.findingId,
+        guidanceIds: reviewOutcomes.guidanceIds,
+      })
+      .from(reviewOutcomes)
+      .where(
+        and(
+          eq(reviewOutcomes.reviewCaseId, reviewCaseId),
+          inArray(reviewOutcomes.outcomeType, ['pending', 'adopted']),
+        ),
+      ),
+    database
+      .select({
+        content: vibeMemories.content,
+        metadata: vibeMemories.metadata,
+      })
+      .from(vibeMemories)
+      .where(sql`${vibeMemories.metadata}->>'reviewCaseId' = ${reviewCaseId}`),
+  ]);
+
+  const memoryByFindingId = new Map(
+    memoryRows
+      .map((row) => {
+        const metadata = metadataRecord(row.metadata);
+        return metadata.findingId ? [metadata.findingId, { content: row.content, metadata }] : null;
+      })
+      .filter((entry): entry is [string, { content: string; metadata: FindingMemoryMetadata }] =>
+        Boolean(entry),
+      ),
+  );
+
+  let resolvedCount = 0;
+  for (const outcome of outcomes) {
+    const findingMemory = memoryByFindingId.get(outcome.findingId);
+    if (
+      !shouldResolveFindingFromCommit({
+        reviewCaseId,
+        findingId: outcome.findingId,
+        filePath: findingMemory?.metadata.filePath,
+        commitMessage: commit.message,
+        changedFiles: commit.changedFiles,
+      })
+    ) {
+      continue;
+    }
+
+    await recordFeedback(
+      reviewCaseId,
+      outcome.findingId,
+      'resolved',
+      {
+        notes: [
+          'auto_detected_from_commit',
+          `commit=${commitHash}`,
+          findingMemory?.metadata.filePath ? `file=${findingMemory.metadata.filePath}` : null,
+          findingMemory?.metadata.title ? `title=${findingMemory.metadata.title}` : null,
+        ]
+          .filter(Boolean)
+          .join('\n'),
+        guidanceIds: Array.isArray(outcome.guidanceIds)
+          ? outcome.guidanceIds.filter((item): item is string => typeof item === 'string')
+          : [],
+        followupCommitHash: commitHash,
+        resolutionTimestamp: commit.committedAt,
+        autoDetected: true,
+      },
+      database,
+    );
+    resolvedCount += 1;
+  }
+  return resolvedCount;
 }

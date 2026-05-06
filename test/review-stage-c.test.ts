@@ -305,8 +305,18 @@ describe('review stage C', () => {
     });
 
     expect(calls.length).toBeGreaterThanOrEqual(2);
+    expect(
+      calls.some((call) => (call.payload as { outcomeType?: string }).outcomeType === 'pending'),
+    ).toBe(true);
     expect(saveExperienceCalls).toHaveLength(1);
     expect(saveMemoryCalls).toHaveLength(2);
+    const findingMemoryCall = saveMemoryCalls.find((call) => {
+      const args = call as unknown[];
+      return (args[2] as { findingId?: string } | undefined)?.findingId === 'finding-1';
+    }) as unknown[] | undefined;
+    expect((findingMemoryCall?.[2] as { reviewCaseId?: string } | undefined)?.reviewCaseId).toBe(
+      'review-1',
+    );
     const firstSaveExperienceCall = saveExperienceCalls[0] as unknown[] | undefined;
     const savedExperience = firstSaveExperienceCall?.[0] as
       | { type?: string; failureType?: string }
