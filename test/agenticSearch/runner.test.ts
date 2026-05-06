@@ -165,6 +165,84 @@ describe('AgenticSearchRunner', () => {
     expect(fetchTool).not.toHaveBeenCalled();
   });
 
+  it('passes prefetch results as compact context instead of tool messages', async () => {
+    const seenMessages: Array<Array<{ role: string; content: string }>> = [];
+    const adapter = {
+      generate: mock(async (messages) => {
+        seenMessages.push(messages);
+        return { text: 'done', toolCalls: [] };
+      }),
+    };
+    const runner = new AgenticSearchRunner(
+      adapter as never,
+      {
+        knowledge_search: async () => ({
+          items: [
+            {
+              id: 'rule-1',
+              type: 'rule',
+              title: 'Keep MCP primary surface small',
+              content: 'Do not add primary MCP tools for internal helper flows.',
+              score: 0.91,
+            },
+          ],
+        }),
+        brave_search: async () => ({ results: [{ title: 'Result', url: 'https://example.com' }] }),
+        fetch: async () => ({}),
+      },
+      6,
+      mockLookupFailureFirewallContext as never,
+    );
+
+    await runner.run({ userRequest: 'q' });
+
+    const firstTurn = seenMessages[0] ?? [];
+    expect(firstTurn.some((message) => message.role === 'tool')).toBe(false);
+    expect(
+      firstTurn.some(
+        (message) =>
+          message.role === 'system' &&
+          message.content.includes('Prefetched Gnosis knowledge') &&
+          message.content.includes('Keep MCP primary surface small'),
+      ),
+    ).toBe(true);
+  });
+
+  it('keeps graceful prefetch degraded details in compact context', async () => {
+    const seenMessages: Array<Array<{ role: string; content: string }>> = [];
+    const adapter = {
+      generate: mock(async (messages) => {
+        seenMessages.push(messages);
+        return { text: 'done', toolCalls: [] };
+      }),
+    };
+    const runner = new AgenticSearchRunner(
+      adapter as never,
+      {
+        knowledge_search: async () => ({ items: [] }),
+        brave_search: async () => ({
+          results: [],
+          degraded: { code: 'BRAVE_API_KEY_MISSING', message: 'BRAVE_SEARCH_API_KEY not set' },
+        }),
+        fetch: async () => ({}),
+      },
+      6,
+      mockLookupFailureFirewallContext as never,
+    );
+
+    await runner.run({ userRequest: 'q' });
+
+    const firstTurn = seenMessages[0] ?? [];
+    expect(
+      firstTurn.some(
+        (message) =>
+          message.role === 'system' &&
+          message.content.includes('Prefetch degraded') &&
+          message.content.includes('BRAVE_API_KEY_MISSING'),
+      ),
+    ).toBe(true);
+  });
+
   it('adds Failure Firewall context to the first LLM turn when relevant lessons exist', async () => {
     mockLookupFailureFirewallContext.mockResolvedValueOnce({
       shouldUse: true,
@@ -269,7 +347,10 @@ describe('AgenticSearchRunner', () => {
             },
           ],
         }),
-        brave_search: async () => ({ results: [] }),
+        brave_search: async () => ({
+          results: [],
+          degraded: { code: 'BRAVE_API_KEY_MISSING', message: 'BRAVE_SEARCH_API_KEY not set' },
+        }),
         fetch: async () => ({}),
       },
       6,
@@ -278,6 +359,7 @@ describe('AgenticSearchRunner', () => {
     const result = await runner.run({ userRequest: 'review_task provider policy' });
     expect(result.answer).toContain('Gnosis knowledge には関連候補があります');
     expect(result.answer).toContain('Azure OpenAI is the default reviewer');
+    expect(result.answer).toContain('BRAVE_API_KEY_MISSING');
     expect(result.degraded?.code).toBe('TOOL_CALLING_UNSUPPORTED');
     expect(result.degraded?.message).toContain('tool_calling_unsupported');
     expect(mockSaveAgenticAnswer).not.toHaveBeenCalled();

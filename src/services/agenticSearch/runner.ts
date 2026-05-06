@@ -13,7 +13,12 @@ import {
   executeToolCall,
   listAgenticSearchToolSpecs,
 } from './toolRegistry.js';
-import type { AgenticSearchMessage, AgenticSearchTrace, AgenticToolResult } from './types.js';
+import type {
+  AgenticSearchMessage,
+  AgenticSearchToolName,
+  AgenticSearchTrace,
+  AgenticToolResult,
+} from './types.js';
 
 export type AgenticSearchRunnerInput = {
   userRequest: string;
@@ -78,6 +83,49 @@ type KnowledgeFallbackItem = {
   retrievalSource?: string;
 };
 
+function isAgenticSearchToolName(value: unknown): value is AgenticSearchToolName {
+  return value === 'knowledge_search' || value === 'brave_search' || value === 'fetch';
+}
+
+function toAgenticSearchMessages(messages: AgenticLoopMessage[]): AgenticSearchMessage[] {
+  return messages.map((message) => {
+    if (message.role === 'assistant') {
+      const toolCalls = (message.toolCalls ?? []).map((call) => {
+        if (!isAgenticSearchToolName(call.name)) {
+          throw new Error(
+            `invalid_agentic_tool_message_sequence: unknown assistant tool call ${call.name}`,
+          );
+        }
+        return {
+          id: call.id,
+          name: call.name,
+          arguments: call.arguments,
+        };
+      });
+      return {
+        role: 'assistant',
+        content: message.content,
+        ...(toolCalls.length > 0 ? { toolCalls } : {}),
+        raw: message.rawAssistantContent,
+      };
+    }
+    if (message.role === 'tool') {
+      if (!isAgenticSearchToolName(message.toolName)) {
+        throw new Error(
+          `invalid_agentic_tool_message_sequence: unknown tool result ${message.toolName ?? ''}`,
+        );
+      }
+      return {
+        role: 'tool',
+        toolCallId: message.toolCallId,
+        toolName: message.toolName,
+        content: message.content,
+      };
+    }
+    return message;
+  });
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -105,6 +153,111 @@ function truncateForFallback(text: string, limit: number): string {
   return `${compact.slice(0, limit - 1)}...`;
 }
 
+function getToolDegraded(result: AgenticToolResult): {
+  toolName: AgenticSearchToolName;
+  code: string;
+  message: string;
+} | null {
+  if (!result.ok) {
+    return {
+      toolName: result.toolName,
+      code: result.error?.code ?? 'UNKNOWN',
+      message: result.error?.message ?? '',
+    };
+  }
+
+  const degraded = result.output?.degraded;
+  if (!isRecord(degraded)) return null;
+  const code = typeof degraded.code === 'string' ? degraded.code : 'DEGRADED';
+  const message = typeof degraded.message === 'string' ? degraded.message : '';
+  return { toolName: result.toolName, code, message };
+}
+
+function buildPrefetchContextMessage(results: AgenticToolResult[]): string {
+  const sections: string[] = [];
+  const knowledgeItems = results
+    .filter((result) => result.toolName === 'knowledge_search' && result.ok)
+    .flatMap((result) => {
+      const rawItems = Array.isArray(result.output?.items) ? result.output.items : [];
+      return rawItems
+        .map(toKnowledgeFallbackItem)
+        .filter((item): item is KnowledgeFallbackItem => item !== null);
+    })
+    .slice(0, 5);
+
+  if (knowledgeItems.length > 0) {
+    sections.push(
+      [
+        'Prefetched Gnosis knowledge:',
+        ...knowledgeItems.map((item, index) => {
+          const meta = [
+            item.id ? `id=${item.id}` : undefined,
+            item.type ? `type=${item.type}` : undefined,
+            item.retrievalSource ? `source=${item.retrievalSource}` : undefined,
+            typeof item.score === 'number' ? `score=${item.score.toFixed(3)}` : undefined,
+          ]
+            .filter((part): part is string => Boolean(part))
+            .join(', ');
+          return `${index + 1}. ${truncateForFallback(item.title, 100)}${
+            meta ? ` (${meta})` : ''
+          }: ${truncateForFallback(item.content, 260)}`;
+        }),
+      ].join('\n'),
+    );
+  }
+
+  const webResults = results
+    .filter((result) => result.toolName === 'brave_search' && result.ok)
+    .flatMap((result) => (Array.isArray(result.output?.results) ? result.output.results : []))
+    .filter(isRecord)
+    .slice(0, 5);
+
+  if (webResults.length > 0) {
+    sections.push(
+      [
+        'Prefetched web search results:',
+        ...webResults.map((item, index) => {
+          const title = typeof item.title === 'string' ? item.title : 'untitled';
+          const url = typeof item.url === 'string' ? item.url : '';
+          const description = typeof item.description === 'string' ? item.description : '';
+          return `${index + 1}. ${truncateForFallback(title, 100)}${
+            url ? ` (${url})` : ''
+          }: ${truncateForFallback(description, 240)}`;
+        }),
+      ].join('\n'),
+    );
+  }
+
+  const degradedResults = results
+    .map(getToolDegraded)
+    .filter((item): item is NonNullable<ReturnType<typeof getToolDegraded>> => item !== null);
+  if (degradedResults.length > 0) {
+    sections.push(
+      [
+        'Prefetch degraded:',
+        ...degradedResults.map((result) =>
+          `- ${result.toolName}: ${result.code} ${result.message}`.trim(),
+        ),
+      ].join('\n'),
+    );
+  }
+
+  if (sections.length === 0) {
+    return [
+      'Prefetch completed, but no directly usable knowledge or web result was returned.',
+      'Answer from the task context if enough information is available; otherwise call tools for more evidence.',
+    ].join('\n');
+  }
+
+  return [
+    'The following context was prefetched before the agentic loop.',
+    'Treat it as compact reference material, not as a tool result message.',
+    'Use it if sufficient; call tools only when more evidence is needed.',
+    '',
+    sections.join('\n\n'),
+  ].join('\n');
+}
+
 function buildKnowledgeFallbackAnswer(
   results: AgenticToolResult[],
   reason: string,
@@ -119,7 +272,11 @@ function buildKnowledgeFallbackAnswer(
     })
     .slice(0, 5);
 
-  if (items.length === 0) return undefined;
+  const degradedResults = results
+    .map(getToolDegraded)
+    .filter((item): item is NonNullable<ReturnType<typeof getToolDegraded>> => item !== null);
+
+  if (items.length === 0 && degradedResults.length === 0) return undefined;
 
   const renderedItems = items
     .map((item, index) => {
@@ -139,14 +296,27 @@ function buildKnowledgeFallbackAnswer(
     })
     .join('\n');
 
-  return [
+  const parts = [
     'LLM による最終回答生成は完了しませんでしたが、Gnosis knowledge には関連候補があります。',
     '',
-    renderedItems,
-    '',
+  ];
+  if (renderedItems.length > 0) {
+    parts.push(renderedItems, '');
+  }
+  if (degradedResults.length > 0) {
+    parts.push(
+      'prefetchDegraded:',
+      ...degradedResults.map((result) =>
+        `- ${result.toolName}: ${result.code} ${result.message}`.trim(),
+      ),
+      '',
+    );
+  }
+  parts.push(
     `degradedReason: ${reason}`,
-    '上記は raw 候補に基づく限定回答です。採用判断や実装前には、該当ファイルまたは一次情報で確認してください。',
-  ].join('\n');
+    '上記は raw 候補と prefetch 状態に基づく限定回答です。採用判断や実装前には、該当ファイルまたは一次情報で確認してください。',
+  );
+  return parts.join('\n');
 }
 
 function classifyAgenticLoopFailureCode(message: string): string {
@@ -157,6 +327,9 @@ function classifyAgenticLoopFailureCode(message: string): string {
     )
   ) {
     return 'MAX_TOOL_LOOPS_REACHED';
+  }
+  if (/invalid_agentic_tool_message_sequence/i.test(message)) {
+    return 'TOOL_MESSAGE_SEQUENCE_INVALID';
   }
   return 'AGENTIC_LOOP_FAILED';
 }
@@ -200,13 +373,11 @@ export class AgenticSearchRunner {
         ok: result.ok,
         errorCode: result.error?.code,
       });
-      messages.push({
-        role: 'tool',
-        toolCallId: result.toolCallId,
-        toolName: result.toolName,
-        content: JSON.stringify(result.ok ? result.output : { error: result.error }),
-      });
     }
+    messages.push({
+      role: 'system',
+      content: buildPrefetchContextMessage(prefetchResults),
+    });
     if (shouldPrefetchFailureFirewallContext(input)) {
       try {
         const context = await this.failureFirewallContextFn({
@@ -250,7 +421,7 @@ export class AgenticSearchRunner {
         })),
         maxLoops: this.maxLoops,
         generate: async (history) => {
-          const generated = await this.adapter.generate(history as AgenticSearchMessage[]);
+          const generated = await this.adapter.generate(toAgenticSearchMessages(history));
           return {
             text: generated.text,
             toolCalls: generated.toolCalls,

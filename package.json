@@ -47,6 +47,8 @@
     "monitor:snapshot": "bun run src/scripts/monitor-snapshot.ts --json",
     "monitor:detail": "bun run src/scripts/monitor-detail.ts --json",
     "monitor:knowflow-failures": "bun run src/scripts/knowflow-failure-report.ts",
+    "status-report": "bun run src/scripts/status-report.ts --value",
+    "status-report:notify": "bun run src/scripts/status-report.ts --notify",
     "knowflow:cleanup": "bun run src/scripts/knowflow-cleanup.ts",
     "monitor:dev": "bun run --cwd apps/monitor tauri:dev",
     "review": "bun run src/scripts/review.ts",

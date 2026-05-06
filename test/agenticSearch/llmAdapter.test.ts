@@ -69,4 +69,57 @@ describe('AgenticSearchLlmAdapter', () => {
     expect(toolMsg?.toolCallId).toBe('c1');
     expect(toolMsg?.content).toBe('{"ok":true}');
   });
+
+  it('rejects orphan tool-role messages before provider call', async () => {
+    const generateMessagesStructured = mock(async () => ({ text: 'ok', toolCalls: [] }));
+    mockGetReviewLlmService.mockResolvedValue({
+      provider: 'cloud',
+      generate: mock(async () => ''),
+      generateMessagesStructured,
+    });
+    const adapter = new AgenticSearchLlmAdapter();
+
+    await expect(
+      adapter.generate([
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: 'q' },
+        {
+          role: 'tool',
+          toolCallId: 'prefetch-knowledge',
+          toolName: 'knowledge_search',
+          content: '{}',
+        },
+      ]),
+    ).rejects.toThrow('invalid_agentic_tool_message_sequence');
+
+    expect(mockGetReviewLlmService).not.toHaveBeenCalled();
+    expect(generateMessagesStructured).not.toHaveBeenCalled();
+  });
+
+  it('synthesizes assistant raw tool_calls when only structured calls are present', async () => {
+    const generateMessagesStructured = mock(async () => ({ text: 'ok', toolCalls: [] }));
+    mockGetReviewLlmService.mockResolvedValue({
+      provider: 'cloud',
+      generate: mock(async () => ''),
+      generateMessagesStructured,
+    });
+    const adapter = new AgenticSearchLlmAdapter();
+
+    await adapter.generate([
+      { role: 'system', content: 'sys' },
+      {
+        role: 'assistant',
+        content: '',
+        toolCalls: [{ id: 'c1', name: 'knowledge_search', arguments: { query: 'x' } }],
+      },
+      { role: 'tool', toolCallId: 'c1', toolName: 'knowledge_search', content: '{"ok":true}' },
+    ]);
+
+    const firstCall = generateMessagesStructured.mock.calls[0] as unknown as [
+      Array<Record<string, unknown>>,
+    ];
+    const assistantMsg = firstCall[0].find((m) => m.role === 'assistant');
+    const raw = assistantMsg?.rawAssistantContent as { tool_calls?: unknown[] } | undefined;
+    expect(raw?.tool_calls?.length).toBe(1);
+  });
 });

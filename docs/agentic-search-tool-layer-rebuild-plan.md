@@ -272,6 +272,8 @@ provider adapter の責務:
 - provider response から `toolCalls`, `text`, `usage`, `raw` を返す。
 - provider が tool call を返せない場合は `tool_calling_unsupported` を返す。
 
+2026-05-06 の protocol 修復後は、first-round prefetch の `knowledge_search` / `brave_search` 結果を provider の `tool` role message として扱わない。prefetch は compact context として渡し、`tool` role message は LLM が返した native `tool_calls` への応答だけに限定する。adapter は provider 呼び出し前に orphan `tool` role message を検出し、provider 400 になる前に不整合として扱う。
+
 ## SystemContext 方針
 
 SystemContext は `src/services/agenticSearch/systemContext.ts` に集約する。

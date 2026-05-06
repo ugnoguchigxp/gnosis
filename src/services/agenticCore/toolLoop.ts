@@ -1,6 +1,11 @@
 export type AgenticLoopMessage =
   | { role: 'system' | 'user'; content: string }
-  | { role: 'assistant'; content: string; rawAssistantContent?: unknown }
+  | {
+      role: 'assistant';
+      content: string;
+      rawAssistantContent?: unknown;
+      toolCalls?: AgenticLoopToolCall[];
+    }
   | { role: 'tool'; content: string; toolCallId: string; toolName?: string };
 
 export type AgenticLoopTool = {
@@ -59,6 +64,7 @@ export async function runAgenticToolLoop(input: {
       role: 'assistant',
       content,
       rawAssistantContent: generated.rawAssistantContent,
+      toolCalls: generated.toolCalls,
     });
 
     const toolCalls = generated.toolCalls ?? [];

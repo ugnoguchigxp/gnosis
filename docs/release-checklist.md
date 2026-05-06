@@ -15,13 +15,16 @@ bun run doctor
 ## 2. Focused Gates
 
 ```bash
-bun test test/mcp/tools/agentFirst.test.ts test/agenticSearch/runner.test.ts
-bun test test/mcpContract.test.ts test/mcpToolsSnapshot.test.ts
+bun test test/mcp/tools/agentFirst.test.ts test/agenticSearch/runner.test.ts test/agenticSearch/llmAdapter.test.ts test/agentic-search-cli.test.ts
+bun test test/mcpContract.test.ts test/mcpToolsSnapshot.test.ts test/mcpHostServices.test.ts test/mcpStdioIntegration.test.ts
+bun run agentic-search -- --request "Gnosis の agentic_search 改善で守るべきルールを調べて" --intent plan --change-type mcp --json
 bun run smoke
 ```
 
 - `review_task` が `unavailable_in_minimal_mode` を返さないこと
-- `agentic_search` が LLM finalization 失敗時も knowledge fallback を返せること
+- `agentic_search` が provider の `tool role` protocol error を返さないこと
+- `agentic_search` が自然文回答、または限定回答であることを明示した fallback を返せること
+- raw 候補確認で `search_knowledge` を使う場合は、`taskGoal` / `files` / `changeTypes` / `technologies` を明示し、`insufficient_task_context` を pass 扱いしないこと
 - KnowFlow mock eval が pass/fail gate で通ること
 
 ## 3. Full Gates
@@ -43,6 +46,7 @@ bun run verify:strict
 - README のセットアップ手順が実コマンドと一致していること
 - `docs/mcp-tools.md` の schema/behavior が `test/mcpToolsSnapshot.test.ts` と一致していること
 - `docs/data-layers.md` と `docs/knowflow-guide.md` が現行の運用導線を説明していること
+- `docs/project-value-improvement-plan.md` の実装状況が、完了済み Phase と未着手 Phase を混同していないこと
 
 ## 5. Monitor Evidence
 

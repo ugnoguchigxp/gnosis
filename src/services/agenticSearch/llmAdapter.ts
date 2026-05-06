@@ -28,10 +28,24 @@ function toChatMessages(messages: AgenticSearchMessage[]): ChatMessage[] {
       continue;
     }
     if (message.role === 'assistant') {
+      const syntheticRaw =
+        message.raw ??
+        (message.toolCalls && message.toolCalls.length > 0
+          ? {
+              tool_calls: message.toolCalls.map((call) => ({
+                id: call.id,
+                type: 'function',
+                function: {
+                  name: call.name,
+                  arguments: JSON.stringify(call.arguments),
+                },
+              })),
+            }
+          : undefined);
       converted.push({
         role: 'assistant',
         content: message.content,
-        rawAssistantContent: message.raw,
+        rawAssistantContent: syntheticRaw,
       });
       continue;
     }
@@ -57,6 +71,80 @@ function convertToolCalls(calls?: NativeToolCall[]): AgenticToolCall[] {
   }));
 }
 
+function rawAssistantToolCallIds(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return raw
+      .filter(
+        (item): item is Record<string, unknown> =>
+          typeof item === 'object' && item !== null && !Array.isArray(item),
+      )
+      .filter((item) => item.type === 'tool_use')
+      .map((item) => (typeof item.id === 'string' ? item.id : ''))
+      .filter((id) => id.length > 0);
+  }
+
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return [];
+  }
+
+  const toolCalls = (raw as Record<string, unknown>).tool_calls;
+  if (!Array.isArray(toolCalls)) return [];
+  return toolCalls
+    .map((call) => {
+      if (typeof call !== 'object' || call === null || Array.isArray(call)) return '';
+      const id = (call as Record<string, unknown>).id;
+      return typeof id === 'string' ? id : '';
+    })
+    .filter((id) => id.length > 0);
+}
+
+function validateToolMessageSequence(messages: AgenticSearchMessage[]): void {
+  const pendingToolCallIds = new Set<string>();
+
+  for (const message of messages) {
+    if (pendingToolCallIds.size > 0) {
+      if (message.role !== 'tool') {
+        throw new Error(
+          `invalid_agentic_tool_message_sequence: expected tool result for ${[
+            ...pendingToolCallIds,
+          ].join(', ')} before ${message.role} message`,
+        );
+      }
+      if (!pendingToolCallIds.has(message.toolCallId)) {
+        throw new Error(
+          `invalid_agentic_tool_message_sequence: unexpected tool result ${message.toolCallId}`,
+        );
+      }
+      pendingToolCallIds.delete(message.toolCallId);
+      continue;
+    }
+
+    if (message.role === 'tool') {
+      throw new Error(
+        `invalid_agentic_tool_message_sequence: orphan tool result ${message.toolCallId}`,
+      );
+    }
+
+    if (message.role === 'assistant') {
+      const toolCallIds =
+        message.toolCalls && message.toolCalls.length > 0
+          ? message.toolCalls.map((call) => call.id)
+          : rawAssistantToolCallIds(message.raw);
+      for (const id of toolCallIds) {
+        pendingToolCallIds.add(id);
+      }
+    }
+  }
+
+  if (pendingToolCallIds.size > 0) {
+    throw new Error(
+      `invalid_agentic_tool_message_sequence: missing tool result for ${[
+        ...pendingToolCallIds,
+      ].join(', ')}`,
+    );
+  }
+}
+
 export class AgenticSearchLlmAdapter {
   private llmServicePromise: Promise<ReviewLLMService> | null = null;
 
@@ -68,6 +156,7 @@ export class AgenticSearchLlmAdapter {
   }
 
   async generate(messages: AgenticSearchMessage[]): Promise<AgenticSearchLlmResult> {
+    validateToolMessageSequence(messages);
     const llm = await this.getLlmService();
     if (llm.provider !== 'cloud' || !llm.generateMessagesStructured) {
       throw new Error('tool_calling_unsupported');

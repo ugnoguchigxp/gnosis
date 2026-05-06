@@ -103,9 +103,11 @@ Tasks:
 1. Extract a pure `createGnosisMcpService()` function that returns tool
    metadata and a `callTool(name, args)` handler.
 2. Keep stdio-specific `StdioServerTransport` wiring out of service creation.
-3. Ensure `initial_instructions`, `activate_project`, `search_knowledge`,
-   `start_task`, `review_task`, and related tools behave identically through
-   the extracted service.
+3. Ensure the current primary six tools (`initial_instructions`,
+   `agentic_search`, `search_knowledge`, `record_task_note`, `review_task`,
+   `doctor`) behave identically through the extracted service. Legacy
+   lifecycle tools such as `activate_project`, `start_task`, and `finish_task`
+   must not be reintroduced to the public surface.
 
 Acceptance:
 

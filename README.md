@@ -148,6 +148,7 @@ bun run maintenance
 - [Operations Runbook](docs/operations-runbook.md)
 - [Release Checklist](docs/release-checklist.md)
 - [Active-Use Improvement Plan](docs/active-use-improvement-plan.md)
+- [Project Value Improvement Plan](docs/project-value-improvement-plan.md)
 - [Agent-First Refactoring Plan](docs/agent-first-gnosis-refactoring-plan.md)
 
 ## ライセンス
