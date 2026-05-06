@@ -49,9 +49,11 @@ local LLM を設定すると、Gemma4/Bonsai 系のローカル推論、KnowFlow
 ## MCP 公開面
 
 - Gnosis 本体の primary tool surface は Agent-First の一次導線に固定しています。
-- Gnosis primary tools は `initial_instructions / agentic_search / search_knowledge / record_task_note / review_task / doctor` の6件です。
-- stdio adapter が接続する shared host では、上記6件に加えて Astmend と diffGuard の MCP service tools も同一 `tools/list` に集約されます。
+- Gnosis primary tools は `initial_instructions / agentic_search / search_knowledge / record_task_note / review_task / doctor / memory_search / memory_fetch` の8件です。
+- stdio adapter が接続する shared host では、上記8件に加えて Astmend と diffGuard の MCP service tools も同一 `tools/list` に集約されます。
 - `agentic_search` は通常の知識取得入口です。`search_knowledge` は raw 候補やスコアを確認する低レベル検索です。
+- `memory_search` / `memory_fetch` は context 圧縮後に `vibe_memories` の過去会話・作業断片・保存回答を部分確認する補助導線です。entity knowledge の代替ではなく、取得内容は現行ファイルやユーザー指示と照合して使います。
+- `memory_search` は薄い一覧だけを返し、`memory_fetch` は必要箇所だけを読む fetch 導線です。範囲指定がない場合は query match 周辺を既定1000文字で返し、`maxChars` は最大5000文字です。
 
 ### 成功例
 
@@ -80,6 +82,24 @@ await review_task({
 
 期待される結果は、指摘事項、残リスク、実際に使った知識 (`knowledgeUsed`) を含むレビューです。knowledge retrieval が degraded の場合も、未選別候補を混ぜずに診断情報として扱います。
 provider 未設定や timeout などで同期レビューを完了できない場合も、MCP timeout ではなく `status: "degraded"` の JSON を返します。
+
+`memory_search` / `memory_fetch` は、context 圧縮で過去会話の細部が失われた可能性がある場合にだけ使う補助導線です。
+
+```ts
+const results = await memory_search({
+  query: 'review_task timeout knowledge retrieval',
+  mode: 'hybrid',
+  limit: 5,
+});
+
+await memory_fetch({
+  id: results.items[0].id,
+  query: 'review_task timeout',
+  maxChars: 1000,
+});
+```
+
+`memory_search` は raw JSON や metadata 全体を返さず、候補 id と snippet を返します。`memory_fetch` は `start` / `end` の 0-based UTF-16 index を指定するとその範囲を優先し、未指定の場合は hit 語句周辺を抜粋します。これは context 圧縮の回避策であり、通常の方針確認は `agentic_search`、raw 候補や score の確認は `search_knowledge` を使います。
 
 ## 品質チェック
 
@@ -113,7 +133,7 @@ bun run maintenance
 
 | 機能 | 説明 |
 | :--- | :--- |
-| Agent-First MCP | `initial_instructions`, `agentic_search`, `search_knowledge`, `review_task` などの一次導線 |
+| Agent-First MCP | `initial_instructions`, `agentic_search`, `search_knowledge`, `review_task`, `memory_search`, `memory_fetch` などの一次導線と補助導線 |
 | Vibe Memory | ベクトル + メタデータ検索による長期記憶 |
 | Knowledge Graph | 関係性を扱う Graph RAG |
 | Review | コード/ドキュメント/実装計画レビュー |

@@ -1,16 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 
 const mockAgenticSearchRun = mock();
+const mockMemorySearchRun = mock();
+const mockMemoryFetchRun = mock();
 const mockReviewTaskRun = mock();
 
 import { GNOSIS_CONSTANTS } from '../../../src/constants.js';
 import {
   agentFirstTools,
   resetAgenticSearchRunnerForTest,
+  resetMemoryFetchRunnerForTest,
+  resetMemorySearchRunnerForTest,
   resetReviewTaskRunnerForTest,
   resolveMcpReviewTimeoutMs,
   runReviewTaskForMcp,
   setAgenticSearchRunnerForTest,
+  setMemoryFetchRunnerForTest,
+  setMemorySearchRunnerForTest,
   setReviewTaskRunnerForTest,
 } from '../../../src/mcp/tools/agentFirst.js';
 
@@ -23,14 +29,20 @@ const getHandler = (name: string) => {
 describe('agent-first MCP tools', () => {
   beforeEach(() => {
     mockAgenticSearchRun.mockReset();
+    mockMemorySearchRun.mockReset();
+    mockMemoryFetchRun.mockReset();
     mockReviewTaskRun.mockReset();
     setAgenticSearchRunnerForTest({ run: mockAgenticSearchRun as never });
+    setMemorySearchRunnerForTest(mockMemorySearchRun as never);
+    setMemoryFetchRunnerForTest(mockMemoryFetchRun as never);
     setReviewTaskRunnerForTest(mockReviewTaskRun as never);
   });
 
   afterEach(() => {
     process.env.GNOSIS_MCP_REVIEW_LLM_TIMEOUT_MS = undefined;
     resetAgenticSearchRunnerForTest();
+    resetMemorySearchRunnerForTest();
+    resetMemoryFetchRunnerForTest();
     resetReviewTaskRunnerForTest();
   });
 
@@ -74,6 +86,57 @@ describe('agent-first MCP tools', () => {
       target: { content: '# Plan\nShip safely.' },
       knowledgePolicy: 'off',
     });
+  });
+
+  it('memory_search delegates to vibe memory search and returns JSON without raw metadata', async () => {
+    mockMemorySearchRun.mockResolvedValue({
+      items: [
+        {
+          id: 'memory-1',
+          sessionId: 'session-1',
+          createdAt: '2026-05-06T00:00:00.000Z',
+          source: 'like',
+          matchSources: ['like'],
+          score: 1,
+          snippet: 'compressed context',
+        },
+      ],
+      retrieval: {
+        query: 'context',
+        mode: 'like',
+        vectorHitCount: 0,
+        likeHitCount: 1,
+        returnedCount: 1,
+        embeddingStatus: 'not_attempted',
+      },
+    });
+    const handler = getHandler('memory_search');
+    const result = await handler({ query: ' context ', mode: 'like' });
+    const payload = JSON.parse(result.content[0]?.text ?? '{}') as {
+      items?: Array<Record<string, unknown>>;
+    };
+
+    expect(mockMemorySearchRun).toHaveBeenCalledWith({ query: 'context', mode: 'like' });
+    expect(payload.items?.[0]?.id).toBe('memory-1');
+    expect(payload.items?.[0]).not.toHaveProperty('metadata');
+  });
+
+  it('memory_fetch delegates to vibe memory partial fetch', async () => {
+    mockMemoryFetchRun.mockResolvedValue({
+      id: 'memory-1',
+      sessionId: 'session-1',
+      createdAt: '2026-05-06T00:00:00.000Z',
+      range: { start: 10, end: 20, totalChars: 100, source: 'explicit_range' },
+      excerpts: [{ text: '0123456789', matched: false, start: 10, end: 20 }],
+      text: '0123456789',
+      truncated: true,
+    });
+    const handler = getHandler('memory_fetch');
+    const result = await handler({ id: ' memory-1 ', start: 10, end: 20 });
+    const payload = JSON.parse(result.content[0]?.text ?? '{}') as Record<string, unknown>;
+
+    expect(mockMemoryFetchRun).toHaveBeenCalledWith({ id: 'memory-1', start: 10, end: 20 });
+    expect(payload.text).toBe('0123456789');
   });
 
   it('marks required document knowledge as degraded when no context was applied', async () => {

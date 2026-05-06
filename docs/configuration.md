@@ -35,7 +35,7 @@ Gnosis は環境変数を中心に構成されています。一部の機能（K
 
 ### MCP クライアント互換
 
-- Gnosis 本体の primary tool surface は Agent-First の6件に固定されています。
+- Gnosis 本体の primary tool surface は Agent-First 主導線と memory 補助導線の8件に固定されています。
 - stdio adapter の `tools/list` は shared host へ forward され、Gnosis / Astmend / diffGuard の service tools を集約して返します。
 - クライアント側のツールキャッシュ不整合が疑われる場合は、MCP サーバーとクライアントを再起動してください。
 - macOS ログイン時から MCP host を常駐させる場合は `scripts/setup-automation.sh install` と `scripts/setup-automation.sh load` を実行します。`com.gnosis.mcp-host` は `RunAtLoad` / `KeepAlive` で起動し、stdio adapter はこの host へ接続します。既存の手動 host が残っている場合は LaunchAgent 側が shutdown して引き継ぎます。

@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
 import { server, shouldInjectAlwaysContext } from '../src/mcp/server';
 import {
+  resetMemoryFetchRunnerForTest,
+  resetMemorySearchRunnerForTest,
   resetReviewTaskRunnerForTest,
   setReviewTaskRunnerForTest,
 } from '../src/mcp/tools/agentFirst';
@@ -19,6 +21,8 @@ const getHandler = (method: string): RequestHandler => {
 
 describe('mcp contract', () => {
   afterEach(() => {
+    resetMemorySearchRunnerForTest();
+    resetMemoryFetchRunnerForTest();
     resetReviewTaskRunnerForTest();
   });
 
@@ -39,12 +43,14 @@ describe('mcp contract', () => {
     expect(toolNames).toContain('agentic_search');
     expect(toolNames).toContain('search_knowledge');
     expect(toolNames).toContain('record_task_note');
+    expect(toolNames).toContain('memory_search');
+    expect(toolNames).toContain('memory_fetch');
     expect(toolNames).toContain('review_task');
     expect(toolNames).toContain('doctor');
     expect(toolNames).not.toContain('activate_project');
     expect(toolNames).not.toContain('start_task');
     expect(toolNames).not.toContain('finish_task');
-    expect(toolNames.length).toBe(6);
+    expect(toolNames.length).toBe(8);
   });
 
   it('returns isError=true for unknown tool and invalid arguments', async () => {
@@ -78,6 +84,8 @@ describe('mcp contract', () => {
       agentic_search: false,
       search_knowledge: false,
       record_task_note: false,
+      memory_search: false,
+      memory_fetch: false,
       review_task: false,
       doctor: false,
     };

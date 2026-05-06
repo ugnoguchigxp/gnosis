@@ -16,6 +16,7 @@ import type { ReviewLLMPreference, ReviewLLMService } from '../../services/revie
 import { runReviewAgentic } from '../../services/review/orchestrator.js';
 import type { KnowledgePolicy, ReviewMode, ReviewOutput } from '../../services/review/types.js';
 import { reviewDocument } from '../../services/reviewAgent/documentReviewer.js';
+import { fetchVibeMemory, searchVibeMemories } from '../../services/vibeMemoryLookup.js';
 import type { ToolEntry } from '../registry.js';
 
 const taskChangeTypes = [
@@ -49,6 +50,21 @@ const searchKnowledgeSchema = z.object({
   changeTypes: z.array(z.enum(taskChangeTypes)).optional(),
   technologies: z.array(z.string()).optional(),
   intent: z.enum(['plan', 'edit', 'debug', 'review', 'finish']).optional(),
+});
+const memorySearchSchema = z.object({
+  query: z.string().trim().min(1),
+  mode: z.enum(['hybrid', 'vector', 'like']).optional(),
+  limit: z.number().int().positive().max(20).optional(),
+  sessionId: z.string().trim().min(1).optional(),
+  memoryType: z.literal('raw').optional(),
+  maxSnippetChars: z.number().int().positive().max(1000).optional(),
+});
+const memoryFetchSchema = z.object({
+  id: z.string().trim().min(1),
+  query: z.string().trim().optional(),
+  start: z.number().int().nonnegative().optional(),
+  end: z.number().int().nonnegative().optional(),
+  maxChars: z.number().int().positive().max(5000).optional(),
 });
 const recordTaskNoteSchema = z.object({
   content: z.string().min(1),
@@ -139,6 +155,8 @@ const reviewTaskSchema = z.object({
 });
 
 type AgenticSearchRunnerLike = Pick<AgenticSearchRunner, 'run'>;
+type MemorySearchRunnerLike = typeof searchVibeMemories;
+type MemoryFetchRunnerLike = typeof fetchVibeMemory;
 type ReviewTaskInput = z.infer<typeof reviewTaskSchema>;
 type ReviewTaskMcpDeps = {
   createLlmService?: (provider?: ReviewTaskInput['provider']) => Promise<ReviewLLMService>;
@@ -150,6 +168,8 @@ type ReviewTaskMcpDeps = {
 type ReviewTaskRunnerLike = (input: ReviewTaskInput) => Promise<unknown>;
 
 let agenticSearchRunner: AgenticSearchRunnerLike = new AgenticSearchRunner();
+let memorySearchRunner: MemorySearchRunnerLike = searchVibeMemories;
+let memoryFetchRunner: MemoryFetchRunnerLike = fetchVibeMemory;
 let reviewTaskRunner: ReviewTaskRunnerLike = runReviewTaskForMcp;
 
 export function setAgenticSearchRunnerForTest(runner: AgenticSearchRunnerLike): void {
@@ -158,6 +178,22 @@ export function setAgenticSearchRunnerForTest(runner: AgenticSearchRunnerLike): 
 
 export function resetAgenticSearchRunnerForTest(): void {
   agenticSearchRunner = new AgenticSearchRunner();
+}
+
+export function setMemorySearchRunnerForTest(runner: MemorySearchRunnerLike): void {
+  memorySearchRunner = runner;
+}
+
+export function resetMemorySearchRunnerForTest(): void {
+  memorySearchRunner = searchVibeMemories;
+}
+
+export function setMemoryFetchRunnerForTest(runner: MemoryFetchRunnerLike): void {
+  memoryFetchRunner = runner;
+}
+
+export function resetMemoryFetchRunnerForTest(): void {
+  memoryFetchRunner = fetchVibeMemory;
 }
 
 export function setReviewTaskRunnerForTest(runner: ReviewTaskRunnerLike): void {
@@ -461,6 +497,10 @@ export const agentFirstTools: ToolEntry[] = [
             '- record_task_note: 再利用可能な知見（rule/lesson/procedure等）を保存する。verify合格後に登録を検討する。',
             '- review_task: コード差分・ドキュメント・計画のレビュー。知識注入型。',
             '- doctor: ランタイム状態・DB接続・メタデータ整合性の診断。',
+            '- memory_search / memory_fetch: context 圧縮後に過去会話・作業断片・保存回答の詳細確認が必要な場合の補助導線。',
+            '  - まず agentic_search / search_knowledge / review_task で足りるか確認する',
+            '  - 圧縮summaryだけでは足りない場合に memory_search で候補を薄く見て、必要な候補だけ memory_fetch で部分取得する',
+            '  - raw memory は補助情報であり、現行ファイル・ユーザー指示・entity knowledge と照合する',
             '',
             '## Commit時の登録ルール',
             '',
@@ -573,5 +613,33 @@ export const agentFirstTools: ToolEntry[] = [
         content: [{ type: 'text', text: JSON.stringify({ ...runtime, staleMetadata }, null, 2) }],
       };
     },
+  },
+  {
+    name: 'memory_search',
+    description:
+      'vibe_memories の raw memory を vector/LIKE/hybrid で薄いsnippet一覧として取得する。',
+    inputSchema: zodToJsonSchema(memorySearchSchema) as Record<string, unknown>,
+    handler: async (args) => ({
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(await memorySearchRunner(memorySearchSchema.parse(args)), null, 2),
+        },
+      ],
+    }),
+  },
+  {
+    name: 'memory_fetch',
+    description:
+      'vibe_memories の指定memoryから必要範囲だけを取得する。start/end または query 周辺を使う。',
+    inputSchema: zodToJsonSchema(memoryFetchSchema) as Record<string, unknown>,
+    handler: async (args) => ({
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(await memoryFetchRunner(memoryFetchSchema.parse(args)), null, 2),
+        },
+      ],
+    }),
   },
 ];

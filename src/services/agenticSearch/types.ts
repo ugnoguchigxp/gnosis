@@ -1,4 +1,12 @@
-export type AgenticSearchToolName = 'knowledge_search' | 'brave_search' | 'fetch';
+export const AGENTIC_SEARCH_TOOL_NAMES = [
+  'knowledge_search',
+  'brave_search',
+  'fetch',
+  'memory_search',
+  'memory_fetch',
+] as const;
+
+export type AgenticSearchToolName = (typeof AGENTIC_SEARCH_TOOL_NAMES)[number];
 
 export type AgenticToolCall = {
   id: string;

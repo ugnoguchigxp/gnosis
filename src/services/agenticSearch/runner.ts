@@ -19,6 +19,7 @@ import type {
   AgenticSearchTrace,
   AgenticToolResult,
 } from './types.js';
+import { AGENTIC_SEARCH_TOOL_NAMES } from './types.js';
 
 export type AgenticSearchRunnerInput = {
   userRequest: string;
@@ -83,8 +84,10 @@ type KnowledgeFallbackItem = {
   retrievalSource?: string;
 };
 
+const agenticSearchToolNameSet = new Set<string>(AGENTIC_SEARCH_TOOL_NAMES);
+
 function isAgenticSearchToolName(value: unknown): value is AgenticSearchToolName {
-  return value === 'knowledge_search' || value === 'brave_search' || value === 'fetch';
+  return typeof value === 'string' && agenticSearchToolNameSet.has(value);
 }
 
 function toAgenticSearchMessages(messages: AgenticLoopMessage[]): AgenticSearchMessage[] {
@@ -407,6 +410,7 @@ export class AgenticSearchRunner {
         '第一ラウンドの knowledge_search と brave_search の結果を両方受け取った。',
         'この2つを比較して、回答に十分かを判断する。',
         '不足なら fetch を使って根拠を補完する。',
+        'memory_search / memory_fetch は context 圧縮後の raw memory 補助確認が必要な場合だけ使う。',
       ].join('\n'),
     });
 
@@ -429,14 +433,19 @@ export class AgenticSearchRunner {
           };
         },
         executeTool: async (call) => {
+          if (!isAgenticSearchToolName(call.name)) {
+            throw new Error(
+              `invalid_agentic_tool_message_sequence: unknown tool call ${call.name}`,
+            );
+          }
           const result = await executeToolCall(this.executors, {
             id: call.id,
-            name: call.name as 'knowledge_search' | 'brave_search' | 'fetch',
+            name: call.name,
             arguments: call.arguments,
           });
           trace.toolCalls.push({
             toolCallId: call.id,
-            toolName: call.name as 'knowledge_search' | 'brave_search' | 'fetch',
+            toolName: call.name,
             arguments: call.arguments,
             ok: result.ok,
             errorCode: result.error?.code,
@@ -445,9 +454,14 @@ export class AgenticSearchRunner {
         },
         onToolBatchComplete: (toolCalls) =>
           toolCalls
-            .map((call) =>
-              buildToolFollowupContext(call.name as 'knowledge_search' | 'brave_search' | 'fetch'),
-            )
+            .map((call) => {
+              if (!isAgenticSearchToolName(call.name)) {
+                throw new Error(
+                  `invalid_agentic_tool_message_sequence: unknown tool call ${call.name}`,
+                );
+              }
+              return buildToolFollowupContext(call.name);
+            })
             .join('\n\n'),
       });
 

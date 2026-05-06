@@ -22,7 +22,7 @@ await agentic_search({
 
 - MCP shared host と `review_task` timeout の過去修復。
 - degraded result を clean pass に丸めない review semantics。
-- primary tool surface は `initial_instructions / agentic_search / search_knowledge / record_task_note / review_task / doctor` に固定する方針。
+- primary tool surface は `initial_instructions / agentic_search / search_knowledge / record_task_note / review_task / doctor / memory_search / memory_fetch` に固定する方針。memory 系2件は context 圧縮回避の補助用途。
 
 ## degraded の読み方
 

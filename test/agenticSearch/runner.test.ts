@@ -36,6 +36,8 @@ describe('AgenticSearchRunner', () => {
         knowledge_search: async () => ({}),
         brave_search: async () => ({}),
         fetch: async () => ({}),
+        memory_search: async () => ({}),
+        memory_fetch: async () => ({}),
       },
       6,
       mockLookupFailureFirewallContext as never,
@@ -63,6 +65,8 @@ describe('AgenticSearchRunner', () => {
         knowledge_search: async () => ({ items: [{ id: '1' }] }),
         brave_search: async () => ({}),
         fetch: async () => ({}),
+        memory_search: async () => ({}),
+        memory_fetch: async () => ({}),
       },
       6,
       mockLookupFailureFirewallContext as never,
@@ -98,6 +102,8 @@ describe('AgenticSearchRunner', () => {
         knowledge_search: async () => ({}),
         brave_search: async () => ({ results: [{ url: 'https://example.com/doc' }] }),
         fetch: async () => ({ text: 'bun test --watch ...' }),
+        memory_search: async () => ({}),
+        memory_fetch: async () => ({}),
       },
       6,
       mockLookupFailureFirewallContext as never,
@@ -107,6 +113,62 @@ describe('AgenticSearchRunner', () => {
     expect(result.toolTrace.toolCalls.length).toBe(4);
     expect(result.toolTrace.toolCalls[2]?.toolName).toBe('brave_search');
     expect(result.toolTrace.toolCalls[3]?.toolName).toBe('fetch');
+  });
+
+  it('executes memory_search and memory_fetch only when the model asks for raw memory context', async () => {
+    const adapter = {
+      generate: mock()
+        .mockResolvedValueOnce({
+          text: '',
+          toolCalls: [
+            {
+              id: 'm-search',
+              name: 'memory_search',
+              arguments: { query: 'compressed context', mode: 'like' },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          text: '',
+          toolCalls: [
+            {
+              id: 'm-fetch',
+              name: 'memory_fetch',
+              arguments: { id: 'memory-1', query: 'compressed context', maxChars: 1000 },
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ text: 'raw memory checked', toolCalls: [] }),
+    };
+    const memorySearch = mock(async () => ({ items: [{ id: 'memory-1' }] }));
+    const memoryFetch = mock(async () => ({ text: 'excerpt' }));
+    const runner = new AgenticSearchRunner(
+      adapter as never,
+      {
+        knowledge_search: async () => ({}),
+        brave_search: async () => ({}),
+        fetch: async () => ({}),
+        memory_search: memorySearch,
+        memory_fetch: memoryFetch,
+      },
+      6,
+      mockLookupFailureFirewallContext as never,
+    );
+    const result = await runner.run({ userRequest: '圧縮前の文脈を確認' });
+
+    expect(result.answer).toBe('raw memory checked');
+    expect(memorySearch).toHaveBeenCalledWith({ query: 'compressed context', mode: 'like' });
+    expect(memoryFetch).toHaveBeenCalledWith({
+      id: 'memory-1',
+      query: 'compressed context',
+      maxChars: 1000,
+    });
+    expect(result.toolTrace.toolCalls.map((call) => call.toolName)).toEqual([
+      'knowledge_search',
+      'brave_search',
+      'memory_search',
+      'memory_fetch',
+    ]);
   });
 
   it('appends all tool messages before followup system context', async () => {
@@ -132,6 +194,8 @@ describe('AgenticSearchRunner', () => {
         knowledge_search: async () => ({ items: [] }),
         brave_search: async () => ({}),
         fetch: async () => ({}),
+        memory_search: async () => ({}),
+        memory_fetch: async () => ({}),
       },
       6,
       mockLookupFailureFirewallContext as never,
@@ -146,6 +210,8 @@ describe('AgenticSearchRunner', () => {
     const knowledgeSearch = mock(async () => ({ items: [] }));
     const braveSearch = mock(async () => ({ results: [] }));
     const fetchTool = mock(async () => ({}));
+    const memorySearch = mock(async () => ({}));
+    const memoryFetch = mock(async () => ({}));
     const adapter = {
       generate: mock(async () => ({ text: 'done', toolCalls: [] })),
     };
@@ -155,6 +221,8 @@ describe('AgenticSearchRunner', () => {
         knowledge_search: knowledgeSearch,
         brave_search: braveSearch,
         fetch: fetchTool,
+        memory_search: memorySearch,
+        memory_fetch: memoryFetch,
       },
       6,
       mockLookupFailureFirewallContext as never,
@@ -163,6 +231,8 @@ describe('AgenticSearchRunner', () => {
     expect(knowledgeSearch).toHaveBeenCalledTimes(1);
     expect(braveSearch).toHaveBeenCalledTimes(1);
     expect(fetchTool).not.toHaveBeenCalled();
+    expect(memorySearch).not.toHaveBeenCalled();
+    expect(memoryFetch).not.toHaveBeenCalled();
   });
 
   it('passes prefetch results as compact context instead of tool messages', async () => {
@@ -189,6 +259,8 @@ describe('AgenticSearchRunner', () => {
         }),
         brave_search: async () => ({ results: [{ title: 'Result', url: 'https://example.com' }] }),
         fetch: async () => ({}),
+        memory_search: async () => ({}),
+        memory_fetch: async () => ({}),
       },
       6,
       mockLookupFailureFirewallContext as never,
@@ -232,6 +304,8 @@ describe('AgenticSearchRunner', () => {
         }),
         brave_search: async () => ({ results: [] }),
         fetch: async () => ({}),
+        memory_search: async () => ({}),
+        memory_fetch: async () => ({}),
       },
       6,
       mockLookupFailureFirewallContext as never,
@@ -262,6 +336,8 @@ describe('AgenticSearchRunner', () => {
           degraded: { code: 'BRAVE_API_KEY_MISSING', message: 'BRAVE_SEARCH_API_KEY not set' },
         }),
         fetch: async () => ({}),
+        memory_search: async () => ({}),
+        memory_fetch: async () => ({}),
       },
       6,
       mockLookupFailureFirewallContext as never,
@@ -324,6 +400,8 @@ describe('AgenticSearchRunner', () => {
         knowledge_search: async () => ({ items: [] }),
         brave_search: async () => ({ results: [] }),
         fetch: async () => ({}),
+        memory_search: async () => ({}),
+        memory_fetch: async () => ({}),
       },
       6,
       mockLookupFailureFirewallContext as never,
@@ -354,6 +432,8 @@ describe('AgenticSearchRunner', () => {
         knowledge_search: async () => ({ items: [] }),
         brave_search: async () => ({ results: [] }),
         fetch: async () => ({}),
+        memory_search: async () => ({}),
+        memory_fetch: async () => ({}),
       },
       6,
       mockLookupFailureFirewallContext as never,
@@ -376,6 +456,8 @@ describe('AgenticSearchRunner', () => {
         knowledge_search: async () => ({ items: [] }),
         brave_search: async () => ({ results: [] }),
         fetch: async () => ({}),
+        memory_search: async () => ({}),
+        memory_fetch: async () => ({}),
       },
       6,
       mockLookupFailureFirewallContext as never,
@@ -415,6 +497,8 @@ describe('AgenticSearchRunner', () => {
           degraded: { code: 'BRAVE_API_KEY_MISSING', message: 'BRAVE_SEARCH_API_KEY not set' },
         }),
         fetch: async () => ({}),
+        memory_search: async () => ({}),
+        memory_fetch: async () => ({}),
       },
       6,
       mockLookupFailureFirewallContext as never,

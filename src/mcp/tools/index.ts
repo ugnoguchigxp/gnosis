@@ -10,6 +10,8 @@ const PRIMARY_TOOL_NAMES = new Set<string>([
   'record_task_note',
   'review_task',
   'doctor',
+  'memory_search',
+  'memory_fetch',
 ]);
 
 export function getExposedToolEntries(): ToolEntry[] {

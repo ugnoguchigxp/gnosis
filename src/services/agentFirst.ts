@@ -52,6 +52,8 @@ export const REQUIRED_PRIMARY_TOOLS = [
   'record_task_note',
   'review_task',
   'doctor',
+  'memory_search',
+  'memory_fetch',
 ] as const;
 
 export type SearchKnowledgeV2Input = {

@@ -16,6 +16,20 @@ export function buildToolFollowupContext(toolName: AgenticSearchToolName): strin
       '根拠不足なら fetch で本文取得する。',
     ].join('\n');
   }
+  if (toolName === 'memory_search') {
+    return [
+      'memory_search結果を読んで次を判断する。',
+      'これは context 圧縮で欠けた過去会話・作業断片を補助確認する raw memory 導線であり、entity knowledge の代替ではない。',
+      '必要な候補だけ memory_fetch で部分取得し、現行ファイル・ユーザー指示・entity knowledge と照合して使う。',
+    ].join('\n');
+  }
+  if (toolName === 'memory_fetch') {
+    return [
+      'memory_fetch結果を読んで次を判断する。',
+      '返された excerpt は raw memory の必要部分だけであり、現在の実装事実としては扱わない。',
+      '判断に使う場合は、現行ファイルまたは明示的なユーザー指示と照合する。',
+    ].join('\n');
+  }
   return [
     'fetch結果を読んで次を判断する。',
     '本文の事実だけで回答する。',

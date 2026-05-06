@@ -11,6 +11,8 @@ export function buildInitialSystemContext(): string {
     '質問がプロジェクト固有の依頼であると明示される場合だけ、repo文脈を使う。',
     '実装Tips・設計判断・デバッグ手順を聞かれた場合、最初に knowledge_search を使う。',
     'knowledge_search は普段の経験由来 entity と KnowFlow 調査済み concept entity を同じ知識面として扱う。',
+    'memory_search / memory_fetch は context 圧縮で落ちた可能性のある raw memory を補助確認するためだけに使う。通常の知識取得は agentic_search / knowledge_search を優先する。',
+    'raw memory は未承認の過去断片として扱い、現行ファイル・ユーザー指示・entity knowledge と照合してから使う。',
     '最新仕様・現在時点・外部ライブラリ情報が必要な場合、brave_search を使う。',
     'brave_search の snippet だけで根拠不足なら fetch を使って本文確認する。',
     'knowledge_search の結果が空、または根拠として不足する場合は、brave_search に切り替えて根拠を補強する。',

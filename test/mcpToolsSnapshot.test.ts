@@ -42,6 +42,8 @@ describe('mcp tools snapshot', () => {
       'agentic_search',
       'search_knowledge',
       'record_task_note',
+      'memory_search',
+      'memory_fetch',
       'review_task',
       'doctor',
     ];
@@ -56,6 +58,8 @@ describe('mcp tools snapshot', () => {
       agentic_search: '1e0239515175b5776e895a6a6da6699b104e8481cbc04782e99b81416f489fb7',
       search_knowledge: '35792c61001cf98ee29ab4c34dcd491c6c1943b22b231f11a21a9c8626fafd9c',
       record_task_note: 'ca8d0edcfc100edab186357063837c399dce74417b0b7f66e00936fc6646e31f',
+      memory_search: '776f7836405be9fc75414b30d6c6dfcecc4d31c3e936c6b45928d628dde62b1e',
+      memory_fetch: 'f81c86b40b399ad38d6f3ae3abe22c51dfee80ac51a863c9025e14829a4ddff2',
       review_task: '23cb3d514b29c96c48739d2c354a2dbee34359405457898754534c52057ff193',
       doctor: '88e8588dd15d3a3a37e74a5f773ba67070df971090caa47384250ca512efc8e3',
     });

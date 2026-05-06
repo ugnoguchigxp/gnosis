@@ -10,7 +10,8 @@ const filePattern = /(?:\/[\w./-]+|\b(?:src|apps|docs|test)\/[\w./-]+)/g;
 const errorPattern = /(?:\bError:|\bfailed\b|MCP_HOST_ERROR|stack trace)/i;
 const passPattern = /(?:\bpass\b|verify passed|0 fail|svelte-check|typecheck)/i;
 const decisionPattern = /(別 table|自動登録しない|承認後に登録|昇格|keep|drop)/i;
-const toolPattern = /\b(agentic_search|review_task|record_task_note|search_knowledge|doctor)\b/g;
+const toolPattern =
+  /\b(agentic_search|review_task|record_task_note|search_knowledge|memory_search|memory_fetch|doctor)\b/g;
 
 function dedupeByText<T extends { text?: string; label?: string }>(items: T[]): T[] {
   const seen = new Set<string>();

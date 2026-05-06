@@ -19,7 +19,7 @@ Codex 再起動後の MCP smoke test では、`initial_instructions`, `doctor`, 
 3. Local LLM を明示指定した場合、遅い/壊れている状態でも MCP call を timeout させず structured degraded result を返す。
 4. `knowledgeUsed` は実際に review prompt / guidance に渡した knowledge と一致させる。
 5. `agentic_search` が degraded のとき、未選別候補をレビューに注入しない。
-6. 旧 lifecycle tool を復活させず、公開面は `initial_instructions / agentic_search / search_knowledge / record_task_note / review_task / doctor` のまま維持する。
+6. 旧 lifecycle tool を復活させず、公開面は Agent-First 主導線と補助導線（`initial_instructions / agentic_search / search_knowledge / record_task_note / review_task / doctor / memory_search / memory_fetch`）に維持する。
 
 ## 現状の問題
 
@@ -225,7 +225,7 @@ bun run verify
 Manual MCP smoke:
 
 1. `initial_instructions` が primary tool 方針を返す。
-2. `doctor` が exposedToolCount 6, missingPrimaryTools [] を返す。
+2. `doctor` が exposedToolCount 8, missingPrimaryTools [] を返す。
 3. `agentic_search` で Gemma4 timeout 時に `degraded` + `usedKnowledge: []` になる。
 4. `review_task` provider 未指定で `OPENAI_API_KEY` error にならず、Azure OpenAI 設定を使う。
 5. `review_task` provider local で local LLM failure が structured degraded result になる。

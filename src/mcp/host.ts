@@ -34,6 +34,17 @@ type HostOptions = {
   exit?: (code: number) => void;
 };
 
+function hostLog(event: string, fields: Record<string, unknown> = {}): void {
+  console.error(
+    `[McpHost] ${JSON.stringify({
+      ts: new Date().toISOString(),
+      event,
+      pid: process.pid,
+      ...fields,
+    })}`,
+  );
+}
+
 function writeResponse(socket: Socket, response: McpHostResponse): boolean {
   if (socket.destroyed || !socket.writable) return false;
   return socket.write(`${JSON.stringify(response)}${MCP_HOST_MESSAGE_DELIMITER}`);
@@ -103,12 +114,15 @@ async function waitForExistingHostExit(
 
 async function replaceExistingHost(rootDir: string, socketPath?: string): Promise<void> {
   try {
+    hostLog('replace_existing_start', { rootDir, socketPath });
     await sendMcpHostRequest({ type: 'shutdown' }, { rootDir, socketPath, timeoutMs: 1000 });
   } catch (error) {
     if (!(await existingHostIsHealthy(rootDir, socketPath))) return;
+    hostLog('replace_existing_error', { rootDir, socketPath, error: toErrorMessage(error) });
     throw error;
   }
   await waitForExistingHostExit(rootDir, socketPath);
+  hostLog('replace_existing_complete', { rootDir, socketPath });
 }
 
 async function acquireHostLock(
@@ -131,14 +145,32 @@ async function acquireHostLock(
       const startedAt = Date.now();
       const lockContent = existsSync(lockPath) ? readFileSync(lockPath, 'utf8').trim() : '';
       const existingPid = Number.parseInt(lockContent, 10);
+      hostLog('lock_busy', {
+        rootDir,
+        lockPath,
+        existingPid,
+        replaceExisting: options.replaceExisting,
+      });
 
       while (Date.now() - startedAt < 10000) {
         const existingHealth = await getExistingHostHealth(rootDir, options.socketPath);
         if (existingHealth) {
           if (options.replaceExisting || !existingHostMatchesCurrentSource(existingHealth)) {
+            hostLog('lock_replacing_existing_host', {
+              rootDir,
+              existingPid: existingHealth.pid,
+              existingFingerprint: existingHealth.sourceFingerprint ?? null,
+              currentFingerprint: MCP_HOST_SOURCE_FINGERPRINT,
+              replaceExisting: options.replaceExisting,
+            });
             await replaceExistingHost(rootDir, options.socketPath);
             break;
           }
+          hostLog('lock_existing_host_current', {
+            rootDir,
+            existingPid: existingHealth.pid,
+            sourceFingerprint: existingHealth.sourceFingerprint ?? null,
+          });
           process.exit(0);
         }
 
@@ -152,6 +184,7 @@ async function acquireHostLock(
 
       // プロセスが生きているのに応答がない場合は、そちらに任せて終了する
       if (!Number.isNaN(existingPid) && isProcessAlive(existingPid)) {
+        hostLog('lock_owner_alive_without_health', { rootDir, lockPath, existingPid });
         process.exit(0);
       }
 
@@ -176,6 +209,14 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
   const replaceExisting = envBoolean(process.env.GNOSIS_MCP_HOST_REPLACE_EXISTING, false);
   const existingHealth = await getExistingHostHealth(rootDir, socketPath);
   if (existingHealth) {
+    hostLog('existing_host_detected', {
+      rootDir,
+      socketPath,
+      existingPid: existingHealth.pid,
+      existingFingerprint: existingHealth.sourceFingerprint ?? null,
+      currentFingerprint: MCP_HOST_SOURCE_FINGERPRINT,
+      replaceExisting,
+    });
     if (!replaceExisting && existingHostMatchesCurrentSource(existingHealth)) process.exit(0);
     await replaceExistingHost(rootDir, socketPath);
   }
@@ -263,8 +304,14 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
     let buffer = '';
     let socketActiveRequests = 0;
     totalConnections += 1;
+    const connectionId = `${process.pid}-${Date.now()}-${totalConnections}`;
 
     if (activeSockets.size >= maxConnections) {
+      hostLog('connection_rejected', {
+        connectionId,
+        activeConnections: activeSockets.size,
+        maxConnections,
+      });
       writeResponse(socket, {
         id: 'connection',
         ok: false,
@@ -276,6 +323,11 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
 
     activeSockets.add(socket);
     lastActivityAt = Date.now();
+    hostLog('connection_open', {
+      connectionId,
+      activeConnections: activeSockets.size,
+      totalConnections,
+    });
 
     if (socketIdleTimeoutMs > 0) {
       socket.setTimeout(socketIdleTimeoutMs, () => {
@@ -293,10 +345,15 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
     socket.on('close', () => {
       activeSockets.delete(socket);
       lastActivityAt = Date.now();
+      hostLog('connection_close', {
+        connectionId,
+        activeConnections: activeSockets.size,
+        socketActiveRequests,
+      });
     });
 
     socket.on('error', (error) => {
-      console.error(`[McpHost] Socket error: ${toErrorMessage(error)}`);
+      hostLog('socket_error', { connectionId, error: toErrorMessage(error) });
     });
 
     socket.on('data', (chunk) => {
@@ -306,7 +363,7 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
 
       for (const part of parts) {
         if (!part.trim()) continue;
-        void handleRawMessage(socket, part, {
+        void handleRawMessage(socket, part, connectionId, {
           begin: () => {
             socketActiveRequests += 1;
           },
@@ -321,6 +378,7 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
   async function handleRawMessage(
     socket: Socket,
     raw: string,
+    connectionId: string,
     hooks: { begin: () => void; end: () => void },
   ): Promise<void> {
     let request: McpHostRequest;
@@ -339,6 +397,16 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
     activeRequests += 1;
     lastActivityAt = Date.now();
     let finished = false;
+    const requestStartedAt = Date.now();
+    const requestLabel =
+      request.type === 'callTool' ? `${request.type}:${request.name}` : request.type;
+    hostLog('request_start', {
+      connectionId,
+      requestId: request.id,
+      requestType: request.type,
+      requestLabel,
+      activeRequests,
+    });
     const finish = () => {
       if (finished) return;
       finished = true;
@@ -348,7 +416,15 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
     };
     const respond = (response: McpHostResponse) => {
       if (finished) return;
-      writeResponse(socket, response);
+      const written = writeResponse(socket, response);
+      hostLog('response_write', {
+        connectionId,
+        requestId: request.id,
+        requestType: request.type,
+        ok: response.ok,
+        written,
+        durationMs: Date.now() - requestStartedAt,
+      });
     };
     const abortController = new AbortController();
     const requestTimer =
@@ -356,6 +432,12 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
         ? setTimeout(() => {
             timedOutRequests += 1;
             abortController.abort();
+            hostLog('request_timeout', {
+              connectionId,
+              requestId: request.id,
+              requestType: request.type,
+              timeoutMs: requestTimeoutMs,
+            });
             respond({
               id: request.id,
               ok: false,
@@ -405,6 +487,7 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
       }
       if (request.type === 'shutdown') {
         respond({ id: request.id, ok: true, result: null });
+        hostLog('shutdown_requested', { connectionId, requestId: request.id });
         void lifecycle.requestShutdown('manual');
         return;
       }
@@ -423,9 +506,22 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
         error: 'Unknown host request type',
       });
     } catch (error) {
+      hostLog('request_error', {
+        connectionId,
+        requestId: request.id,
+        requestType: request.type,
+        error: toErrorMessage(error),
+        durationMs: Date.now() - requestStartedAt,
+      });
       respond({ id: request.id, ok: false, error: toErrorMessage(error) });
     } finally {
       if (requestTimer) clearTimeout(requestTimer);
+      hostLog('request_end', {
+        connectionId,
+        requestId: request.id,
+        requestType: request.type,
+        durationMs: Date.now() - requestStartedAt,
+      });
       finish();
     }
   }
@@ -455,6 +551,14 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
     server.listen(socketPath, () => {
       server.off('error', reject);
       console.error(`[McpHost] Listening on ${socketPath}`);
+      hostLog('listening', {
+        rootDir,
+        socketPath,
+        sourceFingerprint: MCP_HOST_SOURCE_FINGERPRINT,
+        requestTimeoutMs,
+        socketIdleTimeoutMs,
+        services: router.serviceNames(),
+      });
       resolve();
     });
   });
