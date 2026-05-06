@@ -56,7 +56,7 @@ describe('mcp tools snapshot', () => {
       agentic_search: '1e0239515175b5776e895a6a6da6699b104e8481cbc04782e99b81416f489fb7',
       search_knowledge: '35792c61001cf98ee29ab4c34dcd491c6c1943b22b231f11a21a9c8626fafd9c',
       record_task_note: 'fd6303dccdba8c73a7aafaf3115bf84ba1c667c1b6a9f6f455345d99ca887572',
-      review_task: '925194479c1be2a6c38edf47fa80c92f04e62b901317fe8bacff75018bfff032',
+      review_task: '23cb3d514b29c96c48739d2c354a2dbee34359405457898754534c52057ff193',
       doctor: '88e8588dd15d3a3a37e74a5f773ba67070df971090caa47384250ca512efc8e3',
     });
   });

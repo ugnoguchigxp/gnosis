@@ -35,6 +35,23 @@ export type KnowFlowSnapshot = {
   lastFailureTs: number | null;
 };
 
+export type QualityGateRecord = {
+  status: 'passed' | 'failed' | 'unknown';
+  updatedAtTs: number | null;
+  message: string | null;
+};
+
+export type QualityGateSnapshot = {
+  doctor: QualityGateRecord;
+  doctorStrict: QualityGateRecord;
+  onboardingSmoke: QualityGateRecord;
+  smoke: QualityGateRecord;
+  verifyFast: QualityGateRecord;
+  verify: QualityGateRecord;
+  verifyStrict: QualityGateRecord;
+  mcpContract: QualityGateRecord;
+};
+
 export type MonitorSnapshotData = {
   queue: QueueSnapshot;
   embeddingQueue: QueueSnapshot;
@@ -42,6 +59,7 @@ export type MonitorSnapshotData = {
   eval: EvalSnapshot;
   automation: AutomationSnapshot;
   knowflow: KnowFlowSnapshot;
+  qualityGates: QualityGateSnapshot;
   taskIndex: TaskIndexEntry[];
 };
 

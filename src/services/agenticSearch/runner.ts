@@ -13,7 +13,7 @@ import {
   executeToolCall,
   listAgenticSearchToolSpecs,
 } from './toolRegistry.js';
-import type { AgenticSearchMessage, AgenticSearchTrace } from './types.js';
+import type { AgenticSearchMessage, AgenticSearchTrace, AgenticToolResult } from './types.js';
 
 export type AgenticSearchRunnerInput = {
   userRequest: string;
@@ -67,6 +67,98 @@ function shouldPrefetchFailureFirewallContext(input: AgenticSearchRunnerInput): 
     return false;
   }
   return true;
+}
+
+type KnowledgeFallbackItem = {
+  id?: string;
+  type?: string;
+  title: string;
+  content: string;
+  score?: number;
+  retrievalSource?: string;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function toKnowledgeFallbackItem(value: unknown): KnowledgeFallbackItem | null {
+  if (!isRecord(value)) return null;
+  const title = typeof value.title === 'string' ? value.title.trim() : '';
+  const content = typeof value.content === 'string' ? value.content.trim() : '';
+  if (title.length === 0 && content.length === 0) return null;
+  const idForTitle =
+    typeof value.id === 'string' || typeof value.id === 'number' ? String(value.id) : 'untitled';
+  return {
+    id: typeof value.id === 'string' ? value.id : undefined,
+    type: typeof value.type === 'string' ? value.type : undefined,
+    title: title || idForTitle,
+    content,
+    score: typeof value.score === 'number' ? value.score : undefined,
+    retrievalSource: typeof value.retrievalSource === 'string' ? value.retrievalSource : undefined,
+  };
+}
+
+function truncateForFallback(text: string, limit: number): string {
+  const compact = text.replace(/\s+/g, ' ').trim();
+  if (compact.length <= limit) return compact;
+  return `${compact.slice(0, limit - 1)}...`;
+}
+
+function buildKnowledgeFallbackAnswer(
+  results: AgenticToolResult[],
+  reason: string,
+): string | undefined {
+  const items = results
+    .filter((result) => result.ok && result.toolName === 'knowledge_search')
+    .flatMap((result) => {
+      const rawItems = Array.isArray(result.output?.items) ? result.output.items : [];
+      return rawItems
+        .map(toKnowledgeFallbackItem)
+        .filter((item): item is KnowledgeFallbackItem => item !== null);
+    })
+    .slice(0, 5);
+
+  if (items.length === 0) return undefined;
+
+  const renderedItems = items
+    .map((item, index) => {
+      const meta = [
+        item.id ? `id=${item.id}` : undefined,
+        item.type ? `type=${item.type}` : undefined,
+        item.retrievalSource ? `source=${item.retrievalSource}` : undefined,
+        typeof item.score === 'number' ? `score=${item.score.toFixed(3)}` : undefined,
+      ]
+        .filter((part): part is string => Boolean(part))
+        .join(', ');
+      const title = truncateForFallback(item.title, 100);
+      const content = truncateForFallback(item.content, 280);
+      return `${index + 1}. ${title}${meta ? ` (${meta})` : ''}\n   ${
+        content || '(content empty)'
+      }`;
+    })
+    .join('\n');
+
+  return [
+    'LLM による最終回答生成は完了しませんでしたが、Gnosis knowledge には関連候補があります。',
+    '',
+    renderedItems,
+    '',
+    `degradedReason: ${reason}`,
+    '上記は raw 候補に基づく限定回答です。採用判断や実装前には、該当ファイルまたは一次情報で確認してください。',
+  ].join('\n');
+}
+
+function classifyAgenticLoopFailureCode(message: string): string {
+  if (/tool_calling_unsupported/i.test(message)) return 'TOOL_CALLING_UNSUPPORTED';
+  if (
+    /reached maximum agentic rounds|maximum agentic rounds|max(?:imum)?(?: agentic)? (?:tool )?loops?|reached max loops/i.test(
+      message,
+    )
+  ) {
+    return 'MAX_TOOL_LOOPS_REACHED';
+  }
+  return 'AGENTIC_LOOP_FAILED';
 }
 
 export class AgenticSearchRunner {
@@ -205,6 +297,15 @@ export class AgenticSearchRunner {
         }
         return { answer, toolTrace: trace, usage, savedMemoryId };
       }
+      const fallback = buildKnowledgeFallbackAnswer(prefetchResults, 'EMPTY_ASSISTANT_RESPONSE');
+      if (fallback) {
+        return {
+          answer: fallback,
+          toolTrace: trace,
+          degraded: { code: 'EMPTY_ASSISTANT_RESPONSE', message: 'No text and no tool calls' },
+          usage,
+        };
+      }
       return {
         answer: '結果が見つかりませんでした。',
         toolTrace: trace,
@@ -212,12 +313,27 @@ export class AgenticSearchRunner {
         usage,
       };
     } catch (error) {
+      const message =
+        error instanceof Error ? error.message : `Reached max loops (${this.maxLoops})`;
+      const code = classifyAgenticLoopFailureCode(message);
+      const fallback = buildKnowledgeFallbackAnswer(prefetchResults, message);
+      if (fallback) {
+        return {
+          answer: fallback,
+          toolTrace: trace,
+          degraded: {
+            code,
+            message,
+          },
+          usage,
+        };
+      }
       return {
         answer: '結果が見つかりませんでした。',
         toolTrace: trace,
         degraded: {
-          code: 'MAX_TOOL_LOOPS_REACHED',
-          message: error instanceof Error ? error.message : `Reached max loops (${this.maxLoops})`,
+          code,
+          message,
         },
         usage,
       };

@@ -104,6 +104,52 @@ impl Default for KnowFlowSnapshot {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct QualityGateRecord {
+    pub status: String,
+    pub updated_at_ts: Option<i64>,
+    pub message: Option<String>,
+}
+
+impl Default for QualityGateRecord {
+    fn default() -> Self {
+        Self {
+            status: "unknown".to_string(),
+            updated_at_ts: None,
+            message: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct QualityGateSnapshot {
+    pub doctor: QualityGateRecord,
+    pub doctor_strict: QualityGateRecord,
+    pub onboarding_smoke: QualityGateRecord,
+    pub smoke: QualityGateRecord,
+    pub verify_fast: QualityGateRecord,
+    pub verify: QualityGateRecord,
+    pub verify_strict: QualityGateRecord,
+    pub mcp_contract: QualityGateRecord,
+}
+
+impl Default for QualityGateSnapshot {
+    fn default() -> Self {
+        Self {
+            doctor: QualityGateRecord::default(),
+            doctor_strict: QualityGateRecord::default(),
+            onboarding_smoke: QualityGateRecord::default(),
+            smoke: QualityGateRecord::default(),
+            verify_fast: QualityGateRecord::default(),
+            verify: QualityGateRecord::default(),
+            verify_strict: QualityGateRecord::default(),
+            mcp_contract: QualityGateRecord::default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct MonitorSnapshotData {
@@ -113,6 +159,7 @@ pub struct MonitorSnapshotData {
     pub eval: EvalSnapshot,
     pub automation: AutomationSnapshot,
     pub knowflow: KnowFlowSnapshot,
+    pub quality_gates: QualityGateSnapshot,
     pub task_index: Vec<TaskIndexEntry>,
 }
 
@@ -125,6 +172,7 @@ impl Default for MonitorSnapshotData {
             eval: EvalSnapshot::default(),
             automation: AutomationSnapshot::default(),
             knowflow: KnowFlowSnapshot::default(),
+            quality_gates: QualityGateSnapshot::default(),
             task_index: Vec::new(),
         }
     }
@@ -195,6 +243,8 @@ pub struct SnapshotCliPayload {
     #[serde(default)]
     pub knowflow: KnowFlowSnapshot,
     #[serde(default)]
+    pub quality_gates: QualityGateSnapshot,
+    #[serde(default)]
     pub task_index: Vec<TaskIndexEntry>,
 }
 
@@ -209,6 +259,7 @@ impl From<SnapshotCliPayload> for SnapshotEnvelope {
                 eval: value.eval,
                 automation: value.automation,
                 knowflow: value.knowflow,
+                quality_gates: value.quality_gates,
                 task_index: value.task_index,
             },
         }

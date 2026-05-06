@@ -247,4 +247,39 @@ describe('AgenticSearchRunner', () => {
     expect(result.answer).toBe('final answer');
     expect(result.savedMemoryId).toBeUndefined();
   });
+
+  it('returns knowledge fallback when LLM finalization fails after prefetch', async () => {
+    const adapter = {
+      generate: mock(async () => {
+        throw new Error('tool_calling_unsupported');
+      }),
+    };
+    const runner = new AgenticSearchRunner(
+      adapter as never,
+      {
+        knowledge_search: async () => ({
+          items: [
+            {
+              id: 'note-1',
+              type: 'lesson',
+              title: 'Azure OpenAI is the default reviewer',
+              content: 'review_task should resolve provider openai to Azure OpenAI.',
+              score: 0.9,
+              retrievalSource: 'vector',
+            },
+          ],
+        }),
+        brave_search: async () => ({ results: [] }),
+        fetch: async () => ({}),
+      },
+      6,
+      mockLookupFailureFirewallContext as never,
+    );
+    const result = await runner.run({ userRequest: 'review_task provider policy' });
+    expect(result.answer).toContain('Gnosis knowledge には関連候補があります');
+    expect(result.answer).toContain('Azure OpenAI is the default reviewer');
+    expect(result.degraded?.code).toBe('TOOL_CALLING_UNSUPPORTED');
+    expect(result.degraded?.message).toContain('tool_calling_unsupported');
+    expect(mockSaveAgenticAnswer).not.toHaveBeenCalled();
+  });
 });

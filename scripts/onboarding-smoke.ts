@@ -3,6 +3,7 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import pkg from 'pg';
+import { recordQualityGate } from './lib/quality-gates.js';
 import { COLORS, loadLocalEnv } from './lib/quality.ts';
 
 const { Pool } = pkg;
@@ -131,10 +132,12 @@ async function run(): Promise<void> {
     await check.run();
     process.stdout.write(`${COLORS.green}✔ ${check.name}${COLORS.reset}\n`);
   }
+  recordQualityGate('onboardingSmoke', 'passed', 'bun run onboarding:smoke passed');
   process.stdout.write(`${COLORS.green}✨ onboarding:smoke passed${COLORS.reset}\n`);
 }
 
 run().catch((error) => {
   const message = error instanceof Error ? error.message : String(error);
+  recordQualityGate('onboardingSmoke', 'failed', message);
   fail(`onboarding:smoke failed\n${message}`);
 });

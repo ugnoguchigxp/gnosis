@@ -28,11 +28,28 @@ type EnrichedTimelineEvent = TimelineEvent & {
   source: string | null;
   topic: string | null;
 };
+type QualityGateKey = keyof MonitorSnapshotData['qualityGates'];
 
 const TIMELINE_PAGE_SIZE = 20;
 const TIMELINE_MAX_PAGES = 10;
 const TIMELINE_BUFFER_LIMIT = TIMELINE_PAGE_SIZE * TIMELINE_MAX_PAGES;
 const DETAIL_CACHE_LIMIT = 50;
+const QUALITY_GATE_LABELS: Array<{ key: QualityGateKey; label: string }> = [
+  { key: 'doctor', label: 'doctor' },
+  { key: 'doctorStrict', label: 'doctor strict' },
+  { key: 'onboardingSmoke', label: 'onboarding smoke' },
+  { key: 'smoke', label: 'smoke' },
+  { key: 'verifyFast', label: 'verify fast' },
+  { key: 'verify', label: 'verify' },
+  { key: 'verifyStrict', label: 'verify strict' },
+  { key: 'mcpContract', label: 'MCP contract' },
+];
+
+const emptyQualityGate = () => ({
+  status: 'unknown' as const,
+  updatedAtTs: null,
+  message: null,
+});
 
 const createInitialSnapshot = (): MonitorSnapshotData => ({
   queue: {
@@ -73,8 +90,30 @@ const createInitialSnapshot = (): MonitorSnapshotData => ({
     lastKeywordSeedTs: null,
     lastFailureTs: null,
   },
+  qualityGates: {
+    doctor: emptyQualityGate(),
+    doctorStrict: emptyQualityGate(),
+    onboardingSmoke: emptyQualityGate(),
+    smoke: emptyQualityGate(),
+    verifyFast: emptyQualityGate(),
+    verify: emptyQualityGate(),
+    verifyStrict: emptyQualityGate(),
+    mcpContract: emptyQualityGate(),
+  },
   taskIndex: [],
 });
+
+const normalizeSnapshot = (nextSnapshot: MonitorSnapshotData): MonitorSnapshotData => {
+  const fallback = createInitialSnapshot();
+  return {
+    ...fallback,
+    ...nextSnapshot,
+    qualityGates: {
+      ...fallback.qualityGates,
+      ...(nextSnapshot.qualityGates ?? {}),
+    },
+  };
+};
 
 let snapshot = $state<MonitorSnapshotData>(createInitialSnapshot());
 let timeline = $state<TimelineEvent[]>([]);
@@ -200,7 +239,9 @@ const formatBoolean = (value: boolean): string => (value ? 'on' : 'off');
 
 const statusTone = (status: string): string => {
   if (status === 'healthy') return 'connected';
+  if (status === 'passed') return 'connected';
   if (status === 'degraded') return 'offline';
+  if (status === 'failed') return 'offline';
   if (status === 'idle') return 'reconnecting';
   return '';
 };
@@ -387,7 +428,7 @@ const initialize = async (): Promise<void> => {
       callbacks: {
         onSnapshot: (nextSnapshot, ts) => {
           if (!autoUpdate) return;
-          snapshot = nextSnapshot;
+          snapshot = normalizeSnapshot(nextSnapshot);
           lastSnapshotTs = ts;
         },
         onEvent: (event) => {
@@ -577,6 +618,20 @@ onMount(() => {
 				<div class="metric"><div class="metric-label">last failure</div><div class="metric-value" style="font-size: 0.82rem;">{formatTime(snapshot.knowflow.lastFailureTs)}</div></div>
 				<div class="metric"><div class="metric-label">phrase scout</div><div class="metric-value" style="font-size: 0.82rem;">{formatTime(snapshot.knowflow.lastKeywordSeedTs)}</div></div>
 				<div class="metric" style="grid-column: span 2;"><div class="metric-label">summary</div><div class="metric-value" style="font-size: 0.78rem;">{snapshot.knowflow.lastSeedSummary ?? snapshot.knowflow.lastWorkerSummary ?? '-'}</div></div>
+			</div>
+		</section>
+
+		<section class="panel">
+			<h2>Quality Gates</h2>
+			<div class="stat-row">
+				{#each QUALITY_GATE_LABELS as gate}
+					{@const record = snapshot.qualityGates[gate.key]}
+					<div class="metric">
+						<div class="metric-label">{gate.label}</div>
+						<div class={`badge ${statusTone(record.status)}`}>{record.status}</div>
+						<div class="metric-value" style="font-size: 0.72rem; margin-top: 6px;">{formatTime(record.updatedAtTs)}</div>
+					</div>
+				{/each}
 			</div>
 		</section>
 	</div>

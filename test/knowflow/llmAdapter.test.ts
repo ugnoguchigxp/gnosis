@@ -145,6 +145,43 @@ describe('llm adapter', () => {
     ).rejects.toThrow('LLM task failed');
   });
 
+  it('uses a plain-text retry prompt after a control parse failure', async () => {
+    const prompts: string[] = [];
+    const result = await runLlmTask(
+      {
+        task: 'phrase_scout',
+        context: { context: 'review_task provider policy' },
+        requestId: 'req-control-retry',
+      },
+      {
+        config: {
+          maxRetries: 2,
+          enableCliFallback: false,
+          retryDelayMs: 0,
+        },
+        deps: {
+          loadPromptTemplate: async () => '{{context}}',
+          invokeApi: async (prompt) => {
+            prompts.push(prompt);
+            if (prompts.length === 1) {
+              return JSON.stringify({
+                response: '[System] Tool call or think block was generated but failed to parse.',
+              });
+            }
+            return 'MCP review provider routing';
+          },
+          invokeCli: async () => 'should not be used',
+          logger: noopLogger,
+        },
+      },
+    );
+
+    expect(result.text).toBe('MCP review provider routing');
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain('Retry instruction:');
+    expect(prompts[1]).toContain('Return final plain text only');
+  });
+
   it('respects maxRetries=1', async () => {
     let apiCalls = 0;
     await expect(

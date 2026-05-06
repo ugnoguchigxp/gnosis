@@ -2,7 +2,6 @@ import { Database } from 'bun:sqlite';
 import { existsSync } from 'node:fs';
 import { readFile, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { resolve as resolvePath } from 'node:path';
 import { desc, eq } from 'drizzle-orm';
 import { closeDbPool, db } from '../db/index.js';
 import { topicTasks } from '../db/schema.js';
@@ -35,6 +34,12 @@ type RawRunEvent = {
   runId?: string;
   event?: string;
   data?: Record<string, unknown>;
+};
+
+type TopicTaskDetailRow = {
+  id: string;
+  status: string;
+  payload: unknown;
 };
 
 const FALLBACK_FILE_LIMIT = 50;
@@ -166,7 +171,7 @@ const run = async (): Promise<void> => {
   const fileLimit = readNumberFlag(args, 'file-limit') ?? FALLBACK_FILE_LIMIT;
   const snippetLimit = readNumberFlag(args, 'snippet-limit') ?? FALLBACK_SNIPPET_LIMIT;
 
-  let rows: any[] = [];
+  let rows: TopicTaskDetailRow[] = [];
   try {
     rows = await db
       .select({
@@ -225,7 +230,7 @@ const run = async (): Promise<void> => {
   }
 
   // Fallback to SQLite
-  const sqlitePath = resolvePath(process.cwd(), 'data', 'gnosis-tasks.sqlite');
+  const sqlitePath = resolve(process.cwd(), 'data', 'gnosis-tasks.sqlite');
   if (existsSync(sqlitePath)) {
     const sqlite = new Database(sqlitePath);
     try {
@@ -243,11 +248,6 @@ const run = async (): Promise<void> => {
         .get(taskId);
 
       if (sqliteRow) {
-        let payload: Record<string, unknown> = {};
-        try {
-          payload = JSON.parse(sqliteRow.payload);
-        } catch {}
-
         const logs = await collectLogSnippets({
           taskId,
           logsRoot,

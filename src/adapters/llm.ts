@@ -169,7 +169,8 @@ const defaultInvokeApi = async (
         messages: [
           {
             role: 'system',
-            content: 'You are a concise assistant. Return plain text only.',
+            content:
+              'You are a concise assistant. Return final plain text only. Do not emit hidden reasoning, <think>, <|channel>, or tool-call tags.',
           },
           {
             role: 'user',
@@ -338,6 +339,18 @@ const assertModelText = (text: string): string => {
   return text;
 };
 
+const isModelControlParseFailure = (text: string): boolean =>
+  text.startsWith('[System] Tool call or think block was generated but failed to parse.');
+
+const buildPlainTextRetryPrompt = (prompt: string): string =>
+  [
+    prompt,
+    '',
+    'Retry instruction:',
+    'Your previous response contained only hidden thought/tool syntax and no usable final answer.',
+    'Return final plain text only. Do not include <think>, <|channel>, tool-call tags, analysis, bullets unless the original task asks for bullets, or explanations.',
+  ].join('\n');
+
 const renderPrompt = (
   template: string,
   task: LlmTaskName,
@@ -361,6 +374,8 @@ const attemptBackend = async (
   deps: AdapterDependencies,
   signal?: AbortSignal,
 ): Promise<{ text: string; attempt: number }> => {
+  let promptForAttempt = prompt;
+
   for (let attempt = 1; attempt <= llmConfig.maxRetries; attempt += 1) {
     if (signal?.aborted) {
       throw new Error('LLM task aborted by signal during retry loop');
@@ -377,8 +392,8 @@ const attemptBackend = async (
     try {
       const raw =
         backend === 'api'
-          ? await deps.invokeApi(prompt, llmConfig, signal, input.priority ?? 'normal')
-          : await deps.invokeCli(prompt, llmConfig, signal);
+          ? await deps.invokeApi(promptForAttempt, llmConfig, signal, input.priority ?? 'normal')
+          : await deps.invokeCli(promptForAttempt, llmConfig, signal);
 
       deps.logger({
         event: 'llm.task.raw_response',
@@ -390,7 +405,11 @@ const attemptBackend = async (
         level: 'debug',
       });
 
-      const text = assertModelText(unwrapModelEnvelope(raw).trim());
+      const unwrapped = unwrapModelEnvelope(raw).trim();
+      if (isModelControlParseFailure(unwrapped) && attempt < llmConfig.maxRetries) {
+        promptForAttempt = buildPlainTextRetryPrompt(prompt);
+      }
+      const text = assertModelText(unwrapped);
       if (text.length === 0) {
         throw new Error(`LLM ${input.task} output is empty.`);
       }

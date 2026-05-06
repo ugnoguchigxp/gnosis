@@ -10,6 +10,13 @@ import { renderOutput, resolveOutputFormat } from '../services/knowflow/utils/ou
 
 const DEFER_MINUTES_DEFAULT = 15;
 
+type TopicTaskActionRow = {
+  id: string;
+  status: string;
+  priority: number;
+  payload: unknown;
+};
+
 const run = async (): Promise<void> => {
   const args = parseArgMap(process.argv.slice(2));
   const outputFormat = resolveOutputFormat(args);
@@ -23,7 +30,7 @@ const run = async (): Promise<void> => {
     throw new Error('--task-id is required');
   }
 
-  let rows: any[] = [];
+  let rows: TopicTaskActionRow[] = [];
   try {
     // IDがUUID形式でない場合、Postgresクエリが失敗する可能性があるためtry-catchで囲む
     rows = await db

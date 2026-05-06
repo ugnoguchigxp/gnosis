@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import {
@@ -7,6 +9,12 @@ import {
   searchKnowledgeV2,
 } from '../../services/agentFirst.js';
 import { AgenticSearchRunner } from '../../services/agenticSearch/runner.js';
+import { ReviewError } from '../../services/review/errors.js';
+import { getReviewLLMService } from '../../services/review/llm/reviewer.js';
+import type { ReviewLLMPreference, ReviewLLMService } from '../../services/review/llm/types.js';
+import { runReviewAgentic } from '../../services/review/orchestrator.js';
+import type { KnowledgePolicy, ReviewMode, ReviewOutput } from '../../services/review/types.js';
+import { reviewDocument } from '../../services/reviewAgent/documentReviewer.js';
 import type { ToolEntry } from '../registry.js';
 
 const taskChangeTypes = [
@@ -114,11 +122,31 @@ const reviewTaskSchema = z.object({
     content: z.string().optional(),
     documentPath: z.string().optional(),
   }),
+  repoPath: z.string().optional(),
+  provider: z.enum(['local', 'openai', 'bedrock', 'azure-openai']).optional(),
+  reviewMode: z.enum(['fast', 'standard', 'deep']).optional(),
+  goal: z.string().optional(),
+  knowledgePolicy: z.enum(['off', 'best_effort', 'required']).optional(),
+  diffMode: z.enum(['git_diff', 'worktree']).optional(),
+  baseRef: z.string().optional(),
+  headRef: z.string().optional(),
+  sessionId: z.string().optional(),
+  enableStaticAnalysis: z.boolean().optional(),
 });
 
 type AgenticSearchRunnerLike = Pick<AgenticSearchRunner, 'run'>;
+type ReviewTaskInput = z.infer<typeof reviewTaskSchema>;
+type ReviewTaskMcpDeps = {
+  createLlmService?: (provider?: ReviewTaskInput['provider']) => Promise<ReviewLLMService>;
+  reviewDocumentFn?: typeof reviewDocument;
+  runReviewAgenticFn?: typeof runReviewAgentic;
+  now?: () => number;
+};
+
+type ReviewTaskRunnerLike = (input: ReviewTaskInput) => Promise<unknown>;
 
 let agenticSearchRunner: AgenticSearchRunnerLike = new AgenticSearchRunner();
+let reviewTaskRunner: ReviewTaskRunnerLike = runReviewTaskForMcp;
 
 export function setAgenticSearchRunnerForTest(runner: AgenticSearchRunnerLike): void {
   agenticSearchRunner = runner;
@@ -126,6 +154,279 @@ export function setAgenticSearchRunnerForTest(runner: AgenticSearchRunnerLike): 
 
 export function resetAgenticSearchRunnerForTest(): void {
   agenticSearchRunner = new AgenticSearchRunner();
+}
+
+export function setReviewTaskRunnerForTest(runner: ReviewTaskRunnerLike): void {
+  reviewTaskRunner = runner;
+}
+
+export function resetReviewTaskRunnerForTest(): void {
+  reviewTaskRunner = runReviewTaskForMcp;
+}
+
+function providerToPreference(
+  provider?: ReviewTaskInput['provider'],
+): ReviewLLMPreference | undefined {
+  if (!provider) return undefined;
+  return provider;
+}
+
+function resolveMcpReviewTimeoutMs(): number {
+  const raw = process.env.GNOSIS_MCP_REVIEW_LLM_TIMEOUT_MS?.trim();
+  const parsed = raw ? Number(raw) : 15_000;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 15_000;
+}
+
+async function createMcpReviewLlmService(
+  provider?: ReviewTaskInput['provider'],
+): Promise<ReviewLLMService> {
+  return getReviewLLMService(providerToPreference(provider), {
+    invoker: 'mcp',
+    timeoutMs: resolveMcpReviewTimeoutMs(),
+    disableFallback: true,
+  });
+}
+
+function resolveReviewTaskRepoPath(input: ReviewTaskInput): string {
+  return path.resolve(input.repoPath?.trim() || process.cwd());
+}
+
+function buildReviewTaskSessionId(input: ReviewTaskInput, repoPath: string): string {
+  const raw = input.sessionId?.trim() || `review-mcp:${path.basename(repoPath) || 'repo'}`;
+  const normalized = raw.replace(/[^a-zA-Z0-9_:-]/g, '-').slice(0, 256);
+  return normalized || `review-mcp:${randomUUID()}`;
+}
+
+function extractDiffFilePaths(diff: string): string[] {
+  const paths = new Set<string>();
+  for (const match of diff.matchAll(/^diff --git a\/(.+?) b\/(.+?)$/gm)) {
+    if (match[2]) paths.add(match[2]);
+  }
+  return [...paths];
+}
+
+function buildReviewTaskGoal(input: ReviewTaskInput): string {
+  const mode = input.reviewMode ? ` (${input.reviewMode})` : '';
+  return input.goal?.trim() || `${input.targetType} review${mode}`;
+}
+
+function normalizeKnowledgePolicy(input: ReviewTaskInput): KnowledgePolicy {
+  return input.knowledgePolicy ?? 'best_effort';
+}
+
+function normalizeReviewMode(input: ReviewTaskInput): ReviewMode {
+  return input.diffMode ?? 'worktree';
+}
+
+function normalizeReviewOutput(
+  input: ReviewTaskInput,
+  output: ReviewOutput,
+  durationMs: number,
+): Record<string, unknown> {
+  return {
+    status: output.metadata.degraded_mode ? 'degraded' : 'ok',
+    targetType: input.targetType,
+    reviewStatus: output.review_status,
+    summary: output.summary,
+    findings: output.findings.map((finding) => ({
+      title: finding.title,
+      severity: finding.severity,
+      confidence: finding.confidence,
+      filePath: finding.file_path,
+      line: finding.line_new,
+      endLine: finding.end_line,
+      category: finding.category,
+      rationale: finding.rationale,
+      suggestedFix: finding.suggested_fix,
+      evidence: finding.evidence,
+      knowledgeRefs: finding.knowledge_refs ?? [],
+      source: finding.source,
+      needsHumanConfirmation: finding.needsHumanConfirmation,
+    })),
+    nextActions: output.next_actions,
+    rerunReview: output.rerun_review,
+    knowledgeUsed: output.metadata.knowledge_applied,
+    diagnostics: {
+      provider: input.provider ?? 'default',
+      reviewMode: input.reviewMode ?? 'standard',
+      knowledgePolicy: output.metadata.knowledge_policy ?? normalizeKnowledgePolicy(input),
+      knowledgeRetrievalStatus: output.metadata.knowledge_retrieval_status,
+      degraded: output.metadata.degraded_mode,
+      degradedReasons: output.metadata.degraded_reasons,
+      reviewedFiles: output.metadata.reviewed_files,
+      riskLevel: output.metadata.risk_level,
+      staticAnalysisUsed: output.metadata.static_analysis_used,
+      localLlmUsed: output.metadata.local_llm_used,
+      heavyLlmUsed: output.metadata.heavy_llm_used,
+      durationMs: output.metadata.review_duration_ms || durationMs,
+    },
+  };
+}
+
+function normalizeDocumentReviewOutput(
+  input: ReviewTaskInput,
+  output: Awaited<ReturnType<typeof reviewDocument>>,
+  durationMs: number,
+): Record<string, unknown> {
+  const knowledgeUsed = [
+    ...output.appliedContext.procedureIds,
+    ...output.appliedContext.lessonIds,
+    ...output.appliedContext.guidanceIds,
+    ...output.appliedContext.memoryIds,
+  ];
+  const uniqueKnowledgeUsed = [...new Set(knowledgeUsed)];
+  const requiredKnowledgeMissing =
+    normalizeKnowledgePolicy(input) === 'required' && uniqueKnowledgeUsed.length === 0;
+  const degradedReasons = requiredKnowledgeMissing ? ['knowledge_required_unavailable'] : [];
+
+  return {
+    status: requiredKnowledgeMissing ? 'degraded' : 'ok',
+    targetType: input.targetType,
+    reviewStatus: requiredKnowledgeMissing ? 'needs_confirmation' : output.status,
+    summary: requiredKnowledgeMissing
+      ? [
+          output.summary,
+          '',
+          'Required knowledge policy was requested, but no applicable review context was applied. Treat this result as needs_confirmation until knowledge retrieval is repaired or the policy is relaxed.',
+        ].join('\n')
+      : output.summary,
+    findings: output.findings.map((finding) => ({
+      title: finding.title,
+      severity: finding.severity,
+      confidence: finding.confidence,
+      location: finding.location,
+      category: finding.category,
+      rationale: finding.rationale,
+      suggestedFix: finding.suggestedFix,
+      evidence: finding.evidence,
+      knowledgeRefs: finding.knowledgeRefs ?? [],
+    })),
+    nextActions: requiredKnowledgeMissing
+      ? [
+          'Repair or populate applicable review knowledge, then rerun review_task with knowledgePolicy=required.',
+          ...output.nextActions,
+        ]
+      : output.nextActions,
+    knowledgeUsed: uniqueKnowledgeUsed,
+    diagnostics: {
+      provider: input.provider ?? 'default',
+      reviewMode: input.reviewMode ?? 'standard',
+      knowledgePolicy: normalizeKnowledgePolicy(input),
+      documentType: output.documentType,
+      appliedContext: output.appliedContext,
+      degraded: requiredKnowledgeMissing,
+      degradedReasons,
+      durationMs,
+    },
+  };
+}
+
+function normalizeReviewTaskError(
+  input: ReviewTaskInput,
+  error: unknown,
+  durationMs: number,
+): Record<string, unknown> {
+  const code = error instanceof ReviewError ? error.code : 'REVIEW_TASK_FAILED';
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    status: 'degraded',
+    targetType: input.targetType,
+    reviewStatus: 'needs_confirmation',
+    summary: 'review_task could not complete synchronously.',
+    findings: [],
+    nextActions: ['Fix the diagnostics cause and rerun review_task.'],
+    knowledgeUsed: [],
+    diagnostics: {
+      provider: input.provider ?? 'default',
+      reviewMode: input.reviewMode ?? 'standard',
+      knowledgePolicy: normalizeKnowledgePolicy(input),
+      degraded: true,
+      degradedReasons: [code],
+      errorCode: code,
+      errorMessage: message,
+      durationMs,
+    },
+  };
+}
+
+function documentReviewDeps(llmService: ReviewLLMService, knowledgePolicy: KnowledgePolicy) {
+  if (knowledgePolicy !== 'off') {
+    return { llmService };
+  }
+  return {
+    llmService,
+    queryProcedureFn: async () => null,
+    recallLessonsFn: async () => [],
+    searchMemoryFn: async () => [],
+    getAlwaysGuidanceFn: async () => [],
+    getOnDemandGuidanceFn: async () => [],
+  };
+}
+
+export async function runReviewTaskForMcp(
+  input: ReviewTaskInput,
+  deps: ReviewTaskMcpDeps = {},
+): Promise<Record<string, unknown>> {
+  const now = deps.now ?? Date.now;
+  const startedAt = now();
+  try {
+    const repoPath = resolveReviewTaskRepoPath(input);
+    const knowledgePolicy = normalizeKnowledgePolicy(input);
+    const createLlmService = deps.createLlmService ?? createMcpReviewLlmService;
+    const llmService = await createLlmService(input.provider);
+    const sessionId = buildReviewTaskSessionId(input, repoPath);
+    const taskGoal = buildReviewTaskGoal(input);
+
+    if (input.targetType === 'code_diff') {
+      const rawDiff = input.target.diff?.trim();
+      const changedFiles =
+        input.target.filePaths && input.target.filePaths.length > 0
+          ? input.target.filePaths
+          : rawDiff
+            ? extractDiffFilePaths(rawDiff)
+            : undefined;
+      const runReview = deps.runReviewAgenticFn ?? runReviewAgentic;
+      const result = await runReview(
+        {
+          taskId: `mcp-review-${randomUUID()}`,
+          repoPath,
+          baseRef: input.baseRef ?? 'HEAD~1',
+          headRef: input.headRef ?? 'HEAD',
+          taskGoal,
+          changedFiles,
+          trigger: 'manual',
+          sessionId,
+          mode: normalizeReviewMode(input),
+          enableStaticAnalysis: input.enableStaticAnalysis ?? true,
+          enableKnowledgeRetrieval: knowledgePolicy !== 'off',
+          knowledgePolicy,
+        },
+        {
+          llmService,
+          diffProvider: rawDiff ? async () => rawDiff : undefined,
+        },
+      );
+      return normalizeReviewOutput(input, result, now() - startedAt);
+    }
+
+    const reviewDoc = deps.reviewDocumentFn ?? reviewDocument;
+    const result = await reviewDoc(
+      {
+        repoPath,
+        documentPath: input.target.documentPath,
+        content: input.target.content,
+        documentType: input.targetType === 'spec' ? 'spec' : 'plan',
+        goal: taskGoal,
+        context: input.target.filePaths?.join('\n'),
+        sessionId,
+        llmPreference: providerToPreference(input.provider),
+      },
+      documentReviewDeps(llmService, knowledgePolicy),
+    );
+    return normalizeDocumentReviewOutput(input, result, now() - startedAt);
+  } catch (error) {
+    return normalizeReviewTaskError(input, error, now() - startedAt);
+  }
 }
 
 export const agentFirstTools: ToolEntry[] = [
@@ -232,15 +533,16 @@ export const agentFirstTools: ToolEntry[] = [
   },
   {
     name: 'review_task',
-    description: '最小モードではレビュー機能を提供しない。',
+    description: 'コード差分・ドキュメント・計画をレビューし、失敗時もdegraded JSONを返す。',
     inputSchema: zodToJsonSchema(reviewTaskSchema) as Record<string, unknown>,
     handler: async (args) => {
-      void reviewTaskSchema.parse(args);
+      const input = reviewTaskSchema.parse(args);
+      const result = await reviewTaskRunner(input);
       return {
         content: [
           {
             type: 'text',
-            text: JSON.stringify({ status: 'unavailable_in_minimal_mode' }, null, 2),
+            text: JSON.stringify(result, null, 2),
           },
         ],
       };

@@ -35,7 +35,7 @@ describeIntegration('knowledge search integration', () => {
       INSERT INTO knowledge_topics (id, canonical_topic, aliases, confidence, coverage, version)
       VALUES ($1, $2, '[]'::jsonb, 0.9, 0.6, 1)
       `,
-      ['00000000-0000-0000-0000-000000000001', 'postgresql logical replication'],
+      ['00000000-0000-0000-0000-000000000001', 'gnosis int test logical replication alpha'],
     );
 
     await pool.query(
@@ -48,7 +48,7 @@ describeIntegration('knowledge search integration', () => {
       [
         '00000000-0000-0000-0000-000000000011',
         '00000000-0000-0000-0000-000000000001',
-        'Logical replication streams row-level changes between PostgreSQL nodes.',
+        'GnosisIntLogicalReplicationAlpha streams row-level changes between PostgreSQL nodes.',
         'fp-001',
         '00000000-0000-0000-0000-000000000012',
         'Replication slots can retain WAL files until consumers catch up.',
@@ -56,10 +56,10 @@ describeIntegration('knowledge search integration', () => {
       ],
     );
 
-    const results = await searchKnowledgeClaims('logical replication', 5);
+    const results = await searchKnowledgeClaims('GnosisIntLogicalReplicationAlpha', 5);
     expect(results.length).toBeGreaterThan(0);
     expect(results[0]?.score).toBeGreaterThan(0);
-    expect(results[0]?.topic).toBe('postgresql logical replication');
+    expect(results[0]?.topic).toBe('gnosis int test logical replication alpha');
   });
 
   it('falls back to LIKE when FTS has no hit', async () => {
@@ -79,12 +79,12 @@ describeIntegration('knowledge search integration', () => {
       [
         '00000000-0000-0000-0000-000000000021',
         '00000000-0000-0000-0000-000000000002',
-        'Replication improves durability and supports read scaling.',
+        'ReplicationUniqueNeedleBeta improves durability and supports read scaling.',
         'fp-003',
       ],
     );
 
-    const results = await searchKnowledgeClaims('replicat', 5);
+    const results = await searchKnowledgeClaims('UniqueNeedleBet', 5);
     expect(results.length).toBeGreaterThan(0);
     expect(results[0]?.score).toBe(0);
     expect(results[0]?.text).toContain('Replication');

@@ -315,7 +315,8 @@ mod tests {
 
     use crate::monitor::models::{
         AutomationSnapshot, EvalSnapshot, KnowFlowSnapshot, MonitorSnapshotData, OutboundBroadcast,
-        QueueSnapshot, SnapshotEnvelope, TaskIndexEntry, TimelineEvent, WorkerSnapshot,
+        QualityGateSnapshot, QueueSnapshot, SnapshotEnvelope, TaskIndexEntry, TimelineEvent,
+        WorkerSnapshot,
     };
 
     use super::drain_initial_broadcasts;
@@ -343,10 +344,12 @@ mod tests {
             ts,
             data: MonitorSnapshotData {
                 queue: QueueSnapshot::default(),
+                embedding_queue: QueueSnapshot::default(),
                 worker: WorkerSnapshot::default(),
                 eval: EvalSnapshot::default(),
                 automation: AutomationSnapshot::default(),
                 knowflow: KnowFlowSnapshot::default(),
+                quality_gates: QualityGateSnapshot::default(),
                 task_index: vec![TaskIndexEntry {
                     task_id: "task-1".to_string(),
                     topic: Some("topic".to_string()),

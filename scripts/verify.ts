@@ -1,3 +1,4 @@
+import { type QualityGateName, recordQualityGate } from './lib/quality-gates.js';
 import { COLORS, loadLocalEnv, printCoverageSummary, runCommand } from './lib/quality.js';
 
 type VerifyMode = 'fast' | 'standard' | 'strict';
@@ -34,6 +35,12 @@ function buildSteps(mode: VerifyMode, bun: string): Step[] {
   }
 
   return steps;
+}
+
+function gateNameForMode(mode: VerifyMode): QualityGateName {
+  if (mode === 'fast') return 'verifyFast';
+  if (mode === 'strict') return 'verifyStrict';
+  return 'verify';
 }
 
 const run = async () => {
@@ -79,12 +86,14 @@ const run = async () => {
 
   const totalMs = Date.now() - startedAt;
   if (failedStep) {
+    recordQualityGate(gateNameForMode(mode), 'failed', `failed at step: ${failedStep}`);
     process.stderr.write(
       `\n${COLORS.red}Verification FAILED at step: ${failedStep}${COLORS.reset}\n`,
     );
     process.exit(1);
   }
 
+  recordQualityGate(gateNameForMode(mode), 'passed', `verify:${mode} passed (${totalMs}ms)`);
   process.stdout.write(`\n${COLORS.green}✨ verify:${mode} passed (${totalMs}ms)${COLORS.reset}\n`);
 };
 

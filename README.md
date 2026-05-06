@@ -22,6 +22,7 @@ bun run onboarding:smoke
 ```
 
 `onboarding:smoke` が成功すれば最小導線は完了です。
+各 smoke / verify / doctor の結果は `logs/quality-gates.json` に保存され、Monitor UI で確認できます。
 
 ## 構成別セットアップ
 
@@ -78,6 +79,7 @@ await review_task({
 ```
 
 期待される結果は、指摘事項、残リスク、実際に使った知識 (`knowledgeUsed`) を含むレビューです。knowledge retrieval が degraded の場合も、未選別候補を混ぜずに診断情報として扱います。
+provider 未設定や timeout などで同期レビューを完了できない場合も、MCP timeout ではなく `status: "degraded"` の JSON を返します。
 
 ## 品質チェック
 
@@ -87,12 +89,13 @@ await review_task({
 bun run verify:fast
 bun run verify
 bun run verify:strict
+GNOSIS_DOCTOR_STRICT=1 bun run doctor
 ```
 
 実行内容:
-- `verify:fast`: `format-check` / `lint` / `typecheck` / `build`
-- `verify`: `format-check` / `lint` / `typecheck` / `build` / `test`
+- `verify:fast` / `verify`: `format-check` / `lint` / `typecheck` / `build` / `test`
 - `verify:strict`: `verify` + `coverage` + `failure-path` + `smoke` + `flaky-check` + `integration-local`
+- `GNOSIS_DOCTOR_STRICT=1 bun run doctor`: 通常診断 + `smoke` + MCP contract snapshot
 
 ## 日常コマンド
 
@@ -141,8 +144,9 @@ bun run maintenance
 - [Configuration](docs/configuration.md)
 - [MCP Tools](docs/mcp-tools.md)
 - [Data Layers](docs/data-layers.md)
-
 - [KnowFlow Guide](docs/knowflow-guide.md)
+- [Operations Runbook](docs/operations-runbook.md)
+- [Release Checklist](docs/release-checklist.md)
 - [Active-Use Improvement Plan](docs/active-use-improvement-plan.md)
 - [Agent-First Refactoring Plan](docs/agent-first-gnosis-refactoring-plan.md)
 

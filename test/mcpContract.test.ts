@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it, mock } from 'bun:test';
 import { server, shouldInjectAlwaysContext } from '../src/mcp/server';
+import {
+  resetReviewTaskRunnerForTest,
+  setReviewTaskRunnerForTest,
+} from '../src/mcp/tools/agentFirst';
 
 type RequestHandler = (request: Record<string, unknown>) => Promise<Record<string, unknown>>;
 
@@ -14,6 +18,10 @@ const getHandler = (method: string): RequestHandler => {
 };
 
 describe('mcp contract', () => {
+  afterEach(() => {
+    resetReviewTaskRunnerForTest();
+  });
+
   it('exposes expected tool contracts via tools/list', async () => {
     const listHandler = getHandler('tools/list');
     const result = (await listHandler({
@@ -77,5 +85,35 @@ describe('mcp contract', () => {
     for (const [toolName, expected] of Object.entries(matrix)) {
       expect(shouldInjectAlwaysContext(toolName)).toBe(expected);
     }
+  });
+
+  it('review_task call is wired to a review runner instead of the minimal stub', async () => {
+    setReviewTaskRunnerForTest(
+      mock(async () => ({
+        status: 'ok',
+        reviewStatus: 'no_major_findings',
+        findings: [],
+        summary: 'reviewed',
+        knowledgeUsed: [],
+      })) as never,
+    );
+    const callHandler = getHandler('tools/call');
+
+    const result = (await callHandler({
+      method: 'tools/call',
+      params: {
+        name: 'review_task',
+        arguments: {
+          targetType: 'document',
+          target: { content: '# Doc\nReview me.' },
+          knowledgePolicy: 'off',
+        },
+      },
+    })) as { isError?: boolean; content?: Array<{ text?: string }> };
+
+    expect(result.isError).not.toBe(true);
+    const payload = JSON.parse(result.content?.[0]?.text ?? '{}') as Record<string, unknown>;
+    expect(payload.status).toBe('ok');
+    expect(payload.status).not.toBe('unavailable_in_minimal_mode');
   });
 });

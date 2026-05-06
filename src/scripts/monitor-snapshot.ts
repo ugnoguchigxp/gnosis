@@ -55,6 +55,25 @@ type TaskIndexEntry = {
   updatedAtTs: number | null;
 };
 
+type QualityGateState = 'passed' | 'failed' | 'unknown';
+
+type QualityGateRecord = {
+  status: QualityGateState;
+  updatedAtTs: number | null;
+  message: string | null;
+};
+
+type QualityGateSnapshot = {
+  doctor: QualityGateRecord;
+  doctorStrict: QualityGateRecord;
+  onboardingSmoke: QualityGateRecord;
+  smoke: QualityGateRecord;
+  verifyFast: QualityGateRecord;
+  verify: QualityGateRecord;
+  verifyStrict: QualityGateRecord;
+  mcpContract: QualityGateRecord;
+};
+
 type MonitorSnapshot = {
   ts: number;
   queue: QueueSnapshot;
@@ -63,6 +82,7 @@ type MonitorSnapshot = {
   eval: EvalSnapshot;
   automation: AutomationSnapshot;
   knowflow: KnowFlowSnapshot;
+  qualityGates: QualityGateSnapshot;
   taskIndex: TaskIndexEntry[];
 };
 
@@ -76,12 +96,28 @@ const MONITORED_QUEUE_STATUSES = ['pending', 'running', 'deferred', 'failed'] as
 const FALLBACK_FILE_LIMIT = 40;
 const FALLBACK_TASK_INDEX_LIMIT = 300;
 const DEFAULT_DATABASE_URL = 'postgres://postgres:postgres@localhost:7888/gnosis';
+const QUALITY_GATE_KEYS = [
+  'doctor',
+  'doctorStrict',
+  'onboardingSmoke',
+  'smoke',
+  'verifyFast',
+  'verify',
+  'verifyStrict',
+  'mcpContract',
+] as const;
 
 const emptyQueueSnapshot = (): QueueSnapshot => ({
   pending: 0,
   running: 0,
   deferred: 0,
   failed: 0,
+});
+
+const emptyQualityGateRecord = (): QualityGateRecord => ({
+  status: 'unknown',
+  updatedAtTs: null,
+  message: null,
 });
 
 const canReachDatabase = async (timeoutMs = 250): Promise<boolean> => {
@@ -495,11 +531,46 @@ const collectAutomation = (): AutomationSnapshot => ({
   localLlmApiBaseUrl: process.env.LOCAL_LLM_API_BASE_URL?.trim() || null,
 });
 
+const collectQualityGates = async (rootDir: string): Promise<QualityGateSnapshot> => {
+  const snapshot = Object.fromEntries(
+    QUALITY_GATE_KEYS.map((key) => [key, emptyQualityGateRecord()]),
+  ) as QualityGateSnapshot;
+  const filePath = join(rootDir, 'logs', 'quality-gates.json');
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readFile(filePath, 'utf-8'));
+  } catch {
+    return snapshot;
+  }
+
+  if (!isRecord(parsed)) {
+    return snapshot;
+  }
+
+  for (const key of QUALITY_GATE_KEYS) {
+    const record = parsed[key];
+    if (!isRecord(record)) continue;
+    const status =
+      record.status === 'passed' || record.status === 'failed' || record.status === 'unknown'
+        ? record.status
+        : 'unknown';
+    snapshot[key] = {
+      status,
+      updatedAtTs: toTimestampMs(record.updatedAt),
+      message: toStringValue(record.message),
+    };
+  }
+
+  return snapshot;
+};
+
 const run = async (): Promise<void> => {
   const args = parseArgMap(process.argv.slice(2));
   const outputFormat = resolveOutputFormat(args);
   const logsRootArg = readStringFlag(args, 'logs-root');
-  const logsRoot = logsRootArg ? resolve(logsRootArg) : resolve(process.cwd(), 'logs', 'runs');
+  const rootDir = process.cwd();
+  const logsRoot = logsRootArg ? resolve(logsRootArg) : resolve(rootDir, 'logs', 'runs');
   const fileLimit = readNumberFlag(args, 'file-limit') ?? FALLBACK_FILE_LIMIT;
   const taskIndexLimit = readNumberFlag(args, 'task-index-limit') ?? FALLBACK_TASK_INDEX_LIMIT;
 
@@ -521,6 +592,7 @@ const run = async (): Promise<void> => {
     eval: evalResult,
     automation: collectAutomation(),
     knowflow,
+    qualityGates: await collectQualityGates(rootDir),
     taskIndex,
   };
 

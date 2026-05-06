@@ -10,7 +10,7 @@ import {
 
 import { DetailedKnowledgeSchema, KnowledgeClaimResultSchema } from '../domain/schemas.js';
 import type { DetailedKnowledge, KnowledgeClaimResult } from '../domain/schemas.js';
-import { searchEntityKnowledge } from './entityKnowledge.js';
+import { searchEntityKnowledgeDetailed } from './entityKnowledge.js';
 
 const parseStringArray = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
@@ -27,7 +27,7 @@ const normalizeResultLimit = (limit: number): number => {
 };
 
 const mapEntitySearchResults = (
-  results: Awaited<ReturnType<typeof searchEntityKnowledge>>,
+  results: Awaited<ReturnType<typeof searchEntityKnowledgeDetailed>>['results'],
 ): KnowledgeClaimResult[] =>
   results.map((result) =>
     KnowledgeClaimResultSchema.parse({
@@ -52,13 +52,18 @@ export async function searchKnowledgeClaims(
   if (normalizedQuery.length === 0) return [];
   const safeLimit = normalizeResultLimit(limit);
 
-  const entityResults = await searchEntityKnowledge({
+  const entitySearch = await searchEntityKnowledgeDetailed({
     query: normalizedQuery,
     type: 'all',
     limit: safeLimit,
   });
-  if (entityResults.length > 0) {
-    return mapEntitySearchResults(entityResults);
+  const meaningfulEntityResults = entitySearch.results.filter((result) =>
+    result.matchSources.some(
+      (source) => source !== 'recent' && (source !== 'vector' || result.score >= 0.75),
+    ),
+  );
+  if (meaningfulEntityResults.length > 0) {
+    return mapEntitySearchResults(meaningfulEntityResults);
   }
 
   const tsvectorExpr = sql`to_tsvector('simple', ${knowledgeClaims.text})`;
@@ -99,10 +104,13 @@ export async function searchKnowledgeClaims(
       .where(ilike(knowledgeClaims.text, `%${normalizedQuery}%`))
       .orderBy(desc(knowledgeClaims.confidence))
       .limit(safeLimit);
-    return fallbackResults.map((r) => KnowledgeClaimResultSchema.parse(r));
+    const legacyResults = fallbackResults.map((r) => KnowledgeClaimResultSchema.parse(r));
+    if (legacyResults.length > 0) return legacyResults;
   } catch {
-    return [];
+    // Preserve entity-search results when the legacy table fallback is unavailable.
   }
+
+  return mapEntitySearchResults(entitySearch.results);
 }
 
 /**

@@ -7,6 +7,7 @@ import pkg from 'pg';
 import { envBoolean } from '../src/config.js';
 import { GNOSIS_CONSTANTS } from '../src/constants.js';
 import { scanWatchdog } from '../src/runtime/processWatchdog.js';
+import { recordQualityGate } from './lib/quality-gates.js';
 import { COLORS, loadLocalEnv } from './lib/quality.ts';
 
 const { Pool } = pkg;
@@ -40,6 +41,8 @@ type RunLogRecord = {
 const ROOT_DIR = process.cwd();
 const BUN = process.env.GNOSIS_BUN_COMMAND || process.argv[0] || 'bun';
 const IS_WINDOWS = process.platform === 'win32';
+const STRICT_MODE =
+  process.argv.includes('--strict') || process.env.GNOSIS_DOCTOR_STRICT?.trim() === '1';
 const LAUNCH_AGENT_LABELS = [
   'com.gnosis.embedding-daemon',
   'com.gnosis.local-llm',
@@ -169,6 +172,48 @@ async function checkLocalLlmHealth(): Promise<CheckResult> {
   }
 }
 
+function compactCommandOutput(output: CommandOutput): string {
+  const combined = `${output.stdout}\n${output.stderr}`
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  return combined.slice(-4).join(' | ') || `exit code ${output.code}`;
+}
+
+async function checkStrictCommand(
+  name: string,
+  args: string[],
+  fix: string,
+  gateName?: 'mcpContract',
+): Promise<CheckResult> {
+  const result = await runCapture({ command: BUN, args }).catch((error) => ({
+    code: 1,
+    stdout: '',
+    stderr: error instanceof Error ? error.message : String(error),
+  }));
+
+  if (result.code === 0) {
+    if (gateName) {
+      recordQualityGate(gateName, 'passed', `${BUN} ${args.join(' ')} passed`);
+    }
+    return {
+      name,
+      status: 'OK',
+      message: `${BUN} ${args.join(' ')} passed`,
+    };
+  }
+
+  if (gateName) {
+    recordQualityGate(gateName, 'failed', compactCommandOutput(result));
+  }
+  return {
+    name,
+    status: 'FAIL',
+    message: compactCommandOutput(result),
+    fix,
+  };
+}
+
 function checkMcpToolExposure(): CheckResult {
   return {
     name: 'MCP tool exposure',
@@ -276,6 +321,13 @@ function checkLastKnowFlowRun(): CheckResult {
     };
   }
 
+  let latest: {
+    record: RunLogRecord;
+    status: Status;
+    summary: string;
+    timeMs: number;
+  } | null = null;
+
   for (const file of files) {
     const lines = readFileSync(file, 'utf8').split('\n').reverse();
     for (const line of lines) {
@@ -309,12 +361,20 @@ function checkLastKnowFlowRun(): CheckResult {
           : typeof record.data?.resultSummary === 'string'
             ? ` ${record.data.resultSummary}`
             : '';
-      return {
-        name: 'last KnowFlow run',
-        status,
-        message: `${record.ts ?? 'unknown time'} ${record.event}${summary}`,
-      };
+      const parsedTime = record.ts ? Date.parse(record.ts) : Number.NaN;
+      const timeMs = Number.isFinite(parsedTime) ? parsedTime : statSync(file).mtimeMs;
+      if (!latest || timeMs > latest.timeMs) {
+        latest = { record, status, summary, timeMs };
+      }
     }
+  }
+
+  if (latest) {
+    return {
+      name: 'last KnowFlow run',
+      status: latest.status,
+      message: `${latest.record.ts ?? 'unknown time'} ${latest.record.event}${latest.summary}`,
+    };
   }
 
   return {
@@ -388,7 +448,9 @@ function printResult(result: CheckResult): void {
 
 async function main(): Promise<void> {
   loadLocalEnv(path.join(ROOT_DIR, '.env'));
-  process.stdout.write(`${COLORS.cyan}=== Gnosis Doctor ===${COLORS.reset}\n`);
+  process.stdout.write(
+    `${COLORS.cyan}=== Gnosis Doctor${STRICT_MODE ? ' (strict)' : ''} ===${COLORS.reset}\n`,
+  );
 
   const results: CheckResult[] = [];
 
@@ -534,6 +596,20 @@ async function main(): Promise<void> {
   results.push(checkLastKnowFlowRun());
   results.push(await checkLocalLlmHealth());
 
+  if (STRICT_MODE) {
+    results.push(
+      await checkStrictCommand('strict smoke gate', ['run', 'smoke'], 'Run: bun run smoke'),
+    );
+    results.push(
+      await checkStrictCommand(
+        'MCP contract gate',
+        ['test', 'test/mcpContract.test.ts', 'test/mcpToolsSnapshot.test.ts'],
+        'Run: bun test test/mcpContract.test.ts test/mcpToolsSnapshot.test.ts',
+        'mcpContract',
+      ),
+    );
+  }
+
   process.stdout.write('\n');
   for (const result of results) {
     printResult(result);
@@ -543,6 +619,11 @@ async function main(): Promise<void> {
   const warnCount = results.filter((result) => result.status === 'WARN').length;
   process.stdout.write('\n');
   process.stdout.write(`Summary: fail=${failCount} warn=${warnCount}\n`);
+  recordQualityGate(
+    STRICT_MODE ? 'doctorStrict' : 'doctor',
+    failCount > 0 ? 'failed' : 'passed',
+    `fail=${failCount} warn=${warnCount}`,
+  );
 
   if (failCount > 0) {
     process.exit(1);

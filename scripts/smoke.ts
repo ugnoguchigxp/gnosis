@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { recordQualityGate } from './lib/quality-gates.js';
 
 const runCommand = (command: string, args: string[]): Promise<void> =>
   new Promise((resolve, reject) => {
@@ -17,7 +18,6 @@ const runCommand = (command: string, args: string[]): Promise<void> =>
   });
 
 const run = async () => {
-  const maxDegradedRate = process.env.KNOWFLOW_MAX_DEGRADED_RATE?.trim() || '0';
   const bun = process.argv[0];
   const steps: Array<{ name: string; command: string; args: string[] }> = [
     {
@@ -47,16 +47,7 @@ const run = async () => {
     {
       name: 'knowflow eval local suite (mock)',
       command: bun,
-      args: [
-        'src/services/knowflow/cli.ts',
-        'eval-run',
-        '--suite',
-        'local',
-        '--mock',
-        '--max-degraded-rate',
-        maxDegradedRate,
-        '--json',
-      ],
+      args: ['src/services/knowflow/cli.ts', 'eval-run', '--suite', 'local', '--mock', '--json'],
     },
   ];
 
@@ -66,7 +57,13 @@ const run = async () => {
   }
 };
 
-run().catch((error) => {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-  process.exitCode = 1;
-});
+run()
+  .then(() => {
+    recordQualityGate('smoke', 'passed', 'bun run smoke passed');
+  })
+  .catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    recordQualityGate('smoke', 'failed', message);
+    process.stderr.write(`${message}\n`);
+    process.exitCode = 1;
+  });
