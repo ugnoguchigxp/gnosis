@@ -174,7 +174,30 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def load_env(root_dir: Path):
+    env_path = root_dir / ".env"
+    if not env_path.exists():
+        return
+    import os
+    with open(env_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" in line:
+                key, val = line.split("=", 1)
+                os.environ.setdefault(key.strip(), val.strip())
+
+
 def main(argv: list[str] | None = None) -> int:
+    import os
+    # Load .env to check if the daemon should be enabled
+    root_dir = Path(__file__).resolve().parents[3]
+    load_env(root_dir)
+    if os.getenv("GNOSIS_EMBEDDING_DAEMON_ENABLED", "true").lower() == "false":
+        print("Gnosis Embedding Daemon is disabled via GNOSIS_EMBEDDING_DAEMON_ENABLED in .env. Exiting.")
+        return 0
+
     args = build_parser().parse_args(argv)
     daemon = EmbeddingDaemon(args.model_dir)
     server = ThreadingHTTPServer((args.host, args.port), build_handler(daemon, args.request_timeout))

@@ -113,6 +113,12 @@ export const config = {
   // モックRetrieverを使用するかどうか
   mockRetriever: envBoolean(process.env.GNOSIS_MOCK_RETRIEVER, false),
 
+  // ローカル LLM デーモンの有効化
+  localLlmEnabled: envBoolean(
+    process.env.GNOSIS_LOCAL_LLM_ENABLED,
+    GNOSIS_CONSTANTS.LOCAL_LLM_ENABLED_DEFAULT,
+  ),
+
   // エンティティ抽出/マージ時のタイムアウト (ms)
   llmTimeoutMs: envNumber(process.env.GNOSIS_LLM_TIMEOUT_MS, 90_000),
 
@@ -163,6 +169,10 @@ export const config = {
         process.env.GNOSIS_EMBED_BACKGROUND_CHUNK_SIZE,
         GNOSIS_CONSTANTS.EMBED_BACKGROUND_CHUNK_SIZE_DEFAULT,
       ),
+    ),
+    enabled: envBoolean(
+      process.env.GNOSIS_EMBEDDING_DAEMON_ENABLED,
+      GNOSIS_CONSTANTS.EMBEDDING_DAEMON_ENABLED_DEFAULT,
     ),
   },
 

@@ -201,7 +201,7 @@ const requestDaemonEmbeddings = async (
   options: Required<GenerateEmbeddingOptions>,
 ): Promise<number[][] | undefined> => {
   const daemonUrl = config.embedding?.daemonUrl;
-  if (!daemonUrl) return undefined;
+  if (!daemonUrl || !config.embedding.enabled) return undefined;
 
   const controller = new AbortController();
   const timeout = setTimeout(

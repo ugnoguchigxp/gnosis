@@ -300,6 +300,13 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
     console.error('[McpHost] Background workers are OFF for MCP host.');
   }
 
+  if (!config.localLlmEnabled) {
+    console.error('[McpHost] Local LLM daemon is OFF by configuration.');
+  }
+  if (!config.embedding.enabled) {
+    console.error('[McpHost] Embedding daemon is OFF by configuration.');
+  }
+
   server.on('connection', (socket) => {
     let buffer = '';
     let socketActiveRequests = 0;

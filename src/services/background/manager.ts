@@ -53,6 +53,11 @@ export function startBackgroundWorkers(): void {
     return;
   }
 
+  if (!config.localLlmEnabled) {
+    console.error('[BackgroundManager] Local LLM is disabled. Skipping background worker startup.');
+    return;
+  }
+
   if (intervalId || startupInFlight) return;
   startupInFlight = true;
   const token = ++startupToken;
