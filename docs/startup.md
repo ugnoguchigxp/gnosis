@@ -13,8 +13,8 @@
 | フェーズ | 状態 | 実装メモ |
 | :--- | :--- | :--- |
 | 1. README 最短導線化 | 完了 | README 先頭を minimal 導線中心に再構成。 |
-| 2. env 分割 | 完了 | `.env.minimal` / `.env.local-llm` / `.env.cloud-review` を揃え、`.env.example` は入口化。 |
-| 3. bootstrap | 完了 | `bootstrap` を minimal 用に再編。`bootstrap:local-llm` を分離。 |
+| 2. env 分割 | 完了 | `.env.minimal` / `.env.cloud-review` を揃え、`.env.example` は入口化。 |
+| 3. bootstrap | 完了 | `bootstrap` を minimal 用に再編。 |
 | 4. doctor | 完了 | `bun run doctor` と `scripts/doctor.ts` を追加。 |
 | 5. onboarding:smoke | 完了 | `bun run onboarding:smoke` と `scripts/onboarding-smoke.ts` を追加。 |
 | 6. fresh clone 検証導線 | 完了 | `onboarding:smoke` を fresh clone 検証の基準コマンドとして定義。 |
@@ -31,7 +31,7 @@
 ### Phase A: 最小導線の再定義
 
 - [x] `README.md` 冒頭を「最小構成 5 分」に置換
-- [x] 導入パスを `minimal` / `local-llm` / `cloud-review` の 3 本に固定
+- [x] 導入パスを `minimal` / `cloud-review` の 2 本に固定
 - [x] 失敗しやすい項目（Docker 未起動、`.env` 未生成、DB 未初期化）を README 冒頭に短く追加
 
 完了条件:
@@ -50,7 +50,6 @@
 ### Phase C: bootstrap 再編
 
 - [x] `bun run bootstrap` を最小構成専用に変更
-- [x] `bun run bootstrap:local-llm` を追加（既存の local-llm 手順を移設）
 - [x] `.env` が既存の場合は上書きせず警告する現在仕様を維持
 - [x] 失敗メッセージに「再実行コマンド」を必ず含める
 
@@ -70,13 +69,13 @@
 
 - 導入コマンドが 3 本以内に収まる: `bootstrap`, `doctor`, `onboarding:smoke`
 - README と fresh clone 検証導線が一致している
-- local-llm は任意導線として後置され、minimal の成功率を下げない
+- optional 構成は minimal 導線を妨げない
 
 ## リスクと対策
 
 ### `bootstrap` 肥大化
 
-- 対策: minimal と local-llm をコマンド分離して責務を固定する
+- 対策: bootstrap は minimal 導線を優先し、追加導線は分離する
 
 ### 既存利用者との互換性低下
 

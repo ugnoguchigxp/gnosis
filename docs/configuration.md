@@ -7,12 +7,11 @@ Gnosis は環境変数を中心に構成されています。一部の機能（K
 | 構成 | テンプレート | 用途 |
 | :--- | :--- | :--- |
 | minimal | `.env.minimal` | DB + embedding だけで最短起動する |
-| local-llm | `.env.local-llm` | minimal に local LLM 運用設定を追加する |
 | cloud-review | `.env.cloud-review` | minimal に cloud reviewer 設定を追加する |
 
 推奨フロー:
 1. `cp .env.minimal .env`
-2. 必要に応じて `.env.local-llm` または `.env.cloud-review` の必要項目を `.env` へ追記
+2. 必要に応じて `.env.cloud-review` の必要項目を `.env` へ追記
 
 ## 環境変数一覧
 
@@ -23,10 +22,9 @@ Gnosis は環境変数を中心に構成されています。一部の機能（K
 | `DATABASE_URL` | `postgres://postgres:postgres@localhost:7888/gnosis` | PostgreSQL 接続文字列 |
 | `GNOSIS_BUN_COMMAND` | `bun` | 実行に使用する Bun バイナリのパス |
 | `GNOSIS_LLM_TIMEOUT_MS` | `90000` | LLM 処理の標準タイムアウト |
-| `GNOSIS_DOCTOR_REQUIRE_LOCAL_LLM` | `false` | `bun run doctor` で local-llm API 未起動を失敗扱いにするか |
 | `GNOSIS_ENABLE_AUTOMATION` | `true` | LaunchAgent / background manager などの自動処理を実行するか。停止したい場合だけ `false` を指定 |
 | `GNOSIS_BACKGROUND_WORKER_ENABLED` | `true` | background worker daemon の常駐処理を実行するか。停止したい場合だけ `false` を指定 |
-| `GNOSIS_BACKGROUND_WORKER_MAX_CONCURRENCY` | `2` | background worker の同時処理枠。LLM 実行は local-llm daemon の single-thread queue 側で直列化する |
+| `GNOSIS_BACKGROUND_WORKER_MAX_CONCURRENCY` | `2` | background worker の同時処理枠 |
 | `GNOSIS_NO_WORKERS` | `false` | MCP host 内で background workers を起動しない。`scripts/setup-automation.sh` の `com.gnosis.mcp-host` は worker LaunchAgent との二重起動を避けるため `true` を指定 |
 | `GNOSIS_MCP_HOST_REPLACE_EXISTING` | `false` | 起動時に既存 MCP host が健康な場合、それを shutdown して自プロセスが host を引き継ぐ。LaunchAgent の `KeepAlive` ループ防止用 |
 | `GNOSIS_MCP_HOST_REQUEST_TIMEOUT_MS` | `330000` | shared MCP host の1リクエスト上限。MCP `review_task` の既定 LLM timeout より長くし、host が先に切れないようにする |
@@ -61,7 +59,7 @@ tool 別の approval 設定は不要です。公開 tool surface はサーバー
 | 変数名 | デフォルト値 | 説明 |
 | :--- | :--- | :--- |
 | `GNOSIS_EMBED_COMMAND` | `embed` | 外部 embedding runtime の CLI コマンド名またはパス |
-| `GNOSIS_EMBED_API_KEY_ENV` | `LOCAL_LLM_ACCESS_TOKEN` | embedding daemon へ送る Bearer token を読む環境変数名 |
+| `GNOSIS_EMBED_API_KEY_ENV` | - | embedding daemon へ送る Bearer token を読む環境変数名 |
 | `GNOSIS_EMBED_DAEMON_URL` | `http://127.0.0.1:44512` | 常駐embedding daemonのURL。空文字を明示するとdaemonを使わずCLI fallbackのみ |
 | `GNOSIS_EMBED_DAEMON_TIMEOUT_MS` | `5000` | daemon呼び出しのタイムアウト |
 | `GNOSIS_EMBED_HIGH_CONCURRENCY` | `8` | MCP/search/review query embedding用の同時実行上限 |
@@ -71,23 +69,6 @@ tool 別の approval 設定は不要です。公開 tool surface はサーバー
 | `GNOSIS_EMBEDDING_DIMENSION` | `384` | ベクトルの次元数（モデルに合わせる必要があります） |
 | `GNOSIS_EMBED_TIMEOUT_MS` | `30000` | 埋め込み生成のタイムアウト |
 
-### ローカル LLM
-
-| 変数名 | デフォルト値 | 説明 |
-| :--- | :--- | :--- |
-| `LOCAL_LLM_API_BASE_URL` | `http://127.0.0.1:44448` | ローカル LLM API のエンドポイント |
-| `LOCAL_LLM_API_KEY_ENV` | `LOCAL_LLM_ACCESS_TOKEN` | LLM API へ送る Bearer token を読む環境変数名 |
-| `LOCAL_LLM_MODEL` | `gemma-4-e4b-it` | 使用するモデル名 |
-| `LOCAL_LLM_ENABLE_CLI_FALLBACK` | `false` | API 失敗時にスクリプトを直接実行するか。通常運用では daemon 1本に集約するため無効 |
-| `GNOSIS_LLM_SCRIPT` | `../local-llm/scripts/gemma4` | 外部 local-llm runtime の CLI コマンドまたはスクリプトパス |
-| `GNOSIS_LLM_CONCURRENCY_LIMIT` | `1` | `gemma4` / `bonsai` 等のローカルLLMプロセス同時実行上限。daemon single-thread 前提のため、1より大きい値は1に丸める |
-| `LOCAL_LLM_DAEMON_PRELOAD` | `true` | local-llm daemon 起動時にモデルを読み込んで ready 状態にする |
-| `LOCAL_LLM_DAEMON_REQUEST_TIMEOUT_MS` | `900000` | daemon 内部 single-thread queue の1リクエスト待機上限 |
-| `LOCAL_LLM_PREFILL_STEP_SIZE` | `8192` | MLX 系 local LLM の prefill 分割サイズ。通常会話では分割 prefill の progress 表示と分割オーバーヘッドを避ける |
-| `LOCAL_LLM_CONTEXT_WINDOW` | `131072` | daemon API で許可する入力+出力 token 上限。Gemma4 e4b の `max_position_embeddings` と同じ 128k 相当 |
-| `LOCAL_LLM_ALLOW_MLX_IN_SEATBELT` | `false` | `CODEX_SANDBOX=seatbelt` で MLX (`gemma4`/`bonsai`) を強制有効化するか（既定は安全のため無効） |
-
-local-llm runtime は Gnosis 外部で常駐させます。Gnosis は API / embedding endpoint を consumer として呼び出します。CLI fallback を明示的に有効化した場合だけ、`GNOSIS_LLM_CONCURRENCY_LIMIT=1` のセマフォでプロセス起動を直列化します。
 | `GNOSIS_CODEX_INITIAL_LOOKBACK_HOURS` | `0` | Codex 初回同期の対象期間。`0` は既存 JSONL を全件対象にする |
 
 ### Memory Loop (Local-first)
@@ -96,16 +77,15 @@ local-llm runtime は Gnosis 外部で常駐させます。Gnosis は API / embe
 | :--- | :--- | :--- |
 | `MEMORY_LOOP_ALLOW_CLOUD` | `false` | ループ処理で cloud LLM（OpenAI/Bedrock）を許可するか |
 | `MEMORY_LOOP_CLOUD_PROVIDER` | `openai` | cloud 利用時の優先プロバイダ（`openai` / `bedrock`） |
-| `MEMORY_LOOP_DEFAULT_ALIAS` | `gemma4` | ループ処理の第一候補ローカルモデル |
-| `MEMORY_LOOP_LIGHT_ALIAS` | `bonsai` | 軽量処理向けローカルモデル |
+| `MEMORY_LOOP_DEFAULT_ALIAS` | - | ループ処理の第一候補モデル alias |
+| `MEMORY_LOOP_LIGHT_ALIAS` | - | 軽量処理向けモデル alias |
 | `MEMORY_LOOP_INTERVAL_MS` | `300000` | ループ間隔（5分） |
-| `MEMORY_LOOP_MAX_LOCAL_RETRIES` | `1` | ローカルLLMの再試行回数 |
+| `MEMORY_LOOP_MAX_LOCAL_RETRIES` | `1` | LLM の再試行回数 |
 | `MEMORY_LOOP_MIN_QUALITY_SCORE` | `0.5` | quality スコア閾値（cloud 切替判定） |
 | `MEMORY_LOOP_IDLE_BACKOFF_MULTIPLIER` | `2` | idle 連続時の間隔倍率 |
 | `MEMORY_LOOP_MAX_INTERVAL_MS` | `900000` | idle バックオフの上限間隔（15分） |
 | `MEMORY_LOOP_ENABLE_DAILY_AUDIT` | `true` | 日次 KG 監査を有効化するか |
 | `MEMORY_LOOP_ENABLE_WEEKLY_AUDIT` | `true` | 週次 KG 監査を有効化するか |
-| `GNOSIS_MEMORY_LOOP_ALLOW_UNSAFE_MLX_IN_SEATBELT` | `false` | `CODEX_SANDBOX=seatbelt` でも memory loop 経路で `LOCAL_LLM_ALLOW_MLX_IN_SEATBELT=1` を保持するか（デバッグ専用） |
 
 ### KnowFlow ワーカー
 
@@ -124,9 +104,8 @@ local-llm runtime は Gnosis 外部で常駐させます。Gnosis は API / embe
 | 変数名 | デフォルト値 | 説明 |
 | :--- | :--- | :--- |
 | `GNOSIS_REVIEW_MCP_MODE` | `cli` | MCP `review` ツールの実行経路（`cli` / `inproc`）。`cli` は `src/scripts/review.ts` へ委譲 |
-| `GNOSIS_REVIEW_ALLOW_UNSAFE_MLX_IN_SEATBELT` | `false` | `CODEX_SANDBOX=seatbelt` でも review 経路で `LOCAL_LLM_ALLOW_MLX_IN_SEATBELT=1` をそのまま使うか（デバッグ専用） |
 | `GNOSIS_REVIEW_LLM_PROVIDER` | `azure-openai` | Cloud reviewer のプロバイダ（`openai` は Azure OpenAI alias。`azure-openai` / `bedrock` / `anthropic` / `google`） |
-| `GNOSIS_MCP_REVIEW_LLM_TIMEOUT_MS` | `300000` | MCP `review_task` から呼ぶ review LLM の同期 timeout。local provider が最大5分考えられる値にしている |
+| `GNOSIS_MCP_REVIEW_LLM_TIMEOUT_MS` | `300000` | MCP `review_task` から呼ぶ review LLM の同期 timeout |
 | `GNOSIS_REVIEW_LLM_API_BASE_URL` | プロバイダ依存 | Cloud reviewer の API base URL（Azure 利用時は必須） |
 | `AWS_ACCESS_KEY_ID` | - | Bedrock 利用時の AWS access key |
 | `AWS_SECRET_ACCESS_KEY` | - | Bedrock 利用時の AWS secret access key |
@@ -154,7 +133,7 @@ KnowFlow CLI では `--profile <name>` を指定することで、プロジェ�
 ```toml
 [knowflow.llm]
 apiBaseUrl = "http://127.0.0.1:44448"
-model = "gemma-4-e4b-it"
+model = "model-name"
 temperature = 0
 ```
 

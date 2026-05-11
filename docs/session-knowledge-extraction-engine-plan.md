@@ -36,7 +36,7 @@
 2. 承認・却下・登録は「候補の状態遷移」として扱う。
 3. 登録実行は明示操作時のみ `recordTaskNote()` を呼ぶ。
 4. 抽出実行は必ずキュー投入し、ワーカーで順次処理する。
-5. Local LLM 未設定でも deterministic 候補で運用できるようにする。
+5. 追加の reviewer 設定が未完了でも deterministic 候補で運用できるようにする。
 6. 新しい候補種別の増設は最小化し、まず `lesson/rule/procedure/candidate` で運用する。
 
 ## 候補種別ポリシー

@@ -7,8 +7,8 @@ Codex 再起動後の MCP smoke test では、`initial_instructions`, `doctor`, 
 - `provider` 未指定の `review_task` が単体 OpenAI として解決され、Azure OpenAI しか設定していない環境で `OPENAI_API_KEY` 不在により失敗した。
 - `provider: local` でも MCP call が 120 秒で timeout した。
 - `useKnowledge: false` でも timeout したため、原因は agentic_search 連携ではなく local review LLM 実行経路にある。
-- `agentic_search` は Gemma4 timeout 時に `degraded` + `usedKnowledge: []` を返し、未フィルター候補を注入しない安全側の挙動になっている。
-- `scripts/bonsai` は現環境で `1-bit Bonsai requires the PrismML MLX fork` により失敗するため、bonsai fallback は現時点では安定経路として扱えない。
+- `agentic_search` は provider timeout 時に `degraded` + `usedKnowledge: []` を返し、未フィルター候補を注入しない安全側の挙動になっている。
+- 一部 provider は依存 runtime 不足で失敗し得るため、fallback は安定経路として仮定しない。
 
 この計画の目的は、`review_task` を「MCP から呼ぶと、失敗時も理由付きで短時間に返る」状態に戻し、agentic_search で採用した知識だけが実レビューに入ることを検証可能にすること。
 
@@ -16,7 +16,7 @@ Codex 再起動後の MCP smoke test では、`initial_instructions`, `doctor`, 
 
 1. `review_task` の既定 review LLM は Azure OpenAI とする。
 2. `provider: openai` は Azure OpenAI alias として扱い、単体 OpenAI API は review 経路で使わない。
-3. Local LLM を明示指定した場合、遅い/壊れている状態でも MCP call を timeout させず structured degraded result を返す。
+3. provider を明示指定した場合、遅い/壊れている状態でも MCP call を timeout させず structured degraded result を返す。
 4. `knowledgeUsed` は実際に review prompt / guidance に渡した knowledge と一致させる。
 5. `agentic_search` が degraded のとき、未選別候補をレビューに注入しない。
 6. 旧 lifecycle tool を復活させず、公開面は Agent-First 主導線と補助導線（`initial_instructions / agentic_search / search_knowledge / record_task_note / review_task / doctor / memory_search / memory_fetch`）に維持する。
@@ -48,7 +48,7 @@ Codex 再起動後の MCP smoke test では、`initial_instructions`, `doctor`, 
 - `OPENAI_API_KEY` がなくても、Azure OpenAI 設定があれば provider 未指定の smoke test が cloud 設定エラーで落ちない。
 - explicit `provider: openai` は Azure OpenAI として cloud を呼べる。
 
-### 2. MCP timeout と local LLM timeout が噛み合っていない
+### 2. MCP timeout と provider timeout が噛み合っていない
 
 対象:
 
@@ -72,9 +72,9 @@ Codex 再起動後の MCP smoke test では、`initial_instructions`, `doctor`, 
 
 - local provider が timeout しても MCP call は timeout せず JSON を返す。
 - `useKnowledge:false` の document review smoke が 120 秒未満で degraded JSON を返す。
-- timeout 後に local LLM 子プロセスが残らない。
+- timeout 後に LLM 子プロセスが残らない。
 
-### 3. local LLM preflight がない
+### 3. provider preflight がない
 
 対象:
 
@@ -85,21 +85,21 @@ Codex 再起動後の MCP smoke test では、`initial_instructions`, `doctor`, 
 - `test/llmService.test.ts`
 - `test/mcp/tools/agentFirst.test.ts`
 
-現状は `scripts/gemma4` が最小プロンプトに status 0 を返しても、出力が review provider の期待形式ではないケースがある。`scripts/bonsai` は依存 runtime 不足で失敗する。
+現状は provider launcher が最小プロンプトで status 0 を返しても、出力が review provider の期待形式ではないケースがある。
 
 改善:
 
 - `review_task` 開始時に local provider preflight を入れる。
 - preflight は 5 秒から 10 秒程度の短い `text` 出力確認に限定する。
-- Gemma4 preflight では「空出力ではない」「launcher が status 0」「明らかな parser/runtime error ではない」を確認する。
-- Bonsai は preflight で PrismML MLX fork 不足を検出し、fallback 候補から外す。
+- preflight では「空出力ではない」「launcher が status 0」「明らかな parser/runtime error ではない」を確認する。
+- 依存 runtime 不足を検出した provider は fallback 候補から外す。
 - preflight 失敗時は review 本体を開始せず degraded result を返す。
 - `doctor` には strict mode のみ local review preflight を追加する。通常の `doctor` は遅くしない。
 
 受け入れ基準:
 
-- Bonsai runtime 不足が `diagnostics.localProviders.bonsai.status = "unavailable"` として説明される。
-- Gemma4 出力異常が `LLM_UNAVAILABLE` として review_task result に出る。
+- runtime 不足が `diagnostics.localProviders.<provider>.status = "unavailable"` として説明される。
+- provider 出力異常が `LLM_UNAVAILABLE` として review_task result に出る。
 - preflight は通常の `initial_instructions` や `search_knowledge` を遅くしない。
 
 ### 4. agentic_search knowledge と実レビュー context の一致をテストで固定する
@@ -157,7 +157,7 @@ code_diff 側は orchestrator が `E006` timeout を degraded result に変換�
 
 1. `review_task` の provider default を Azure OpenAI に変更する。
 2. local 失敗時の cloud fallback を MCP では無効にする。
-3. MCP 経由の local LLM timeout を 90 秒程度に制限する。
+3. MCP 経由の provider timeout を 90 秒程度に制限する。
 4. document/spec/plan の LLM error を structured degraded result に変換する。
 5. 既存テスト `review_task uses OpenAI as the default MCP reviewer` を Azure OpenAI default テストへ置き換える。
 
@@ -169,14 +169,14 @@ code_diff 側は orchestrator が `E006` timeout を degraded result に変換�
 ### Phase 2: local provider preflight と診断を追加する
 
 1. `createLocalReviewLLMService` の前段に軽量 preflight helper を追加する。
-2. Gemma4/Bonsai の status, stderr, stdout 異常を分類する。
+2. provider の status, stderr, stdout 異常を分類する。
 3. `doctor` strict mode に local review preflight を追加する。
 4. `review_task` diagnostics に local provider 状態を載せる。
 
 完了条件:
 
-- Bonsai の PrismML MLX fork 不足が説明付きで返る。
-- Gemma4 parser/runtime 異常が `LLM_UNAVAILABLE` として返る。
+- provider runtime 不足が説明付きで返る。
+- provider parser/runtime 異常が `LLM_UNAVAILABLE` として返る。
 
 ### Phase 3: knowledge injection contract を固定する
 
@@ -226,9 +226,9 @@ Manual MCP smoke:
 
 1. `initial_instructions` が primary tool 方針を返す。
 2. `doctor` が exposedToolCount 8, missingPrimaryTools [] を返す。
-3. `agentic_search` で Gemma4 timeout 時に `degraded` + `usedKnowledge: []` になる。
+3. `agentic_search` で provider timeout 時に `degraded` + `usedKnowledge: []` になる。
 4. `review_task` provider 未指定で `OPENAI_API_KEY` error にならず、Azure OpenAI 設定を使う。
-5. `review_task` provider local で local LLM failure が structured degraded result になる。
+5. `review_task` provider local で provider failure が structured degraded result になる。
 6. `search_knowledge` は raw 候補確認用としてだけ使える。
 
 ## ドキュメント更新
@@ -249,8 +249,8 @@ Manual MCP smoke:
 
 ## リスク
 
-- Gemma4 の実行時間が sync MCP timeout に収まらない場合、実レビューは degraded ばかりになる。この場合は queued review が必要。
-- Bonsai fallback は現環境では壊れているため、fallback 候補に入れると失敗理由が増えるだけになる。
+- provider の実行時間が sync MCP timeout に収まらない場合、実レビューは degraded ばかりになる。この場合は queued review が必要。
+- fallback provider が不安定な場合、候補に入れると失敗理由が増えるだけになる。
 - provider default の変更は既存テストと docs を同時に変えないと contract drift になる。
 - document review と code_diff review は別経路なので、片方だけ直すと再び `knowledgeUsed` と実 prompt がずれる。
 
@@ -258,6 +258,6 @@ Manual MCP smoke:
 
 - `review_task` が MCP call timeout ではなく JSON result を返す。
 - provider 未指定で `OPENAI_API_KEY` を要求しない。
-- local LLM unavailable/timeout が degraded result と diagnostics に正規化される。
+- provider unavailable/timeout が degraded result と diagnostics に正規化される。
 - agentic_search が選定した knowledge だけが実レビューに渡る。
 - `bun run verify` が通る。

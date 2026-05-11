@@ -28,11 +28,11 @@ Gnosis の価値評価で残った上限要因を、実装・検証・運用文�
 - `review_task` は旧 stub ではなく、provider / timeout / knowledge policy に応じて review result または structured degraded JSON を返す実装になっている。
 - `agentic_search` は tool protocol の破綻時に raw 候補を確定知識として混ぜず、限定回答または degraded として扱う方針になっている。
 - `bun run doctor`, `bun run monitor:snapshot -- --json`, `bun run status-report`, `bun run verify:fast` で、MCP、DB、quality gate、queue の状態を横断確認できる。
-- README は minimal / local-llm / cloud-review の導線を分け、local LLM を最初の価値確認の必須条件にしていない。
+- README は minimal / cloud-review の導線を分け、追加の reviewer 設定を最初の価値確認の必須条件にしていない。
 
 残る上限要因:
 
-- `review_task` は stub ではないが、local provider は 2026-05-06 の実測で 15秒 timeout により structured degraded になった。5分 timeout へ設定変更済みでも、まだ「local provider が即レビューを安定完走する」とは言えない。
+- `review_task` は stub ではないが、optional provider は 2026-05-06 の実測で 15秒 timeout により structured degraded になった。5分 timeout へ設定変更済みでも、まだ「optional provider が即レビューを安定完走する」とは言えない。
 - Monitor は `knowflow.status=healthy` と failed backlog が併存し得る。これは運用上あり得る状態だが、利用者には runtime が healthy なのか queue が要対応なのか分かりにくい。
 - fresh clone から最小価値到達までの第三者実測が不足している。
 - `review_task`, `agentic_search`, Failure Firewall の「価値が出た成功例」が docs と deterministic fixture に固定されていない。
@@ -44,14 +44,14 @@ Gnosis の価値評価で残った上限要因を、実装・検証・運用文�
 
 | まだ言わない表現 | 代わりに使う表現 | 解禁条件 |
 | :--- | :--- | :--- |
-| `local review が安定して即完走する` | `local review は最大5分待ち、完走または structured degraded を返す` | local provider live smoke が3連続で300秒以内に review result を返す |
+| `optional review provider が安定して即完走する` | `optional review provider は最大5分待ち、完走または structured degraded を返す` | optional provider live smoke が3連続で300秒以内に review result を返す |
 | `Monitor が healthy なので問題なし` | `runtime は healthy。failed backlog は別指標で確認する` | snapshot に runtime/backlog の2軸 interpretation が出る |
 | `5分で価値到達できる` | `README 上の最短導線は5分到達を目標にしている` | clean clone 実測で bootstrap, doctor, onboarding smoke, MCP primary exposure が5分以内 |
 | `Failure Firewall がレビュー品質を保証する` | `過去 lesson を補助 context として使い、再発リスクを surfaced する` | 成功例 fixture と review_task context 一致テストが揃う |
 
-## Phase 1: `review_task` local provider の安定完走判定
+## Phase 1: `review_task` optional provider の安定完走判定
 
-目的: `review_task` を「stub ではない」から「local provider でも完走可否を実測で判断できる」状態に進める。
+目的: `review_task` を「stub ではない」から「optional provider でも完走可否を実測で判断できる」状態に進める。
 
 ### 対象
 
@@ -73,7 +73,7 @@ Gnosis の価値評価で残った上限要因を、実装・検証・運用文�
    - `GNOSIS_MCP_REVIEW_LLM_TIMEOUT_MS` default は `300000`。
    - `GNOSIS_MCP_HOST_REQUEST_TIMEOUT_MS` default は `330000`。
    - provider timeout は host timeout より短くする。
-2. local provider preflight を review 本体の前に追加する。
+2. optional provider preflight を review 本体の前に追加する。
    - launcher が存在する。
    - 5秒から10秒以内に空でない text response を返す。
    - parser/runtime error を stderr と exit status から分類する。
@@ -86,7 +86,7 @@ Gnosis の価値評価で残った上限要因を、実装・検証・運用文�
    - `degradedReasons`
    - `timeoutMs`
    - `evidenceCommand`
-6. local provider live smoke は env が揃う場合だけ実行する。env 不足は failure ではなく `skipped` と reason にする。
+6. provider live smoke は env が揃う場合だけ実行する。env 不足は failure ではなく `skipped` と reason にする。
 
 ### 受け入れ条件
 
@@ -110,11 +110,11 @@ await review_task({
 
 期待:
 
-- local provider が完走した場合は `status: "ok"` と review findings / summary を返す。
+- provider が完走した場合は `status: "ok"` と review findings / summary を返す。
 - timeout した場合でも MCP call 自体は timeout せず、`status: "degraded"` と `diagnostics.timeoutMs` を返す。
 - degraded result は `reviewStatus: "needs_confirmation"` になる。
-- local LLM 子プロセスが timeout 後に残らない。
-- 3連続 live smoke が300秒以内に `status: "ok"` を返すまで、「local provider は安定完走」と表現しない。
+- LLM 子プロセスが timeout 後に残らない。
+- 3連続 live smoke が300秒以内に `status: "ok"` を返すまで、「optional provider は安定完走」と表現しない。
 
 ## Phase 2: Monitor の runtime health と backlog health を分離
 
@@ -190,7 +190,7 @@ bun run build
 | evidence | 取得元 | pass 条件 |
 | :--- | :--- | :--- |
 | `primaryTools` | MCP tools/list または doctor | primary 6 tools が欠落なし |
-| `reviewTaskLocal` | live smoke または skipped reason | ok または reason 付き skipped/degraded |
+| `reviewTaskOptionalProvider` | live smoke または skipped reason | ok または reason 付き skipped/degraded |
 | `reviewTaskDegradedSemantics` | focused tests | degraded が `needs_confirmation` 扱い |
 | `monitorBacklogInterpretation` | monitor snapshot | runtime/backlog が2軸で出る |
 | `freshCloneValueArrival` | clean clone smoke artifact | 5分以内または超過理由あり |
@@ -203,8 +203,8 @@ bun run build
 {
   "projectValueEvidence": {
     "scoreReady": false,
-    "missingEvidence": ["freshCloneValueArrival", "reviewTaskLocalStableOk"],
-    "reviewTaskLocal": {
+    "missingEvidence": ["freshCloneValueArrival", "reviewTaskOptionalProviderStableOk"],
+    "reviewTaskOptionalProvider": {
       "status": "degraded",
       "claimAllowed": "structured_degraded_only"
     }
@@ -233,7 +233,6 @@ bun run monitor:snapshot -- --json
 
 - `README.md`
 - `docs/startup.md`
-- `docs/no-local-llm-setup.md`
 - `docs/configuration.md`
 - `scripts/bootstrap.ts`
 - `scripts/onboarding-smoke.ts`
@@ -254,8 +253,8 @@ bun run monitor:snapshot -- --json
    - `environment`
    - `skippedOptionalSteps`
    - `failureReason`
-3. `minimal` は local LLM 不要のまま維持する。
-4. `cloud-review` と `local-llm` は optional route とし、5分到達の必須条件にしない。
+3. `minimal` は追加 reviewer 設定不要のまま維持する。
+4. `cloud-review` は optional route とし、5分到達の必須条件にしない。
 5. 5分を超えた場合は README から断定表現を落とし、実測値を更新する。
 
 ### 受け入れ条件
@@ -270,7 +269,7 @@ bun run doctor
 
 - clean clone で minimal value path が5分以内に終わる、または超過理由が artifact に残る。
 - README の最短導線と smoke script の手順が一致する。
-- 第三者が local LLM なしで最小価値に到達できる。
+- 第三者が追加 reviewer 設定なしで最小価値に到達できる。
 
 ## Phase 5: 成功例 fixture と docs examples の固定
 
@@ -350,8 +349,8 @@ await review_task({
 
 総合価値を 9.0 / 10 に更新できる条件:
 
-- `review_task` が stub ではないことに加え、local provider の live smoke 結果または degraded reason が `status-report` に残る。
-- `review_task` local provider を「安定完走」と表現する場合は、3連続 live smoke が300秒以内に `status: "ok"`。
+- `review_task` が stub ではないことに加え、optional provider の live smoke 結果または degraded reason が `status-report` に残る。
+- `review_task` optional provider を「安定完走」と表現する場合は、3連続 live smoke が300秒以内に `status: "ok"`。
 - Monitor snapshot で runtime health と backlog health が分離している。
 - failed backlog がある場合も reason class と next command が表示される。
 - fresh clone 価値到達の artifact が存在する。
@@ -362,7 +361,7 @@ await review_task({
 
 | PR | 内容 | 完了 gate |
 | :--- | :--- | :--- |
-| PR 1 | `review_task` local provider evidence と status-report 追加 | focused tests, `verify:fast`, `bun run review:local-smoke` artifact |
+| PR 1 | `review_task` optional provider evidence と status-report 追加 | focused tests, `verify:fast`, `bun run review:local-smoke` artifact |
 | PR 2 | Monitor runtime/backlog 2軸 interpretation | monitor snapshot, status-report, monitor tests, build |
 | PR 3 | project value evidence register | status-report JSON, operations runbook |
 | PR 4 | fresh clone value smoke | clean clone artifact, README/startup docs |
@@ -373,9 +372,9 @@ await review_task({
 
 | リスク | 影響 | 対策 |
 | :--- | :--- | :--- |
-| local provider が5分でも安定しない | `review_task` の実用価値が過大評価になる | structured degraded を正式成功ではなく `needs_confirmation` として扱い、queued review は別計画に分ける |
+| optional provider が5分でも安定しない | `review_task` の実用価値が過大評価になる | structured degraded を正式成功ではなく `needs_confirmation` として扱い、queued review は別計画に分ける |
 | Monitor の表示が複雑化する | 利用者がさらに混乱する | runtime/backlog の2軸だけに絞り、原因分析 UI は後段にする |
-| fresh clone 実測がローカル環境依存でぶれる | 外部展開性の証跡にならない | artifact に環境情報と step duration を保存し、local LLM は optional に保つ |
+| fresh clone 実測がローカル環境依存でぶれる | 外部展開性の証跡にならない | artifact に環境情報と step duration を保存し、optional reviewer 設定は必須化しない |
 | 成功例が provider live 依存になる | fixture が不安定になる | deterministic fixture と live smoke を分ける |
 | README が実測より強い表現になる | 価値評価が信用を失う | evidence register の `claimAllowed` に合わせて文言を制限する |
 
@@ -383,7 +382,7 @@ await review_task({
 
 - primary MCP tool の追加。
 - hosted SaaS 化。
-- local LLM 必須化。
+- optional reviewer 設定の必須化。
 - Failure Firewall 専用の公開 MCP tool 追加。
 - `agentic_search` のユーザー向け response schema 拡張。
 - `review_task` の degraded を clean pass として扱うこと。

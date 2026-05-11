@@ -63,5 +63,5 @@ Monitor UI は同じ snapshot を WebSocket で受け取り、queue と gate を
 
 - KnowFlow は MCP primary tool ではありません。エージェント向けの通常入口は `agentic_search` です。
 - mock eval は外部サービスの成熟度を測るものではなく、queue/eval 配線の回帰検出用です。
-- local LLM が未設定でも minimal smoke は通る設計にします。
+- 追加の reviewer 設定が未完了でも minimal smoke は通る設計にします。
 - `llm_provider_unavailable` は task payload 不正ではなく provider/env/backoff 側の失敗として扱います。
