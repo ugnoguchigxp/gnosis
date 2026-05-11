@@ -5,7 +5,7 @@
 ```ts
 await agentic_search({
   userRequest: 'review_task の local provider timeout 方針を変更する前に、過去の方針を確認したい',
-  repoPath: '/Users/y.noguchi/Code/gnosis',
+  repoPath: '/path/to/gnosis',
   changeTypes: ['mcp', 'review', 'config'],
   intent: 'edit',
 });

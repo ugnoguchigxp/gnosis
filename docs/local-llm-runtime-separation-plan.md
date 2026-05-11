@@ -234,8 +234,8 @@ localLlm 側の設定例:
     {
       "name": "gnosis",
       "command": "bun",
-      "args": ["run", "/Users/y.noguchi/Code/gnosis/src/index.ts"],
-      "cwd": "/Users/y.noguchi/Code/gnosis",
+      "args": ["run", "src/index.ts"],
+      "cwd": "/path/to/gnosis",
       "env": {
         "GNOSIS_NO_WORKERS": "true"
       }

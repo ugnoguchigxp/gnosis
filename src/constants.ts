@@ -10,7 +10,7 @@ export const GNOSIS_CONSTANTS = {
 
   // Review LLM (Non-sensitive)
   REVIEW_LLM_PROVIDER_DEFAULT: 'azure-openai',
-  REVIEW_LLM_API_BASE_URL_DEFAULT: 'https://aoai-westus-ynoguchi.openai.azure.com',
+  REVIEW_LLM_API_BASE_URL_DEFAULT: 'https://your-resource.openai.azure.com',
   AZURE_OPENAI_MODEL_DEFAULT: 'gpt-5-4-mini',
   MCP_REVIEW_LLM_TIMEOUT_MS_DEFAULT: 300000,
   MCP_HOST_REQUEST_TIMEOUT_MS_DEFAULT: 330000,

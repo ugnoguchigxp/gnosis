@@ -246,7 +246,7 @@ describe('review stage C', () => {
 
     const request: ReviewRequest = {
       taskId: 'task-1',
-      repoPath: '/Users/y.noguchi/Code/gnosis',
+      repoPath: '/path/to/gnosis',
       baseRef: 'main',
       headRef: 'HEAD',
       trigger: 'manual',
@@ -323,6 +323,6 @@ describe('review stage C', () => {
       | undefined;
     expect(savedExperience?.type).toBe('failure');
     expect(savedExperience?.failureType).toBe('REVIEW_INCONCLUSIVE');
-    expect(getProjectKey('/Users/y.noguchi/Code/gnosis')).toBe('gnosis');
+    expect(getProjectKey('/path/to/gnosis')).toBe('gnosis');
   });
 });

@@ -45,13 +45,13 @@ Codex の推奨設定:
 
 ```toml
 [mcp_servers.gnosis]
-command = "/Users/y.noguchi/.bun/bin/bun"
+command = "bun"
 args = [ "run", "src/index.ts" ]
-cwd = "/Users/y.noguchi/Code/gnosis"
+cwd = "/path/to/gnosis"
 
 [mcp_servers.gnosis.env]
 GNOSIS_NO_WORKERS = "true"
-GNOSIS_MCP_ADAPTER_LOG_FILE = "/Users/y.noguchi/Code/gnosis/logs/mcp-adapter.log"
+GNOSIS_MCP_ADAPTER_LOG_FILE = "/path/to/gnosis/logs/mcp-adapter.log"
 ```
 
 tool 別の approval 設定は不要です。公開 tool surface はサーバー側の `src/mcp/tools/index.ts` と contract test で管理します。

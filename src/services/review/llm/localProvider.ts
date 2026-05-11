@@ -1,13 +1,15 @@
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import { config } from '../../../config.js';
-import { type LocalLlmAlias, resolveLauncherPlan } from '../../../scripts/local-llm-cli.js';
+import { GNOSIS_CONSTANTS } from '../../../constants.js';
 import { runLlmProcess } from '../../llm/spawnControl.js';
 import { REVIEW_LIMITS, ReviewError } from '../errors.js';
 import type { ReviewLLMService } from './types.js';
 
+type LocalLlmAlias = 'gemma4' | 'qwen' | 'bonsai';
+
 type LocalProviderOptions = {
   alias?: LocalLlmAlias;
-  scriptPath?: string;
   timeoutMs?: number;
   invoker?: 'mcp' | 'cli' | 'service' | 'unknown';
   requestId?: string;
@@ -70,6 +72,28 @@ function sanitizeArgs(args: string[]): string[] {
   });
 }
 
+function resolveCommand(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+  if (path.isAbsolute(trimmed)) return trimmed;
+  if (trimmed.includes('/') || trimmed.includes('\\') || trimmed.startsWith('.')) {
+    return path.resolve(process.cwd(), trimmed);
+  }
+  return trimmed;
+}
+
+function resolveLocalScript(alias: LocalLlmAlias): string {
+  if (alias === 'qwen') {
+    return resolveCommand(process.env.GNOSIS_QWEN_SCRIPT ?? GNOSIS_CONSTANTS.QWEN_SCRIPT_DEFAULT);
+  }
+  if (alias === 'bonsai') {
+    return resolveCommand(
+      process.env.GNOSIS_BONSAI_SCRIPT ?? GNOSIS_CONSTANTS.BONSAI_SCRIPT_DEFAULT,
+    );
+  }
+  return resolveCommand(process.env.GNOSIS_GEMMA4_SCRIPT ?? GNOSIS_CONSTANTS.LLM_SCRIPT_DEFAULT);
+}
+
 export function createLocalReviewLLMService(options: LocalProviderOptions = {}): ReviewLLMService {
   const alias = options.alias ?? 'gemma4';
   const timeoutMs = options.timeoutMs ?? REVIEW_LIMITS.LLM_TIMEOUT_MS;
@@ -79,7 +103,8 @@ export function createLocalReviewLLMService(options: LocalProviderOptions = {}):
     provider: 'local',
     async generate(prompt: string, opts = {}): Promise<string> {
       const outputFormat = opts.format ?? 'text';
-      const plan = resolveLauncherPlan(alias, ['--output', outputFormat, '--prompt', prompt]);
+      const command = resolveLocalScript(alias);
+      const args = ['--output', outputFormat, '--prompt', prompt];
       const callId = options.requestId ? `${options.requestId}:${randomUUID()}` : randomUUID();
       const startedAt = Date.now();
       let pid: number | undefined;
@@ -91,11 +116,11 @@ export function createLocalReviewLLMService(options: LocalProviderOptions = {}):
         invoker,
         alias,
         timeoutMs,
-        command: plan.command,
-        args: sanitizeArgs(plan.args),
+        command,
+        args: sanitizeArgs(args),
       });
 
-      const result = await runLlmProcess(plan.command, plan.args, {
+      const result = await runLlmProcess(command, args, {
         timeout: timeoutMs,
         env: spawnEnv,
         onStart: (childPid) => {

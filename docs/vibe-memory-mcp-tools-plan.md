@@ -46,7 +46,7 @@
 
 ## 実装前コードの前提
 
-- `vibe_memories` の schema は [src/db/schema.ts](/Users/y.noguchi/Code/gnosis/src/db/schema.ts) にあり、主な列は `id`, `sessionId`, `content`, `embedding`, `metadata`, `referenceCount`, `lastReferencedAt`, `createdAt`, `memoryType`, `sourceTask`, `importance`, `compressed`。
+- `vibe_memories` の schema は [src/db/schema.ts](../src/db/schema.ts) にあり、主な列は `id`, `sessionId`, `content`, `embedding`, `metadata`, `referenceCount`, `lastReferencedAt`, `createdAt`, `memoryType`, `sourceTask`, `importance`, `compressed`。
 - `src/services/memory.ts` には `saveMemory`, `saveMemoryWithOptions`, `searchMemoriesByType`, `searchMemory`, `listMemoriesByMetadata` がある。
 - `searchMemoriesByType` は embedding がある場合は vector 検索、embedding が無い場合は full-text fallback を使うが、MCP 用の「vector と LIKE を並べて一覧表示する」契約ではない。
 - Gnosis MCP 公開面は `src/mcp/tools/agentFirst.ts` と `src/mcp/tools/index.ts` で定義されている。公開 tool を増やす場合、`docs/mcp-tools.md`, `README.md`, `src/services/agenticSearch/publicSurface.ts`, `test/mcpToolsSnapshot.test.ts`, `test/mcpContract.test.ts` も同じ変更で更新する。

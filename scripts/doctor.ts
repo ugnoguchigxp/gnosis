@@ -165,9 +165,7 @@ async function checkLocalLlmHealth(): Promise<CheckResult> {
       message: requireLocalLlm
         ? `${healthUrl} responded ${response.status}.`
         : `skipped optional local-llm (${healthUrl} responded ${response.status})`,
-      fix: requireLocalLlm
-        ? 'Start the external local-llm API daemon and retry.'
-        : undefined,
+      fix: requireLocalLlm ? 'Start the external local-llm API daemon and retry.' : undefined,
     };
   } catch {
     return {
@@ -176,9 +174,7 @@ async function checkLocalLlmHealth(): Promise<CheckResult> {
       message: requireLocalLlm
         ? `Could not reach ${healthUrl}.`
         : `skipped optional local-llm (${healthUrl} is not reachable)`,
-      fix: requireLocalLlm
-        ? 'Start the external local-llm API daemon and retry.'
-        : undefined,
+      fix: requireLocalLlm ? 'Start the external local-llm API daemon and retry.' : undefined,
     };
   } finally {
     clearTimeout(timeout);

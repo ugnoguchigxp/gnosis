@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { config } from '../config.js';
+import { GNOSIS_CONSTANTS } from '../constants.js';
 import { withGlobalLock } from '../utils/lock.js';
 
 export type MemoryLoopAlias = 'gemma4' | 'bonsai' | 'openai' | 'bedrock';
@@ -140,8 +141,10 @@ function buildRuntimeConfig(): MemoryLoopRuntimeConfig {
     gemma4:
       toSafeString(cfg.gemma4Script) ||
       toSafeString(cfg.llmScript) ||
-      path.resolve(process.cwd(), 'scripts/gemma4'),
-    bonsai: toSafeString(cfg.bonsaiScript) || path.resolve(process.cwd(), 'scripts/bonsai'),
+      path.resolve(process.cwd(), GNOSIS_CONSTANTS.LLM_SCRIPT_DEFAULT),
+    bonsai:
+      toSafeString(cfg.bonsaiScript) ||
+      path.resolve(process.cwd(), GNOSIS_CONSTANTS.BONSAI_SCRIPT_DEFAULT),
     openai: toSafeString(cfg.openaiScript) || path.resolve(process.cwd(), 'scripts/openai'),
     bedrock: toSafeString(cfg.bedrockScript) || path.resolve(process.cwd(), 'scripts/bedrock'),
   };

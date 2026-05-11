@@ -339,11 +339,16 @@ const assertContextRecord = (value: unknown): Record<string, unknown> => {
   return value;
 };
 
-const resolveLlmClientConfig = (override: Partial<LlmClientConfig> = {}): LlmClientConfig =>
-  LlmClientConfigSchema.parse({
+const resolveLlmClientConfig = (override: Partial<LlmClientConfig> = {}): LlmClientConfig => {
+  const merged: Partial<LlmClientConfig> = {
     ...config.knowflow.llm,
     ...override,
-  });
+  };
+  if (merged.thinking === undefined) {
+    merged.thinking = GNOSIS_CONSTANTS.LOCAL_LLM_THINKING_DEFAULT;
+  }
+  return LlmClientConfigSchema.parse(merged);
+};
 
 const unwrapModelEnvelope = (text: string): string => {
   const trimmed = text.trim();

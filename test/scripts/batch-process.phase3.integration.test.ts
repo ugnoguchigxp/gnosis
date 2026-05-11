@@ -23,10 +23,10 @@ function runBun(
   args: string[],
   userEnv: NodeJS.ProcessEnv,
 ): { status: number | null; stdout: string; stderr: string } {
-  const bunCommand = process.env.GNOSIS_BUN_COMMAND || '/Users/y.noguchi/.bun/bin/bun';
+  const bunCommand = process.env.GNOSIS_BUN_COMMAND || process.execPath || 'bun';
   const env = {
     ...userEnv,
-    PATH: `${path.dirname(bunCommand)}:${process.env.PATH}`,
+    PATH: `${path.dirname(bunCommand)}:${process.env.PATH ?? ''}`,
   };
 
   const proc = spawnSync(bunCommand, args, {

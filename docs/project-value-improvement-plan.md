@@ -333,7 +333,7 @@ bun run status-report --json
 ```ts
 await agentic_search({
   userRequest: 'Gnosis の project value 改善で優先すべきことを確認したい',
-  repoPath: '/Users/y.noguchi/Code/gnosis',
+  repoPath: '/path/to/gnosis',
   changeTypes: ['docs', 'mcp', 'review'],
   intent: 'plan'
 });

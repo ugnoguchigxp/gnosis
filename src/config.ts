@@ -15,6 +15,18 @@ export const envNumber = (value: string | undefined, fallback: number): number =
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const REASONING_EFFORT_VALUES = ['low', 'medium', 'high'] as const;
+type ReasoningEffort = (typeof REASONING_EFFORT_VALUES)[number];
+
+const parseReasoningEffort = (value: string | undefined): ReasoningEffort | undefined => {
+  if (!value) return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (REASONING_EFFORT_VALUES.includes(normalized as (typeof REASONING_EFFORT_VALUES)[number])) {
+    return normalized as ReasoningEffort;
+  }
+  return undefined;
+};
+
 const resolveCommand = (value: string | undefined, fallback: string): string => {
   const resolved = (value ?? fallback).trim();
   if (resolved.length === 0) return fallback;
@@ -111,8 +123,14 @@ export const config = {
     path.resolve(process.cwd(), GNOSIS_CONSTANTS.LOCAL_LLM_PATH_DEFAULT),
 
   // LLM スクリプトのフルパス (個別コマンド)
-  gemma4Script: process.env.GNOSIS_GEMMA4_SCRIPT || path.resolve(process.cwd(), 'scripts/gemma4'),
-  bonsaiScript: process.env.GNOSIS_BONSAI_SCRIPT || path.resolve(process.cwd(), 'scripts/bonsai'),
+  gemma4Script: resolveCommand(
+    process.env.GNOSIS_GEMMA4_SCRIPT,
+    GNOSIS_CONSTANTS.LLM_SCRIPT_DEFAULT,
+  ),
+  bonsaiScript: resolveCommand(
+    process.env.GNOSIS_BONSAI_SCRIPT,
+    GNOSIS_CONSTANTS.BONSAI_SCRIPT_DEFAULT,
+  ),
   openaiScript: process.env.GNOSIS_OPENAI_SCRIPT || path.resolve(process.cwd(), 'scripts/openai'),
   bedrockScript:
     process.env.GNOSIS_BEDROCK_SCRIPT || path.resolve(process.cwd(), 'scripts/bedrock'),
@@ -133,7 +151,10 @@ export const config = {
   llmTimeoutMs: envNumber(process.env.GNOSIS_LLM_TIMEOUT_MS, 90_000),
 
   // 埋め込みベクトルの生成コマンド (フルパス)
-  embedCommand: resolveCommand(process.env.GNOSIS_EMBED_COMMAND, GNOSIS_CONSTANTS.EMBED_COMMAND_DEFAULT),
+  embedCommand: resolveCommand(
+    process.env.GNOSIS_EMBED_COMMAND,
+    GNOSIS_CONSTANTS.EMBED_COMMAND_DEFAULT,
+  ),
   embedTimeoutMs: Math.max(
     1,
     envNumber(process.env.GNOSIS_EMBED_TIMEOUT_MS, GNOSIS_CONSTANTS.EMBED_TIMEOUT_MS_DEFAULT),
@@ -262,7 +283,7 @@ export const config = {
         process.env.LOCAL_LLM_THINKING,
         GNOSIS_CONSTANTS.LOCAL_LLM_THINKING_DEFAULT,
       ),
-      reasoningEffort: (process.env.LOCAL_LLM_REASONING_EFFORT as any) ?? undefined,
+      reasoningEffort: parseReasoningEffort(process.env.LOCAL_LLM_REASONING_EFFORT),
     }),
     worker: WorkerConfigSchema.parse({
       taskTimeoutMs: envNumber(

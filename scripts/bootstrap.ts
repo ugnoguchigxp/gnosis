@@ -253,48 +253,50 @@ async function run(): Promise<void> {
     loadLocalEnv(ROOT_ENV_PATH);
   });
 
-  await runStep('Validating external embedding command', 'bun run bootstrap:local-llm', async () => {
-    const embedCommandRaw = process.env.GNOSIS_EMBED_COMMAND?.trim() || 'embed';
-    const embedCommand = resolveCommand(embedCommandRaw);
-    if (await commandAvailable(embedCommand)) {
-      printSuccess(`GNOSIS_EMBED_COMMAND is available: ${embedCommand}`);
-      return;
-    }
-
-    const localLlmRoot = process.env.GNOSIS_LOCAL_LLM_PATH?.trim()
-      ? resolveCommand(process.env.GNOSIS_LOCAL_LLM_PATH.trim())
-      : LOCAL_LLM_ROOT_DEFAULT;
-    const localEmbedPath = path.join(
-      localLlmRoot,
-      'embedding/.venv',
-      IS_WINDOWS ? 'Scripts' : 'bin',
-      IS_WINDOWS ? 'embed.exe' : 'embed',
-    );
-    const localLlmSetup = path.join(localLlmRoot, 'scripts/setup.sh');
-
-    if (existsSync(localEmbedPath)) {
-      upsertEnvValue(ROOT_ENV_PATH, 'GNOSIS_EMBED_COMMAND', localEmbedPath);
-      process.env.GNOSIS_EMBED_COMMAND = localEmbedPath;
-      loadLocalEnv(ROOT_ENV_PATH);
-      printWarning(`GNOSIS_EMBED_COMMAND was updated to ${localEmbedPath}`);
-      if (await commandAvailable(localEmbedPath)) {
-        printSuccess(`GNOSIS_EMBED_COMMAND is available: ${localEmbedPath}`);
+  await runStep(
+    'Validating external embedding command',
+    'bun run bootstrap:local-llm',
+    async () => {
+      const embedCommandRaw = process.env.GNOSIS_EMBED_COMMAND?.trim() || 'embed';
+      const embedCommand = resolveCommand(embedCommandRaw);
+      if (await commandAvailable(embedCommand)) {
+        printSuccess(`GNOSIS_EMBED_COMMAND is available: ${embedCommand}`);
         return;
       }
-    }
 
-    if (existsSync(localLlmSetup)) {
-      throw new Error(
-        `Embedding command not found: ${embedCommand}\n` +
-          `Install external runtime first: cd ${localLlmRoot} && ./scripts/setup.sh`,
+      const localLlmRoot = process.env.GNOSIS_LOCAL_LLM_PATH?.trim()
+        ? resolveCommand(process.env.GNOSIS_LOCAL_LLM_PATH.trim())
+        : LOCAL_LLM_ROOT_DEFAULT;
+      const localEmbedPath = path.join(
+        localLlmRoot,
+        'embedding/.venv',
+        IS_WINDOWS ? 'Scripts' : 'bin',
+        IS_WINDOWS ? 'embed.exe' : 'embed',
       );
-    }
+      const localLlmSetup = path.join(localLlmRoot, 'scripts/setup.sh');
 
-    throw new Error(
-      `Embedding command not found: ${embedCommand}\n` +
-        'Install external local-llm runtime and set GNOSIS_EMBED_COMMAND to a valid command/path.',
-    );
-  });
+      if (existsSync(localEmbedPath)) {
+        upsertEnvValue(ROOT_ENV_PATH, 'GNOSIS_EMBED_COMMAND', localEmbedPath);
+        process.env.GNOSIS_EMBED_COMMAND = localEmbedPath;
+        loadLocalEnv(ROOT_ENV_PATH);
+        printWarning(`GNOSIS_EMBED_COMMAND was updated to ${localEmbedPath}`);
+        if (await commandAvailable(localEmbedPath)) {
+          printSuccess(`GNOSIS_EMBED_COMMAND is available: ${localEmbedPath}`);
+          return;
+        }
+      }
+
+      if (existsSync(localLlmSetup)) {
+        throw new Error(
+          `Embedding command not found: ${embedCommand}\nInstall external runtime first: cd ${localLlmRoot} && ./scripts/setup.sh`,
+        );
+      }
+
+      throw new Error(
+        `Embedding command not found: ${embedCommand}\nInstall external local-llm runtime and set GNOSIS_EMBED_COMMAND to a valid command/path.`,
+      );
+    },
+  );
 
   await runStep('Starting PostgreSQL with pgvector', 'docker compose up -d gnosis', async () => {
     await runCommand({

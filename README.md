@@ -84,7 +84,7 @@ local LLM を設定すると、Gemma4/Bonsai 系のローカル推論、KnowFlow
 ```ts
 await agentic_search({
   userRequest: 'review_task の provider default を変更する前に、過去の方針を確認したい',
-  repoPath: '/Users/y.noguchi/Code/gnosis',
+  repoPath: '/path/to/gnosis',
   changeTypes: ['mcp', 'config', 'review'],
   intent: 'edit',
 });

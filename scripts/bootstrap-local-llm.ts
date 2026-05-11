@@ -30,7 +30,10 @@ function normalizeCommand(value: string): string {
   return trimmed;
 }
 
-async function runCapture(command: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+async function runCapture(
+  command: string,
+  args: string[],
+): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
       cwd: ROOT_DIR,
@@ -64,7 +67,10 @@ async function commandAvailable(command: string): Promise<boolean> {
     const result = await runCapture('where', [command]);
     return result.code === 0;
   }
-  const result = await runCapture('bash', ['-lc', `command -v '${command.replace(/'/g, `'"'"'`)}'`]);
+  const result = await runCapture('bash', [
+    '-lc',
+    `command -v '${command.replace(/'/g, `'"'"'`)}'`,
+  ]);
   return result.code === 0;
 }
 
@@ -109,7 +115,9 @@ async function main(): Promise<void> {
     '',
   );
 
-  process.stdout.write(`${COLORS.cyan}=== Gnosis External local-llm Bootstrap ===${COLORS.reset}\n`);
+  process.stdout.write(
+    `${COLORS.cyan}=== Gnosis External local-llm Bootstrap ===${COLORS.reset}\n`,
+  );
   process.stdout.write('This script no longer installs runtime dependencies in this repository.\n');
   process.stdout.write('It validates external local-llm runtime wiring only.\n\n');
 

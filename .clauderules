@@ -1,9 +1,9 @@
 Canonical repo-local rules: `AGENTS.md` (read and follow first).
-Refer to /Users/y.noguchi/.gnosis/agent/manual.md only when the current Gnosis MCP tool policy is unclear.
+Refer to $HOME/.gnosis/agent/manual.md only when the current Gnosis MCP tool policy is unclear.
 
 <!-- gnosis-hooks:start -->
 # Gnosis Hook Workflow (Auto-managed)
-- Read and follow the hook guide at: /Users/y.noguchi/.gnosis/hooks/manual.md
+- Read and follow the hook guide at: $HOME/.gnosis/hooks/manual.md
 - Before saying a coding segment is done, call `task_checkpoint`.
 - Before starting a review, trigger `task.ready_for_review` via the review flow.
 - If hook gate fails, prioritize fixing lint/typecheck/test before continuing.
