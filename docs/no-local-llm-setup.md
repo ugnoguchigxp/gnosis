@@ -29,8 +29,9 @@ embedding CLI は local LLM ではありません。Gnosis の memory / graph �
 - Bun 1.1+
 - Docker
 - Python 3.10+
+- embedding CLI（`embed`）が利用可能、または `GNOSIS_EMBED_COMMAND` に実在パスを設定
 
-local LLM 用の `services/local-llm/.venv`、MLX runtime、Gemma4/Bonsai モデル、local LLM API は不要です。
+local LLM 用の external `local-llm` runtime（MLX runtime、Gemma4/Bonsai モデル、local LLM API）は不要です。
 
 ## セットアップ
 
@@ -42,7 +43,7 @@ bun run doctor
 bun run onboarding:smoke
 ```
 
-`bun run bootstrap` は minimal profile を準備します。ローカル LLM を入れない場合は `bun run bootstrap:local-llm` を実行しません。
+`bun run bootstrap` は minimal profile を準備します。ローカル LLM を入れない場合は `bun run bootstrap:local-llm`（external runtime 検出）を実行しません。
 
 ## Cloud Review を使う場合
 
@@ -79,7 +80,7 @@ bun run monitor:snapshot
 
 - `bun run bootstrap:local-llm` を実行しない
 - `LOCAL_LLM_API_BASE_URL` を設定しない
-- `services/local-llm/scripts/run_openai_api.sh` を起動しない
+- `../local-llm/scripts/run_openai_api.sh` を起動しない
 - `gemma4` / `qwen` / `bonsai` の利用を前提にしない
 
-local LLM が必要になった時点で、`bun run bootstrap:local-llm` に切り替えてください。
+local LLM が必要になった時点で external `local-llm` runtime を用意し、`bun run bootstrap:local-llm` で接続状態を確認してください。

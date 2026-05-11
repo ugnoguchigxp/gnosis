@@ -60,7 +60,8 @@ tool 別の approval 設定は不要です。公開 tool surface はサーバー
 
 | 変数名 | デフォルト値 | 説明 |
 | :--- | :--- | :--- |
-| `GNOSIS_EMBED_COMMAND` | `services/embedding/.venv/bin/embed` | ベクトル生成スクリプトのフルパス |
+| `GNOSIS_EMBED_COMMAND` | `embed` | 外部 embedding runtime の CLI コマンド名またはパス |
+| `GNOSIS_EMBED_API_KEY_ENV` | `LOCAL_LLM_ACCESS_TOKEN` | embedding daemon へ送る Bearer token を読む環境変数名 |
 | `GNOSIS_EMBED_DAEMON_URL` | `http://127.0.0.1:44512` | 常駐embedding daemonのURL。空文字を明示するとdaemonを使わずCLI fallbackのみ |
 | `GNOSIS_EMBED_DAEMON_TIMEOUT_MS` | `5000` | daemon呼び出しのタイムアウト |
 | `GNOSIS_EMBED_HIGH_CONCURRENCY` | `8` | MCP/search/review query embedding用の同時実行上限 |
@@ -75,9 +76,10 @@ tool 別の approval 設定は不要です。公開 tool surface はサーバー
 | 変数名 | デフォルト値 | 説明 |
 | :--- | :--- | :--- |
 | `LOCAL_LLM_API_BASE_URL` | `http://127.0.0.1:44448` | ローカル LLM API のエンドポイント |
+| `LOCAL_LLM_API_KEY_ENV` | `LOCAL_LLM_ACCESS_TOKEN` | LLM API へ送る Bearer token を読む環境変数名 |
 | `LOCAL_LLM_MODEL` | `gemma-4-e4b-it` | 使用するモデル名 |
 | `LOCAL_LLM_ENABLE_CLI_FALLBACK` | `false` | API 失敗時にスクリプトを直接実行するか。通常運用では daemon 1本に集約するため無効 |
-| `GNOSIS_LLM_SCRIPT` | `services/local-llm/scripts/gemma4` | 直接実行時のスクリプトパス |
+| `GNOSIS_LLM_SCRIPT` | `../local-llm/scripts/gemma4` | 外部 local-llm runtime の CLI コマンドまたはスクリプトパス |
 | `GNOSIS_LLM_CONCURRENCY_LIMIT` | `1` | `gemma4` / `bonsai` 等のローカルLLMプロセス同時実行上限。daemon single-thread 前提のため、1より大きい値は1に丸める |
 | `LOCAL_LLM_DAEMON_PRELOAD` | `true` | local-llm daemon 起動時にモデルを読み込んで ready 状態にする |
 | `LOCAL_LLM_DAEMON_REQUEST_TIMEOUT_MS` | `900000` | daemon 内部 single-thread queue の1リクエスト待機上限 |
@@ -85,7 +87,7 @@ tool 別の approval 設定は不要です。公開 tool surface はサーバー
 | `LOCAL_LLM_CONTEXT_WINDOW` | `131072` | daemon API で許可する入力+出力 token 上限。Gemma4 e4b の `max_position_embeddings` と同じ 128k 相当 |
 | `LOCAL_LLM_ALLOW_MLX_IN_SEATBELT` | `false` | `CODEX_SANDBOX=seatbelt` で MLX (`gemma4`/`bonsai`) を強制有効化するか（既定は安全のため無効） |
 
-local-llm は `com.gnosis.local-llm` LaunchAgent で1プロセスだけ常駐します。HTTP リクエストは TypeScript 側で直列化せず、daemon 内部の single-worker priority queue に登録されます。追加の poll 間隔を置かず、queue に入ったものから直ちに処理対象になります。CLI fallback を明示的に有効化した場合だけ、プロセス起動を `GNOSIS_LLM_CONCURRENCY_LIMIT=1` のセマフォで守ります。
+local-llm runtime は Gnosis 外部で常駐させます。Gnosis は API / embedding endpoint を consumer として呼び出します。CLI fallback を明示的に有効化した場合だけ、`GNOSIS_LLM_CONCURRENCY_LIMIT=1` のセマフォでプロセス起動を直列化します。
 | `GNOSIS_CODEX_INITIAL_LOOKBACK_HOURS` | `0` | Codex 初回同期の対象期間。`0` は既存 JSONL を全件対象にする |
 
 ### Memory Loop (Local-first)

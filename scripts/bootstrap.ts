@@ -22,6 +22,7 @@ const ENV_TEMPLATE = path.join(ROOT_DIR, '.env.minimal');
 const ROOT_ENV_PATH = path.join(ROOT_DIR, '.env');
 const BUN = process.env.GNOSIS_BUN_COMMAND || process.argv[0] || 'bun';
 const IS_WINDOWS = process.platform === 'win32';
+const LOCAL_LLM_ROOT_DEFAULT = path.resolve(ROOT_DIR, '../local-llm');
 
 function printHeader(title: string): void {
   process.stdout.write(`\n${COLORS.cyan}=== ${title} ===${COLORS.reset}\n`);
@@ -118,44 +119,6 @@ function runCommandCapture(spec: CommandSpec): Promise<CommandOutput> {
   });
 }
 
-function parsePythonVersion(raw: string): { major: number; minor: number } | null {
-  const match = raw.match(/Python\s+(\d+)\.(\d+)/i);
-  if (!match) return null;
-  return { major: Number(match[1]), minor: Number(match[2]) };
-}
-
-function isSupportedPythonVersion(version: { major: number; minor: number } | null): boolean {
-  if (!version) return false;
-  return version.major > 3 || (version.major === 3 && version.minor >= 10);
-}
-
-async function resolvePythonSpec(): Promise<CommandSpec> {
-  const candidates: CommandSpec[] = [];
-  if (process.env.GNOSIS_PYTHON_COMMAND?.trim()) {
-    candidates.push({ command: process.env.GNOSIS_PYTHON_COMMAND.trim(), args: ['--version'] });
-  }
-  candidates.push(
-    { command: 'python3', args: ['--version'] },
-    { command: 'python', args: ['--version'] },
-    { command: 'py', args: ['-3', '--version'] },
-  );
-
-  for (const candidate of candidates) {
-    const result = await runCommandCapture(candidate).catch(() => null);
-    if (!result || result.code !== 0) continue;
-
-    const version = parsePythonVersion(`${result.stdout}\n${result.stderr}`);
-    if (!isSupportedPythonVersion(version)) continue;
-
-    if (candidate.command === 'py') {
-      return { command: 'py', args: ['-3'] };
-    }
-    return { command: candidate.command, args: [] };
-  }
-
-  throw new Error('Python 3.10+ was not found. Install python3 and retry.');
-}
-
 async function resolveDockerComposeSpec(): Promise<CommandSpec> {
   const candidates: Array<{ check: CommandSpec; run: CommandSpec }> = [
     {
@@ -193,7 +156,12 @@ function ensureCopiedTemplate(source: string, destination: string, label: string
   );
 }
 
-function upsertEnvValue(filePath: string, key: string, value: string): void {
+function upsertEnvValue(
+  filePath: string,
+  key: string,
+  value: string,
+  options: { preserveExisting?: boolean } = {},
+): void {
   const line = `${key}=${value}`;
   const current = existsSync(filePath) ? readFileSync(filePath, 'utf8') : '';
   const lines = current.length > 0 ? current.split('\n') : [];
@@ -201,6 +169,10 @@ function upsertEnvValue(filePath: string, key: string, value: string): void {
 
   const next = lines.map((existingLine) => {
     if (!existingLine.startsWith(`${key}=`)) {
+      return existingLine;
+    }
+    if (options.preserveExisting) {
+      replaced = true;
       return existingLine;
     }
     replaced = true;
@@ -217,37 +189,33 @@ function upsertEnvValue(filePath: string, key: string, value: string): void {
   writeFileSync(filePath, `${next.join('\n').replace(/\n*$/, '\n')}`, 'utf8');
 }
 
-function getExecutablePath(serviceDir: string, name: string): string {
-  const executable = IS_WINDOWS ? `${name}.exe` : name;
-  return path.join(serviceDir, '.venv', IS_WINDOWS ? 'Scripts' : 'bin', executable);
+function resolveCommand(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+  if (path.isAbsolute(trimmed)) return trimmed;
+  if (trimmed.includes('/') || trimmed.includes('\\') || trimmed.startsWith('.')) {
+    return path.resolve(ROOT_DIR, trimmed);
+  }
+  return trimmed;
 }
 
-function toEnvPath(filePath: string): string {
-  return path.relative(ROOT_DIR, filePath).split(path.sep).join('/');
-}
-
-async function installEmbeddingService(pythonBase: CommandSpec): Promise<void> {
-  const serviceDir = path.join(ROOT_DIR, 'services/embedding');
-  const venvDir = path.join(serviceDir, '.venv');
-  const requirementsLock = path.join(serviceDir, 'requirements.lock');
-  const requirementsTxt = path.join(serviceDir, 'requirements.txt');
-  const requirementsFile = existsSync(requirementsLock) ? requirementsLock : requirementsTxt;
-
-  if (!existsSync(venvDir)) {
-    await runCommand({
-      command: pythonBase.command,
-      args: [...pythonBase.args, '-m', 'venv', venvDir],
-    });
+async function commandAvailable(command: string): Promise<boolean> {
+  if (!command.trim()) return false;
+  if (path.isAbsolute(command) || command.includes('/') || command.includes('\\')) {
+    return existsSync(command);
   }
 
-  const pip = getExecutablePath(serviceDir, 'pip');
-  if (!existsSync(pip)) {
-    throw new Error('pip was not created for services/embedding.');
+  if (IS_WINDOWS) {
+    const result = await runCommandCapture({ command: 'where', args: [command] }).catch(() => null);
+    return Boolean(result && result.code === 0);
   }
 
-  await runCommand({ command: pip, args: ['install', '--upgrade', 'pip'] });
-  await runCommand({ command: pip, args: ['install', '-r', requirementsFile] });
-  await runCommand({ command: pip, args: ['install', '-e', serviceDir] });
+  const escaped = command.replace(/'/g, `'"'"'`);
+  const result = await runCommandCapture({
+    command: 'bash',
+    args: ['-lc', `command -v '${escaped}'`],
+  }).catch(() => null);
+  return Boolean(result && result.code === 0);
 }
 
 async function runStep(name: string, retryCommand: string, fn: () => Promise<void>): Promise<void> {
@@ -263,7 +231,7 @@ async function runStep(name: string, retryCommand: string, fn: () => Promise<voi
 
 async function run(): Promise<void> {
   printHeader('Gnosis Minimal Bootstrap');
-  process.stdout.write('Target profile: minimal (DB + embedding)\n');
+  process.stdout.write('Target profile: minimal (DB + external embedding runtime)\n');
   if (IS_WINDOWS) {
     printWarning(
       'Windows support is not guaranteed yet. This bootstrap keeps paths and commands Windows-aware where possible.',
@@ -271,11 +239,8 @@ async function run(): Promise<void> {
   }
 
   printStep('Resolving prerequisites');
-  const python = await resolvePythonSpec();
   const dockerCompose = await resolveDockerComposeSpec();
-  printSuccess(
-    `Python command: ${formatCommand({ command: python.command, args: python.args })}`.trim(),
-  );
+  printSuccess(`Bun command: ${BUN}`);
   printSuccess(`Docker Compose command: ${formatCommand(dockerCompose)}`.trim());
 
   await runStep('Installing Bun dependencies', 'bun install', async () => {
@@ -284,16 +249,51 @@ async function run(): Promise<void> {
 
   await runStep('Preparing environment file', 'cp .env.minimal .env', async () => {
     ensureCopiedTemplate(ENV_TEMPLATE, ROOT_ENV_PATH, '.env');
-    upsertEnvValue(
-      ROOT_ENV_PATH,
-      'GNOSIS_EMBED_COMMAND',
-      toEnvPath(getExecutablePath(path.join(ROOT_DIR, 'services/embedding'), 'embed')),
-    );
+    upsertEnvValue(ROOT_ENV_PATH, 'GNOSIS_EMBED_COMMAND', 'embed', { preserveExisting: true });
     loadLocalEnv(ROOT_ENV_PATH);
   });
 
-  await runStep('Setting up embedding service', 'bun run bootstrap', async () => {
-    await installEmbeddingService(python);
+  await runStep('Validating external embedding command', 'bun run bootstrap:local-llm', async () => {
+    const embedCommandRaw = process.env.GNOSIS_EMBED_COMMAND?.trim() || 'embed';
+    const embedCommand = resolveCommand(embedCommandRaw);
+    if (await commandAvailable(embedCommand)) {
+      printSuccess(`GNOSIS_EMBED_COMMAND is available: ${embedCommand}`);
+      return;
+    }
+
+    const localLlmRoot = process.env.GNOSIS_LOCAL_LLM_PATH?.trim()
+      ? resolveCommand(process.env.GNOSIS_LOCAL_LLM_PATH.trim())
+      : LOCAL_LLM_ROOT_DEFAULT;
+    const localEmbedPath = path.join(
+      localLlmRoot,
+      'embedding/.venv',
+      IS_WINDOWS ? 'Scripts' : 'bin',
+      IS_WINDOWS ? 'embed.exe' : 'embed',
+    );
+    const localLlmSetup = path.join(localLlmRoot, 'scripts/setup.sh');
+
+    if (existsSync(localEmbedPath)) {
+      upsertEnvValue(ROOT_ENV_PATH, 'GNOSIS_EMBED_COMMAND', localEmbedPath);
+      process.env.GNOSIS_EMBED_COMMAND = localEmbedPath;
+      loadLocalEnv(ROOT_ENV_PATH);
+      printWarning(`GNOSIS_EMBED_COMMAND was updated to ${localEmbedPath}`);
+      if (await commandAvailable(localEmbedPath)) {
+        printSuccess(`GNOSIS_EMBED_COMMAND is available: ${localEmbedPath}`);
+        return;
+      }
+    }
+
+    if (existsSync(localLlmSetup)) {
+      throw new Error(
+        `Embedding command not found: ${embedCommand}\n` +
+          `Install external runtime first: cd ${localLlmRoot} && ./scripts/setup.sh`,
+      );
+    }
+
+    throw new Error(
+      `Embedding command not found: ${embedCommand}\n` +
+        'Install external local-llm runtime and set GNOSIS_EMBED_COMMAND to a valid command/path.',
+    );
   });
 
   await runStep('Starting PostgreSQL with pgvector', 'docker compose up -d gnosis', async () => {

@@ -5,7 +5,12 @@
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT_SCRIPTS="$ROOT_DIR/scripts"
-EMBEDDING_BIN="$ROOT_DIR/services/embedding/.venv/bin"
+LOCAL_LLM_ROOT_DEFAULT="$ROOT_DIR/../local-llm"
+LOCAL_LLM_ROOT="${GNOSIS_LOCAL_LLM_PATH:-$LOCAL_LLM_ROOT_DEFAULT}"
+if [[ "$LOCAL_LLM_ROOT" != /* ]]; then
+  LOCAL_LLM_ROOT="$ROOT_DIR/$LOCAL_LLM_ROOT"
+fi
+EMBEDDING_BIN="$LOCAL_LLM_ROOT/embedding/.venv/bin"
 
 # Colors
 RED='\033[0;31m'

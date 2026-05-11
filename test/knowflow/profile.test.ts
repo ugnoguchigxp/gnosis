@@ -21,6 +21,7 @@ const baseLlmConfig = {
   cliCommand: 'llm',
   cliPromptMode: 'arg' as const,
   cliPromptPlaceholder: '{{prompt}}',
+  thinking: true,
 };
 
 describe('knowflow profile loader', () => {

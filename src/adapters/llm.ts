@@ -116,32 +116,35 @@ type OpenAiCompatibleResponse = {
   choices?: Array<{
     message?: {
       content?: unknown;
+      thinking?: string;
+      reasoning_content?: string;
     };
   }>;
 };
 
 const extractLlmText = (content: unknown): string | undefined => {
-  if (typeof content === 'string') {
-    const trimmed = content.trim();
-    return trimmed.length > 0 ? trimmed : undefined;
-  }
-
-  if (!Array.isArray(content)) {
+  if (typeof content !== 'string') {
+    if (Array.isArray(content)) {
+      const text = content
+        .map((item) => {
+          if (typeof item === 'object' && item !== null && 'text' in item) {
+            const value = (item as { text?: unknown }).text;
+            return typeof value === 'string' ? value : '';
+          }
+          return '';
+        })
+        .join('\n')
+        .trim();
+      return text.length > 0 ? text : undefined;
+    }
     return undefined;
   }
 
-  const text = content
-    .map((item) => {
-      if (typeof item === 'object' && item !== null && 'text' in item) {
-        const value = (item as { text?: unknown }).text;
-        return typeof value === 'string' ? value : '';
-      }
-      return '';
-    })
-    .join('\n')
-    .trim();
+  // Strip <think>...</think> tags if they exist in the content
+  const thinkPattern = /<think>[\s\S]*?<\/think>/gi;
+  const stripped = content.replaceAll(thinkPattern, '').trim();
 
-  return text.length > 0 ? text : undefined;
+  return stripped.length > 0 ? stripped : undefined;
 };
 
 const resolveApiUrl = (base: string, path: string): string =>
@@ -182,11 +185,14 @@ const defaultInvokeApi = async (
         temperature: config.temperature,
         max_tokens: LLM_MAX_TOKENS,
         priority,
+        ...(config.thinking ? { thinking: true, enable_thinking: true } : {}),
+        ...(config.reasoningEffort ? { reasoning_effort: config.reasoningEffort } : {}),
         messages: [
           {
             role: 'system',
-            content:
-              'You are a concise assistant. Return final plain text only. Do not emit hidden reasoning, <think>, <|channel>, or tool-call tags.',
+            content: config.thinking
+              ? 'You are a concise assistant. Return final plain text only.'
+              : 'You are a concise assistant. Return final plain text only. Do not emit hidden reasoning, <think>, <|channel>, or tool-call tags.',
           },
           {
             role: 'user',
@@ -303,6 +309,10 @@ const defaultInvokeCli = async (
     command = `${command} ${shellQuote(prompt)}`;
   } else {
     stdin = prompt;
+  }
+
+  if (llmClientConfig.thinking) {
+    command = `${command} --thinking`;
   }
 
   const { stdout, stderr } = await runCliWithSemaphore(command, stdin, llmClientConfig, signal);

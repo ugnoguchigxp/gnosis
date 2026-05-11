@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
 
 import { spawn } from 'node:child_process';
-import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,15 +14,29 @@ export type LauncherPlan = {
 };
 
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const DEFAULT_LOCAL_LLM_PYTHON = path.join(ROOT_DIR, 'services/local-llm/.venv/bin/python');
-const PYTHON =
-  process.env.GNOSIS_PYTHON_COMMAND ??
-  (fs.existsSync(DEFAULT_LOCAL_LLM_PYTHON) ? DEFAULT_LOCAL_LLM_PYTHON : 'python3');
 const BUN = process.env.GNOSIS_BUN_COMMAND ?? 'bun';
 
 const DEFAULT_GEMMA4_MODEL = process.env.GEMMA4_MODEL ?? 'mlx-community/gemma-4-e4b-it-4bit';
 const DEFAULT_QWEN_MODEL = process.env.QWEN_MODEL ?? 'mlx-community/Qwen3-14B-4bit';
 const DEFAULT_BONSAI_MODEL = process.env.BONSAI_MODEL ?? 'prism-ml/Ternary-Bonsai-8B-mlx-2bit';
+const resolveRuntimeCommand = (value: string): string => {
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+  if (path.isAbsolute(trimmed)) return trimmed;
+  if (trimmed.includes('/') || trimmed.includes('\\') || trimmed.startsWith('.')) {
+    return path.resolve(ROOT_DIR, trimmed);
+  }
+  return trimmed;
+};
+const GEMMA4_COMMAND = resolveRuntimeCommand(
+  process.env.GNOSIS_GEMMA4_SCRIPT ?? GNOSIS_CONSTANTS.LLM_SCRIPT_DEFAULT,
+);
+const QWEN_COMMAND = resolveRuntimeCommand(
+  process.env.GNOSIS_QWEN_SCRIPT ?? GNOSIS_CONSTANTS.QWEN_SCRIPT_DEFAULT,
+);
+const BONSAI_COMMAND = resolveRuntimeCommand(
+  process.env.GNOSIS_BONSAI_SCRIPT ?? GNOSIS_CONSTANTS.BONSAI_SCRIPT_DEFAULT,
+);
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   if (!value || value.trim().length === 0) return fallback;
@@ -67,43 +80,25 @@ export function resolveLauncherPlan(alias: LocalLlmAlias, argv: string[]): Launc
     if (aliasIndex >= 0 && (index === aliasIndex || index === aliasIndex + 1)) return false;
     return true;
   });
+  const hasModelArg = forwardedArgs.includes('--model');
+  const withDefaultModel = (defaultModel: string): string[] =>
+    hasModelArg ? forwardedArgs : ['--model', defaultModel, ...forwardedArgs];
 
   switch (alias) {
     case 'gemma4':
       return {
-        command: PYTHON,
-        args: [
-          path.join(ROOT_DIR, 'services/local-llm/main.py'),
-          '--backend',
-          'mlx',
-          '--model',
-          getArgValue(forwardedArgs, '--model') ?? DEFAULT_GEMMA4_MODEL,
-          ...forwardedArgs,
-        ],
+        command: GEMMA4_COMMAND,
+        args: withDefaultModel(DEFAULT_GEMMA4_MODEL),
       };
     case 'qwen':
       return {
-        command: PYTHON,
-        args: [
-          path.join(ROOT_DIR, 'services/local-llm/main.py'),
-          '--backend',
-          'mlx',
-          '--model',
-          getArgValue(forwardedArgs, '--model') ?? DEFAULT_QWEN_MODEL,
-          ...forwardedArgs,
-        ],
+        command: QWEN_COMMAND,
+        args: withDefaultModel(DEFAULT_QWEN_MODEL),
       };
     case 'bonsai':
       return {
-        command: PYTHON,
-        args: [
-          path.join(ROOT_DIR, 'services/local-llm/main.py'),
-          '--backend',
-          'bonsai',
-          '--model',
-          getArgValue(forwardedArgs, '--model') ?? DEFAULT_BONSAI_MODEL,
-          ...forwardedArgs,
-        ],
+        command: BONSAI_COMMAND,
+        args: withDefaultModel(DEFAULT_BONSAI_MODEL),
       };
     case 'openai':
       return {

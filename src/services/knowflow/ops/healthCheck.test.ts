@@ -16,6 +16,7 @@ describe('healthCheck', () => {
     cliCommand: 'any_command',
     cliPromptMode: 'arg' as const,
     cliPromptPlaceholder: '{{prompt}}',
+    thinking: true,
   };
 
   const mockExec = (shouldFail: boolean) => {

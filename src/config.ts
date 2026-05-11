@@ -15,6 +15,16 @@ export const envNumber = (value: string | undefined, fallback: number): number =
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const resolveCommand = (value: string | undefined, fallback: string): string => {
+  const resolved = (value ?? fallback).trim();
+  if (resolved.length === 0) return fallback;
+  if (path.isAbsolute(resolved)) return resolved;
+  if (resolved.includes('/') || resolved.includes('\\') || resolved.startsWith('.')) {
+    return path.resolve(process.cwd(), resolved);
+  }
+  return resolved;
+};
+
 export const CliPromptModeSchema = z.enum(['stdin', 'arg']);
 export type CliPromptMode = z.infer<typeof CliPromptModeSchema>;
 
@@ -32,6 +42,8 @@ export const LlmClientConfigSchema = z
     cliCommand: z.string().min(1),
     cliPromptMode: CliPromptModeSchema,
     cliPromptPlaceholder: z.string().min(1),
+    thinking: z.boolean(),
+    reasoningEffort: z.enum(['low', 'medium', 'high']).optional(),
   })
   .strict();
 
@@ -106,9 +118,7 @@ export const config = {
     process.env.GNOSIS_BEDROCK_SCRIPT || path.resolve(process.cwd(), 'scripts/bedrock'),
 
   // 現在使用する LLM スクリプト (デフォルト: gemma4)
-  llmScript:
-    process.env.GNOSIS_LLM_SCRIPT ||
-    path.resolve(process.cwd(), GNOSIS_CONSTANTS.LLM_SCRIPT_DEFAULT),
+  llmScript: resolveCommand(process.env.GNOSIS_LLM_SCRIPT, GNOSIS_CONSTANTS.LLM_SCRIPT_DEFAULT),
 
   // モックRetrieverを使用するかどうか
   mockRetriever: envBoolean(process.env.GNOSIS_MOCK_RETRIEVER, false),
@@ -123,9 +133,7 @@ export const config = {
   llmTimeoutMs: envNumber(process.env.GNOSIS_LLM_TIMEOUT_MS, 90_000),
 
   // 埋め込みベクトルの生成コマンド (フルパス)
-  embedCommand:
-    process.env.GNOSIS_EMBED_COMMAND ||
-    path.resolve(process.cwd(), GNOSIS_CONSTANTS.EMBED_COMMAND_DEFAULT),
+  embedCommand: resolveCommand(process.env.GNOSIS_EMBED_COMMAND, GNOSIS_CONSTANTS.EMBED_COMMAND_DEFAULT),
   embedTimeoutMs: Math.max(
     1,
     envNumber(process.env.GNOSIS_EMBED_TIMEOUT_MS, GNOSIS_CONSTANTS.EMBED_TIMEOUT_MS_DEFAULT),
@@ -170,6 +178,7 @@ export const config = {
         GNOSIS_CONSTANTS.EMBED_BACKGROUND_CHUNK_SIZE_DEFAULT,
       ),
     ),
+    apiKeyEnv: process.env.GNOSIS_EMBED_API_KEY_ENV ?? 'LOCAL_LLM_ACCESS_TOKEN',
     enabled: envBoolean(
       process.env.GNOSIS_EMBEDDING_DAEMON_ENABLED,
       GNOSIS_CONSTANTS.EMBEDDING_DAEMON_ENABLED_DEFAULT,
@@ -217,7 +226,7 @@ export const config = {
       apiBaseUrl:
         process.env.LOCAL_LLM_API_BASE_URL ?? GNOSIS_CONSTANTS.LOCAL_LLM_API_BASE_URL_DEFAULT,
       apiPath: process.env.LOCAL_LLM_API_PATH ?? GNOSIS_CONSTANTS.LOCAL_LLM_API_PATH_DEFAULT,
-      apiKeyEnv: process.env.LOCAL_LLM_API_KEY_ENV ?? 'LOCAL_LLM_API_KEY',
+      apiKeyEnv: process.env.LOCAL_LLM_API_KEY_ENV ?? 'LOCAL_LLM_ACCESS_TOKEN',
       model: process.env.LOCAL_LLM_MODEL ?? GNOSIS_CONSTANTS.LOCAL_LLM_MODEL_DEFAULT,
       temperature: envNumber(process.env.LOCAL_LLM_TEMPERATURE, 0),
       timeoutMs: envNumber(
@@ -249,6 +258,11 @@ export const config = {
         } --prompt {{prompt}}`,
       cliPromptMode: process.env.LOCAL_LLM_CLI_PROMPT_MODE === 'stdin' ? 'stdin' : 'arg',
       cliPromptPlaceholder: process.env.LOCAL_LLM_CLI_PROMPT_PLACEHOLDER ?? '{{prompt}}',
+      thinking: envBoolean(
+        process.env.LOCAL_LLM_THINKING,
+        GNOSIS_CONSTANTS.LOCAL_LLM_THINKING_DEFAULT,
+      ),
+      reasoningEffort: (process.env.LOCAL_LLM_REASONING_EFFORT as any) ?? undefined,
     }),
     worker: WorkerConfigSchema.parse({
       taskTimeoutMs: envNumber(
@@ -398,7 +412,7 @@ export const config = {
   llmharness: {
     defaultApiBaseUrl: process.env.LOCAL_LLM_API_BASE_URL || 'http://localhost:8000',
     defaultApiPath: process.env.LOCAL_LLM_API_PATH || '/v1/chat/completions',
-    defaultApiKeyEnv: process.env.LOCAL_LLM_API_KEY_ENV || 'LOCAL_LLM_API_KEY',
+    defaultApiKeyEnv: process.env.LOCAL_LLM_API_KEY_ENV || 'LOCAL_LLM_ACCESS_TOKEN',
     defaultModel: process.env.LOCAL_LLM_MODEL || 'gemma4-default',
   },
 

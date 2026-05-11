@@ -1,85 +1,34 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-# Gnosis Services Setup Script (Refreshed)
-# Handles Python environment setup and tool installation for monorepo services.
-
-# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-SERVICES_DIR="$ROOT_DIR/services"
-
-echo -e "${BLUE}=== Gnosis AI Local Stack Setup (Monorepo) ===${NC}"
-
-setup_embedding() {
-    local service_path="$SERVICES_DIR/embedding"
-    echo -e "\n${BLUE}>>> Setting up ${GREEN}embedding${NC}..."
-    
-    if [ ! -d "$service_path" ]; then
-        echo -e "${RED}Error: embedding service not found.${NC}"
-        return 1
-    fi
-
-    cd "$service_path"
-    [ ! -d ".venv" ] && python3 -m venv .venv
-    
-    echo "Installing embedding dependencies and CLI tools..."
-    ./.venv/bin/pip install --upgrade pip setuptools wheel
-    if [ -f requirements.lock ]; then
-        ./.venv/bin/pip install -r requirements.lock
-    else
-        ./.venv/bin/pip install -r requirements.txt
-    fi
-    ./.venv/bin/pip install -e . # This creates the 'embed' and 'e5embed' commands
-    
-    if [ -f "./.venv/bin/embed" ]; then
-        echo -e "${GREEN}✔ embed command created at .venv/bin/embed${NC}"
-    else
-        echo -e "${RED}Warning: embed command not found after installation.${NC}"
-    fi
-}
-
-setup_local_llm() {
-    local service_path="$SERVICES_DIR/local-llm"
-    echo -e "\n${BLUE}>>> Setting up ${GREEN}local-llm${NC}..."
-
-    if [ ! -d "$service_path" ]; then
-        echo -e "${RED}Error: local-llm service not found.${NC}"
-        return 1
-    fi
-
-    cd "$service_path"
-    [ ! -d ".venv" ] && python3 -m venv .venv
-
-    echo "Installing local-llm dependencies..."
-    ./.venv/bin/pip install --upgrade pip setuptools wheel
-    if [ -f requirements.lock ]; then
-        ./.venv/bin/pip install -r requirements.lock
-    else
-        ./.venv/bin/pip install -r requirements.txt
-    fi
-    
-    # Ensure scripts are executable
-    chmod +x scripts/*
-    
-    echo -e "${GREEN}✔ local-llm setup complete.${NC}"
-}
-
-# Dependency checks
-if ! command -v python3 &> /dev/null; then
-    echo -e "${RED}Error: python3 is not installed.${NC}"
-    exit 1
+BUN_COMMAND="${GNOSIS_BUN_COMMAND:-bun}"
+LOCAL_LLM_ROOT="${GNOSIS_LOCAL_LLM_PATH:-$ROOT_DIR/../local-llm}"
+if [[ "$LOCAL_LLM_ROOT" != /* ]]; then
+  LOCAL_LLM_ROOT="$ROOT_DIR/$LOCAL_LLM_ROOT"
 fi
 
-# Run setups
-setup_embedding
-setup_local_llm
+echo -e "${BLUE}=== Gnosis External Runtime Setup ===${NC}"
+echo -e "Target local-llm root: ${GREEN}$LOCAL_LLM_ROOT${NC}"
 
-echo -e "\n${GREEN}✨ All services have been successfully refreshed!${NC}"
-echo -e "You can now run:"
-echo -e "  - ${BLUE}bun run verify${NC} to check the integration."
-echo -e "  - ${BLUE}scripts/gemma4${NC}, ${BLUE}scripts/qwen${NC}, ${BLUE}scripts/bonsai${NC}, ${BLUE}scripts/bedrock${NC}, or ${BLUE}scripts/openai${NC} to start the LLM."
+if [ ! -x "$LOCAL_LLM_ROOT/scripts/setup.sh" ]; then
+  echo -e "${RED}Error: $LOCAL_LLM_ROOT/scripts/setup.sh was not found.${NC}"
+  echo -e "Set ${BLUE}GNOSIS_LOCAL_LLM_PATH${NC} or clone local-llm next to gnosis."
+  exit 1
+fi
+
+echo -e "\n${BLUE}>>> Installing external local-llm runtime dependencies${NC}"
+"$LOCAL_LLM_ROOT/scripts/setup.sh"
+
+echo -e "\n${BLUE}>>> Registering embed command path${NC}"
+"$ROOT_DIR/scripts/register-path.sh"
+
+echo -e "\n${BLUE}>>> Validating external runtime wiring from gnosis${NC}"
+"$BUN_COMMAND" run bootstrap:local-llm
+
+echo -e "\n${GREEN}✔ External runtime setup complete.${NC}"

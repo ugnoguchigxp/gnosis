@@ -10,7 +10,8 @@ MCP サーバーとして動作し、一次導線は `agentic_search` と `revie
 ### 前提条件
 - Bun 1.1+
 - Docker (`postgres` コンテナ起動用)
-- Python 3.10+（embedding サービス初期化で使用）
+- embedding CLI（`embed`）が利用可能、または `GNOSIS_EMBED_COMMAND` に実在パスを設定
+- （任意）external `local-llm` runtime（local LLM API / Gemma4 等を使う場合）
 
 ### 最短手順
 ```bash
@@ -29,7 +30,7 @@ bun run onboarding:smoke
 | 構成 | 想定用途 | 実行コマンド |
 | :--- | :--- | :--- |
 | no-local-llm / minimal | ローカル LLM を入れずに起動確認したい | `bun run bootstrap` |
-| local-llm | ローカル LLM も使いたい | `bun run bootstrap:local-llm` |
+| local-llm | external `local-llm` runtime を接続したい | `bun run bootstrap:local-llm` |
 | cloud-review | cloud reviewer を使いたい | `.env` に `.env.cloud-review` の必要項目を追記 |
 
 利用テンプレート:
@@ -39,6 +40,27 @@ bun run onboarding:smoke
 - `.env.example`（テンプレート案内用）
 
 ローカル LLM を一切入れない導入は [Local LLM なしセットアップ](docs/no-local-llm-setup.md) を参照してください。
+external runtime の導入補助は `bun run monorepo:setup`（`../local-llm` 前提、`GNOSIS_LOCAL_LLM_PATH` で上書き可）を使えます。
+
+### external local-llm daemon の起動
+
+`local-llm` 構成を使う場合は、Gnosis 起動前に external runtime 側で daemon を起動します。
+
+```bash
+cd ../local-llm
+./scripts/run_openai_api.sh
+./scripts/run_embedding_daemon.sh
+```
+
+別ターミナルで Gnosis 側の接続状態を確認:
+
+```bash
+cd ../gnosis
+bun run bootstrap:local-llm
+GNOSIS_DOCTOR_REQUIRE_LOCAL_LLM=true bun run doctor
+```
+
+常駐運用する場合は `local-llm/launchd/com.localLlm.llm.plist` と `local-llm/launchd/com.localLlm.embedding.plist` を使って LaunchAgent 化できます。
 
 ## Local LLM の有無
 

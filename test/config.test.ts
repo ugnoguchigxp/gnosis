@@ -57,6 +57,7 @@ describe('config schemas', () => {
         cliCommand: 'cmd',
         cliPromptMode: 'stdin' as const,
         cliPromptPlaceholder: '{{prompt}}',
+        thinking: true,
       };
       expect(LlmClientConfigSchema.parse(valid)).toEqual(valid);
     });

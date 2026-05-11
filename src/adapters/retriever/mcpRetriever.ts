@@ -91,7 +91,6 @@ export class McpRetriever implements Retriever {
       }).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
     );
 
-    const logPath = resolve(process.cwd(), 'services/local-llm/mcp_tools.log');
     this.transport = new StdioClientTransport({
       command: this.options.pythonPath, // 'bun' direct execution
       args: [this.options.serverScriptPath],
@@ -163,8 +162,8 @@ export const createLocalLlmRetriever = (baseDir: string): Retriever => {
     return cachedRetriever;
   }
 
-  // NOTE: Python 版 (services/local-llm/mcp/tools_server.py) は廃止されました。
-  // 新しい Bun 版 (src/scripts/mcpToolsServer.ts) を使用します。
+  // NOTE: Python 版 tools server は廃止されました。
+  // Bun 版 (src/scripts/mcpToolsServer.ts) を使用します。
   const command = config.bunCommand || 'bun';
   const serverScriptPath = resolve(process.cwd(), 'src/scripts/mcpToolsServer.ts');
 

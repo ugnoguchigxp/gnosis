@@ -4,9 +4,9 @@
  */
 export const GNOSIS_CONSTANTS = {
   // LLM Configuration
-  LLM_SCRIPT_DEFAULT: 'services/local-llm/scripts/gemma4',
-  BONSAI_SCRIPT_DEFAULT: 'services/local-llm/scripts/bonsai',
-  LOCAL_LLM_PATH_DEFAULT: 'services/local-llm',
+  LLM_SCRIPT_DEFAULT: '../local-llm/scripts/gemma4',
+  BONSAI_SCRIPT_DEFAULT: '../local-llm/scripts/bonsai',
+  LOCAL_LLM_PATH_DEFAULT: '../local-llm',
 
   // Review LLM (Non-sensitive)
   REVIEW_LLM_PROVIDER_DEFAULT: 'azure-openai',
@@ -16,7 +16,7 @@ export const GNOSIS_CONSTANTS = {
   MCP_HOST_REQUEST_TIMEOUT_MS_DEFAULT: 330000,
 
   // Embedding
-  EMBED_COMMAND_DEFAULT: 'services/embedding/.venv/bin/embed',
+  EMBED_COMMAND_DEFAULT: 'embed',
   EMBED_DAEMON_URL_DEFAULT: 'http://127.0.0.1:44512',
   EMBEDDING_DIMENSION_DEFAULT: 384,
   DEDUPE_THRESHOLD_DEFAULT: 0.9,
@@ -36,6 +36,8 @@ export const GNOSIS_CONSTANTS = {
   LOCAL_LLM_TIMEOUT_MS_DEFAULT: 180000,
   LOCAL_LLM_MAX_RETRIES_DEFAULT: 2,
   LOCAL_LLM_RETRY_DELAY_MS_DEFAULT: 300,
+  LOCAL_LLM_THINKING_DEFAULT: true,
+  LOCAL_LLM_REASONING_EFFORT_DEFAULT: 'medium',
 
   // AWS Configuration
   AWS_REGION_DEFAULT: 'ap-northeast-1',
@@ -79,7 +81,7 @@ export const GNOSIS_CONSTANTS = {
   AUTOMATION_ENABLED_DEFAULT: true,
   BACKGROUND_WORKER_ENABLED_DEFAULT: true,
   BACKGROUND_WORKER_MAX_CONCURRENCY_DEFAULT: 2,
-  QWEN_SCRIPT_DEFAULT: 'scripts/qwen',
+  QWEN_SCRIPT_DEFAULT: '../local-llm/scripts/qwen',
   QWEN_MODEL_DEFAULT: 'mlx-community/Qwen3-14B-4bit',
 
   // KnowFlow LLM Queue

@@ -97,10 +97,26 @@ const runEmbedCommand = async (
 ): Promise<{ stdout: string; stderr: string }> =>
   runCommand(command, ['--type', type, '--', text], timeoutMs);
 
+const isPathLikeCommand = (command: string): boolean =>
+  path.isAbsolute(command) || command.includes('/') || command.includes('\\');
+
 const resolveBatchEmbedCommand = (): string | undefined => {
-  const candidate = path.join(path.dirname(config.embedCommand), 'e5embed');
+  const embedCommand = config.embedCommand.trim();
+  if (embedCommand.length === 0) return undefined;
+  if (!isPathLikeCommand(embedCommand)) {
+    return 'e5embed';
+  }
+  const candidate = path.join(path.dirname(embedCommand), 'e5embed');
   return existsSync(candidate) ? candidate : undefined;
 };
+
+const isMissingCommandError = (error: unknown): boolean =>
+  Boolean(
+    error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      (error as { code?: unknown }).code === 'ENOENT',
+  );
 
 const runBatchEmbedCommand = async (
   texts: string[],
@@ -117,11 +133,23 @@ const runBatchEmbedCommand = async (
     return { stdout: JSON.stringify(rows), stderr: '' };
   }
 
-  return runCommand(
-    batchCommand,
-    ['--type', type, ...texts.flatMap((text) => ['--text', text])],
-    timeoutMs,
-  );
+  try {
+    return await runCommand(
+      batchCommand,
+      ['--type', type, ...texts.flatMap((text) => ['--text', text])],
+      timeoutMs,
+    );
+  } catch (error) {
+    if (!isMissingCommandError(error)) {
+      throw error;
+    }
+    const rows: number[][] = [];
+    for (const text of texts) {
+      const { stdout } = await runEmbedCommand(config.embedCommand, text, type, timeoutMs);
+      rows.push(parseEmbeddingVectorFromJson(JSON.parse(stdout.trim())));
+    }
+    return { stdout: JSON.stringify(rows), stderr: '' };
+  }
 };
 
 const parseEmbeddingVectorFromJson = (parsed: unknown): number[] => {
@@ -202,6 +230,9 @@ const requestDaemonEmbeddings = async (
 ): Promise<number[][] | undefined> => {
   const daemonUrl = config.embedding?.daemonUrl;
   if (!daemonUrl || !config.embedding.enabled) return undefined;
+  const apiKeyEnv = config.embedding?.apiKeyEnv?.trim();
+  const apiKey =
+    apiKeyEnv && apiKeyEnv.length > 0 ? process.env[apiKeyEnv]?.trim() || undefined : undefined;
 
   const controller = new AbortController();
   const timeout = setTimeout(
@@ -212,7 +243,10 @@ const requestDaemonEmbeddings = async (
   try {
     const response = await fetch(new URL('/embed', daemonUrl), {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+      },
       body: JSON.stringify({
         texts,
         type: options.type,

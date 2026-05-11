@@ -40,12 +40,9 @@ type RunLogRecord = {
 
 const ROOT_DIR = process.cwd();
 const BUN = process.env.GNOSIS_BUN_COMMAND || process.argv[0] || 'bun';
-const IS_WINDOWS = process.platform === 'win32';
 const STRICT_MODE =
   process.argv.includes('--strict') || process.env.GNOSIS_DOCTOR_STRICT?.trim() === '1';
 const LAUNCH_AGENT_LABELS = [
-  'com.gnosis.embedding-daemon',
-  'com.gnosis.local-llm',
   'com.gnosis.embedding-batch',
   'com.gnosis.sync',
   'com.gnosis.reflect',
@@ -113,17 +110,33 @@ function isSupportedPython(version: { major: number; minor: number } | null): bo
   return version.major > 3 || (version.major === 3 && version.minor >= 10);
 }
 
+const shellQuote = (value: string): string => `'${value.replace(/'/g, `'"'"'`)}'`;
+
 function resolveEmbedPath(): string {
   const configured = process.env.GNOSIS_EMBED_COMMAND?.trim();
   if (configured && configured.length > 0) {
-    return path.isAbsolute(configured) ? configured : path.resolve(ROOT_DIR, configured);
+    if (path.isAbsolute(configured)) return configured;
+    if (configured.includes('/') || configured.includes('\\') || configured.startsWith('.')) {
+      return path.resolve(ROOT_DIR, configured);
+    }
+    return configured;
   }
-  return path.resolve(
-    ROOT_DIR,
-    'services/embedding/.venv',
-    IS_WINDOWS ? 'Scripts' : 'bin',
-    IS_WINDOWS ? 'embed.exe' : 'embed',
-  );
+  return GNOSIS_CONSTANTS.EMBED_COMMAND_DEFAULT;
+}
+
+async function commandAvailable(command: string): Promise<boolean> {
+  if (path.isAbsolute(command) || command.includes('/') || command.includes('\\')) {
+    return existsSync(command);
+  }
+  if (process.platform === 'win32') {
+    const result = await runCapture({ command: 'where', args: [command] }).catch(() => null);
+    return Boolean(result && result.code === 0);
+  }
+  const result = await runCapture({
+    command: 'bash',
+    args: ['-lc', `command -v ${shellQuote(command)}`],
+  }).catch(() => null);
+  return Boolean(result && result.code === 0);
 }
 
 async function checkLocalLlmHealth(): Promise<CheckResult> {
@@ -153,7 +166,7 @@ async function checkLocalLlmHealth(): Promise<CheckResult> {
         ? `${healthUrl} responded ${response.status}.`
         : `skipped optional local-llm (${healthUrl} responded ${response.status})`,
       fix: requireLocalLlm
-        ? 'Run services/local-llm/scripts/run_openai_api.sh and retry.'
+        ? 'Start the external local-llm API daemon and retry.'
         : undefined,
     };
   } catch {
@@ -164,7 +177,7 @@ async function checkLocalLlmHealth(): Promise<CheckResult> {
         ? `Could not reach ${healthUrl}.`
         : `skipped optional local-llm (${healthUrl} is not reachable)`,
       fix: requireLocalLlm
-        ? 'Run services/local-llm/scripts/run_openai_api.sh and retry.'
+        ? 'Start the external local-llm API daemon and retry.'
         : undefined,
     };
   } finally {
@@ -576,14 +589,14 @@ async function main(): Promise<void> {
   }
 
   const embedPath = resolveEmbedPath();
-  if (existsSync(embedPath)) {
+  if (await commandAvailable(embedPath)) {
     results.push({ name: 'GNOSIS_EMBED_COMMAND', status: 'OK', message: embedPath });
   } else {
     results.push({
       name: 'GNOSIS_EMBED_COMMAND',
       status: 'FAIL',
-      message: `${embedPath} was not found.`,
-      fix: 'Run: bun run bootstrap',
+      message: `${embedPath} is not available.`,
+      fix: 'Install external embedding runtime and set GNOSIS_EMBED_COMMAND.',
     });
   }
 

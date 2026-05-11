@@ -175,28 +175,83 @@ describe('memory service', () => {
     });
 
     it('chunks low-priority background batches without dropping results', async () => {
-      mockSpawn.mockImplementation(() => ({
-        stdout: {
+      const originalEmbedCommand = config.embedCommand;
+      config.embedCommand = '/tmp/gnosis-test-embed/mock-embed';
+      try {
+        mockSpawn.mockImplementation(() => ({
+          stdout: {
+            // biome-ignore lint/suspicious/noExplicitAny: mock
+            on: (event: string, cb: any) =>
+              event === 'data' &&
+              cb(Buffer.from(JSON.stringify(new Array(config.embeddingDimension).fill(0.2)))),
+          },
+          stderr: { on: () => {} },
           // biome-ignore lint/suspicious/noExplicitAny: mock
-          on: (event: string, cb: any) =>
-            event === 'data' &&
-            cb(Buffer.from(JSON.stringify(new Array(config.embeddingDimension).fill(0.2)))),
-        },
-        stderr: { on: () => {} },
-        // biome-ignore lint/suspicious/noExplicitAny: mock
-        on: (event: string, cb: any) => {
-          if (event === 'close') setTimeout(() => cb(0), 1);
-        },
-        kill: () => {},
-      }));
+          on: (event: string, cb: any) => {
+            if (event === 'close') setTimeout(() => cb(0), 1);
+          },
+          kill: () => {},
+        }));
 
-      const embeddings = await generateEmbeddings(
-        Array.from({ length: 9 }, (_, index) => `background text ${index}`),
-        { priority: 'low', type: 'passage' },
-      );
+        const embeddings = await generateEmbeddings(
+          Array.from({ length: 9 }, (_, index) => `background text ${index}`),
+          { priority: 'low', type: 'passage' },
+        );
 
-      expect(embeddings).toHaveLength(9);
-      expect(mockSpawn).toHaveBeenCalledTimes(9);
+        expect(embeddings).toHaveLength(9);
+        expect(mockSpawn).toHaveBeenCalledTimes(9);
+      } finally {
+        config.embedCommand = originalEmbedCommand;
+      }
+    });
+
+    it('falls back to single embed calls when e5embed is unavailable on PATH', async () => {
+      const originalEmbedCommand = config.embedCommand;
+      config.embedCommand = 'embed';
+      try {
+        const vector = new Array(config.embeddingDimension).fill(0.3);
+        mockSpawn.mockImplementation((command: string) => {
+          if (command === 'e5embed') {
+            return {
+              stdout: { on: () => {} },
+              stderr: { on: () => {} },
+              // biome-ignore lint/suspicious/noExplicitAny: mock
+              on: (event: string, cb: any) => {
+                if (event === 'error') {
+                  const error = new Error('spawn e5embed ENOENT') as Error & { code?: string };
+                  error.code = 'ENOENT';
+                  setTimeout(() => cb(error), 1);
+                }
+              },
+              kill: () => {},
+            };
+          }
+          return {
+            stdout: {
+              // biome-ignore lint/suspicious/noExplicitAny: mock
+              on: (event: string, cb: any) =>
+                event === 'data' && cb(Buffer.from(JSON.stringify(vector))),
+            },
+            stderr: { on: () => {} },
+            // biome-ignore lint/suspicious/noExplicitAny: mock
+            on: (event: string, cb: any) => {
+              if (event === 'close') setTimeout(() => cb(0), 1);
+            },
+            kill: () => {},
+          };
+        });
+
+        const embeddings = await generateEmbeddings(['text-a', 'text-b']);
+        expect(embeddings).toEqual([vector, vector]);
+
+        const commands = (mockSpawn.mock.calls as Array<[string, ...unknown[]]>).map(
+          (call) => call[0],
+        );
+        expect(commands[0]).toBe('e5embed');
+        expect(commands.filter((command) => command === 'embed')).toHaveLength(2);
+      } finally {
+        config.embedCommand = originalEmbedCommand;
+      }
     });
   });
 

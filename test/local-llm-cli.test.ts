@@ -36,11 +36,18 @@ describe('local LLM CLI launchers', () => {
   test('alias router resolves each launcher to the expected runtime', () => {
     expect(parseAlias(['--alias', 'gemma4'])).toBe('gemma4');
     expect(parseAlias(['--alias', 'qwen'])).toBe('qwen');
-    expect(resolveLauncherPlan('gemma4', ['--prompt', 'hello']).command).toMatch(/python$/);
+    expect(resolveLauncherPlan('gemma4', ['--prompt', 'hello']).command).toContain(
+      '/local-llm/scripts/gemma4',
+    );
+    expect(resolveLauncherPlan('qwen', ['--prompt', 'hello']).command).toContain(
+      '/local-llm/scripts/qwen',
+    );
     expect(resolveLauncherPlan('qwen', ['--prompt', 'hello']).args.join(' ')).toContain(
       'Qwen3-14B-4bit',
     );
-    expect(resolveLauncherPlan('bonsai', ['--prompt', 'hello']).args).toContain('bonsai');
+    expect(resolveLauncherPlan('bonsai', ['--prompt', 'hello']).command).toContain(
+      '/local-llm/scripts/bonsai',
+    );
     expect(resolveLauncherPlan('bonsai', ['--prompt', 'hello']).args.join(' ')).toContain(
       'prism-ml/Ternary-Bonsai-8B-mlx-2bit',
     );
@@ -68,21 +75,12 @@ describe('local LLM CLI launchers', () => {
     ).toContain('--mtp --draft-model mlx-community/gemma-4-E4B-it-assistant-bf16');
   });
 
-  test('local LLM dependencies include the Gemma 4 MTP runtime', () => {
-    expect(readText('services/local-llm/requirements.txt')).toContain('mlx-vlm');
-    expect(readText('services/local-llm/.env.example')).toContain('GEMMA4_MTP_ENABLED=false');
-    expect(readText('services/local-llm/.env.example')).toContain(
-      'GEMMA4_DRAFT_MODEL=mlx-community/gemma-4-E4B-it-assistant-bf16',
-    );
-    expect(readText('services/local-llm/.env.example')).toContain(
-      'LOCAL_LLM_PREFILL_STEP_SIZE=8192',
-    );
-    expect(readText('services/local-llm/.env.example')).toContain(
-      'LOCAL_LLM_CONTEXT_WINDOW=131072',
-    );
-    expect(readText('services/local-llm/.env.example')).toContain(
-      'BONSAI_MODEL=prism-ml/Ternary-Bonsai-8B-mlx-2bit',
-    );
+  test('local runtime defaults stay on external sibling repository', () => {
+    const constants = readText('src/constants.ts');
+    expect(constants).toContain("../local-llm/scripts/gemma4");
+    expect(constants).toContain("../local-llm/scripts/qwen");
+    expect(constants).toContain("../local-llm/scripts/bonsai");
+    expect(constants).toContain("EMBED_COMMAND_DEFAULT: 'embed'");
   });
 
   test('local LLM concurrency is capped at one process', () => {
@@ -102,11 +100,11 @@ describe('local LLM CLI launchers', () => {
     expect(reg).toContain('which openai');
   });
 
-  test('setup guidance references launchers', () => {
-    expect(readText('scripts/setup-services.sh')).toContain('scripts/gemma4');
-    expect(readText('scripts/setup-services.sh')).toContain('scripts/qwen');
-    expect(readText('scripts/setup-services.sh')).toContain('scripts/bonsai');
-    expect(readText('scripts/setup-services.sh')).toContain('scripts/bedrock');
-    expect(readText('scripts/setup-services.sh')).toContain('scripts/openai');
+  test('setup guidance references external local-llm runtime wiring', () => {
+    const setup = readText('scripts/setup-services.sh');
+    expect(setup).toContain('GNOSIS_LOCAL_LLM_PATH');
+    expect(setup).toContain('scripts/setup.sh');
+    expect(setup).toContain('scripts/register-path.sh');
+    expect(setup).toContain('bootstrap:local-llm');
   });
 });
