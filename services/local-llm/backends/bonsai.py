@@ -1,23 +1,37 @@
-from .mlx import MLXBackend
-from typing import Generator, List, Dict, Any
+from .mlx import DEFAULT_PREFILL_STEP_SIZE, MLXBackend
+from typing import Generator, List, Dict
 
 class BonsaiBackend(MLXBackend):
     """
-    1-bit Bonsaiモデルに最適化されたバックエンド。
-    MLXBackendを継承しつつ、1-bit特有の初期化やパラメータ調整を行う。
+    Bonsai/Ternary-Bonsai models on the MLX backend.
     """
+
+    def __init__(
+        self,
+        verbose: bool = False,
+        prefill_step_size: int | None = DEFAULT_PREFILL_STEP_SIZE,
+    ):
+        super().__init__(
+            verbose=verbose,
+            mtp_enabled=False,
+            prefill_step_size=prefill_step_size,
+        )
     
     def load_model(self, model_path: str):
-        # 1-bitモデルのロードにはPrismMLのMLXフォークが必要である旨を表示
         if self.verbose:
-            print(f"Loading 1-bit Bonsai model: {model_path}...")
+            print(f"Loading Bonsai model: {model_path}...")
         try:
             super().load_model(model_path)
             if self.verbose:
                 print("Successfully loaded model using MLX kernels.")
         except Exception as e:
-            print(f"Error: 1-bit Bonsai requires the PrismML MLX fork.")
-            print("Please follow the setup instructions in implementation_plan.md")
+            message = str(e)
+            if "requested number of bits 1 is not supported" in message:
+                print("Error: MLX 1-bit Bonsai requires the PrismML MLX fork.")
+                print(
+                    "Use the default Ternary-Bonsai MLX 2-bit model, or run with "
+                    "a separate PrismML Bonsai environment for 1-bit models."
+                )
             raise e
 
     def generate_stream(self, messages: List[Dict[str, str]], **kwargs) -> Generator[str, None, None]:

@@ -41,6 +41,9 @@ describe('local LLM CLI launchers', () => {
       'Qwen3-14B-4bit',
     );
     expect(resolveLauncherPlan('bonsai', ['--prompt', 'hello']).args).toContain('bonsai');
+    expect(resolveLauncherPlan('bonsai', ['--prompt', 'hello']).args.join(' ')).toContain(
+      'prism-ml/Ternary-Bonsai-8B-mlx-2bit',
+    );
     expect(resolveLauncherPlan('openai', ['--prompt', 'hello']).args.join(' ')).toContain(
       '--provider openai',
     );
@@ -53,6 +56,32 @@ describe('local LLM CLI launchers', () => {
     expect(resolveLauncherPlan('bedrock', ['--no-mcp']).args.join(' ')).toContain('--no-mcp');
     expect(resolveLauncherPlan('gemma4', ['--model', 'custom-model']).args.join(' ')).toContain(
       'custom-model',
+    );
+    expect(
+      resolveLauncherPlan('gemma4', [
+        '--mtp',
+        '--draft-model',
+        'mlx-community/gemma-4-E4B-it-assistant-bf16',
+        '--draft-block-size',
+        '6',
+      ]).args.join(' '),
+    ).toContain('--mtp --draft-model mlx-community/gemma-4-E4B-it-assistant-bf16');
+  });
+
+  test('local LLM dependencies include the Gemma 4 MTP runtime', () => {
+    expect(readText('services/local-llm/requirements.txt')).toContain('mlx-vlm');
+    expect(readText('services/local-llm/.env.example')).toContain('GEMMA4_MTP_ENABLED=false');
+    expect(readText('services/local-llm/.env.example')).toContain(
+      'GEMMA4_DRAFT_MODEL=mlx-community/gemma-4-E4B-it-assistant-bf16',
+    );
+    expect(readText('services/local-llm/.env.example')).toContain(
+      'LOCAL_LLM_PREFILL_STEP_SIZE=8192',
+    );
+    expect(readText('services/local-llm/.env.example')).toContain(
+      'LOCAL_LLM_CONTEXT_WINDOW=131072',
+    );
+    expect(readText('services/local-llm/.env.example')).toContain(
+      'BONSAI_MODEL=prism-ml/Ternary-Bonsai-8B-mlx-2bit',
     );
   });
 

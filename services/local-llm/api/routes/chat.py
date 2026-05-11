@@ -67,7 +67,7 @@ async def chat_completions(request: ChatCompletionRequest):
     tool_names = _extract_tool_names(request)
     messages = [_message_to_dict(message) for message in request.messages]
 
-    async def run_chat_once() -> str:
+    async def run_chat_once() -> dict[str, object]:
         try:
             result = await asyncio.to_thread(
                 daemon.chat,
@@ -78,7 +78,9 @@ async def chat_completions(request: ChatCompletionRequest):
                 tool_names,
                 request.priority,
             )
-            return str(result["content"])
+            return result
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except TimeoutError as exc:
@@ -86,7 +88,8 @@ async def chat_completions(request: ChatCompletionRequest):
 
     if request.stream:
         async def event_stream() -> AsyncGenerator[str, None]:
-            content = await run_chat_once()
+            result = await run_chat_once()
+            content = str(result["content"])
 
             first_chunk = {
                 "id": completion_id,
@@ -131,11 +134,19 @@ async def chat_completions(request: ChatCompletionRequest):
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
-    content = await run_chat_once()
+    result = await run_chat_once()
+    content = str(result["content"])
     prompt_text = "\n".join(str(message.get("content", "")) for message in messages)
 
-    prompt_tokens = _estimate_tokens(prompt_text)
-    completion_tokens = _estimate_tokens(content)
+    usage = result.get("usage")
+    if isinstance(usage, dict):
+        prompt_tokens = int(usage.get("prompt_tokens") or _estimate_tokens(prompt_text))
+        completion_tokens = int(usage.get("completion_tokens") or _estimate_tokens(content))
+        total_tokens = int(usage.get("total_tokens") or (prompt_tokens + completion_tokens))
+    else:
+        prompt_tokens = _estimate_tokens(prompt_text)
+        completion_tokens = _estimate_tokens(content)
+        total_tokens = prompt_tokens + completion_tokens
 
     return ChatCompletionResponse(
         id=completion_id,
@@ -151,6 +162,6 @@ async def chat_completions(request: ChatCompletionRequest):
         usage=Usage(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
-            total_tokens=prompt_tokens + completion_tokens,
+            total_tokens=total_tokens,
         ),
     )

@@ -29,8 +29,18 @@ class McpServerConfig:
 
 
 class VibeMcpClient:
-    def __init__(self, root_dir: str, server_configs: Optional[List[McpServerConfig]] = None):
-        self.root_dir = root_dir
+    def __init__(
+        self,
+        root_dir: str,
+        server_configs: Optional[List[McpServerConfig]] = None,
+        gnosis_root_dir: Optional[str] = None,
+    ):
+        self.root_dir = os.path.abspath(root_dir)
+        self.gnosis_root_dir = os.path.abspath(
+            gnosis_root_dir
+            or os.getenv("GNOSIS_MCP_SERVER_ROOT", "")
+            or os.path.join(os.path.dirname(__file__), "../../..")
+        )
         self.server_configs: List[McpServerConfig] = (
             server_configs if server_configs is not None else self._build_default_server_configs()
         )
@@ -42,22 +52,25 @@ class VibeMcpClient:
 
         atexit.register(self._atexit_shutdown)
 
+    def _mcp_log_path(self) -> str:
+        log_dir = os.path.join(self.gnosis_root_dir, "services/local-llm/.debug")
+        os.makedirs(log_dir, exist_ok=True)
+        return os.path.join(log_dir, "mcp_server.log")
+
     def _build_default_server_configs(self) -> List[McpServerConfig]:
         configs: List[McpServerConfig] = []
 
         gnosis_enabled = _is_truthy(os.getenv("LOCAL_LLM_MCP_ENABLE_GNOSIS"), default=True)
         if gnosis_enabled:
-            log_path = os.path.abspath(
-                os.path.join(self.root_dir, "services/local-llm/.debug/mcp_server.log")
-            )
-            index_path = os.path.join(self.root_dir, "src/index.ts")
+            log_path = self._mcp_log_path()
+            index_path = os.path.join(self.gnosis_root_dir, "src/index.ts")
             configs.append(
                 McpServerConfig(
                     name="gnosis",
                     command="bash",
                     args=[
                         "-c",
-                        f"bun run {shlex.quote(index_path)} 2>> {shlex.quote(log_path)}",
+                        f"cd {shlex.quote(self.gnosis_root_dir)} && bun run {shlex.quote(index_path)} 2>> {shlex.quote(log_path)}",
                     ],
                     env={
                         "NODE_ENV": "development",
@@ -75,7 +88,7 @@ class VibeMcpClient:
             else:
                 semantic_args = [
                     "run",
-                    os.path.join(self.root_dir, "src/scripts/semanticCodeMcpServer.ts"),
+                    os.path.join(self.gnosis_root_dir, "src/scripts/semanticCodeMcpServer.ts"),
                 ]
 
             semantic_env: Dict[str, str] = {
@@ -92,19 +105,16 @@ class VibeMcpClient:
                     if key:
                         semantic_env[key] = value.strip()
 
-            log_path = os.path.abspath(
-                os.path.join(self.root_dir, "services/local-llm/.debug/mcp_server.log")
-            )
+            log_path = self._mcp_log_path()
             
             # Use bash -c to change directory and redirect stderr
-            semantic_script = os.path.join(self.root_dir, "src/scripts/semanticCodeMcpServer.ts")
             configs.append(
                 McpServerConfig(
                     name="semantic",
                     command="bash",
                     args=[
                         "-c",
-                        f"cd {shlex.quote(self.root_dir)} && {shlex.quote(semantic_command)} {' '.join(shlex.quote(a) for a in semantic_args)} 2>> {shlex.quote(log_path)}",
+                        f"cd {shlex.quote(self.gnosis_root_dir)} && {shlex.quote(semantic_command)} {' '.join(shlex.quote(a) for a in semantic_args)} 2>> {shlex.quote(log_path)}",
                     ],
                     env=semantic_env,
                 )

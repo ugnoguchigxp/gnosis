@@ -76,6 +76,25 @@ def _is_truthy_env(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def _env_prefill_step_size() -> int:
+    return _env_int("LOCAL_LLM_PREFILL_STEP_SIZE", _env_int("GEMMA4_PREFILL_STEP_SIZE", 8192))
+
+
+def _normalize_optional_positive_int(value: int) -> int | None:
+    return value if value > 0 else None
+
+
 def _format_mcp_tool_catalog(tools: list[dict] | None) -> str:
     if not tools:
         return ""
@@ -113,6 +132,32 @@ async def main():
     parser.add_argument("--no-mcp", action="store_true", help="Disable MCP server connections")
     parser.add_argument("--output", choices=["json", "text"], default="json", help="Output format in single-turn mode")
     parser.add_argument("--root", type=str, help="Project root directory for MCP tools")
+    parser.add_argument("--mtp", action="store_true", help="Enable Gemma 4 MTP speculative decoding")
+    parser.add_argument("--no-mtp", action="store_true", help="Disable Gemma 4 MTP even when GEMMA4_MTP_ENABLED is set")
+    parser.add_argument(
+        "--draft-model",
+        type=str,
+        default=os.getenv("GEMMA4_DRAFT_MODEL", "mlx-community/gemma-4-E4B-it-assistant-bf16"),
+        help="Gemma 4 MTP assistant/drafter model",
+    )
+    parser.add_argument(
+        "--draft-kind",
+        type=str,
+        default=os.getenv("GEMMA4_DRAFT_KIND", "mtp"),
+        help="Speculative decoding drafter kind",
+    )
+    parser.add_argument(
+        "--draft-block-size",
+        type=int,
+        default=_env_int("GEMMA4_DRAFT_BLOCK_SIZE", 6),
+        help="Number of MTP draft tokens per verification block",
+    )
+    parser.add_argument(
+        "--prefill-step-size",
+        type=int,
+        default=_env_prefill_step_size(),
+        help="Prompt prefill chunk size for MLX-family backends; use 0 to disable chunked prefill",
+    )
     args = parser.parse_args()
 
     # NOTE:
@@ -136,7 +181,19 @@ async def main():
     # バックエンドの動的インポート
     if args.backend in {"mlx", "qwen"}:
         from backends.mlx import MLXBackend
-        backend = MLXBackend(verbose=args.verbose)
+        mtp_enabled = (
+            args.backend == "mlx"
+            and not args.no_mtp
+            and (args.mtp or _is_truthy_env("GEMMA4_MTP_ENABLED"))
+        )
+        backend = MLXBackend(
+            verbose=args.verbose,
+            mtp_enabled=mtp_enabled,
+            draft_model_path=args.draft_model,
+            draft_kind=args.draft_kind,
+            draft_block_size=args.draft_block_size,
+            prefill_step_size=_normalize_optional_positive_int(args.prefill_step_size),
+        )
         if args.backend == "qwen":
             model_path = args.model or "mlx-community/Qwen3-14B-4bit"
         else:
@@ -147,8 +204,11 @@ async def main():
         model_path = args.model or "llama3"
     elif args.backend == "bonsai":
         from backends.bonsai import BonsaiBackend
-        backend = BonsaiBackend(verbose=args.verbose)
-        model_path = args.model or "prism-ml/Bonsai-8B-mlx-1bit"
+        backend = BonsaiBackend(
+            verbose=args.verbose,
+            prefill_step_size=_normalize_optional_positive_int(args.prefill_step_size),
+        )
+        model_path = args.model or os.getenv("BONSAI_MODEL", "prism-ml/Ternary-Bonsai-8B-mlx-2bit")
     elif args.backend == "mock":
         from backends.mock_backend import MockBackend
         backend = MockBackend(verbose=args.verbose)
@@ -228,7 +288,7 @@ async def main():
     elif args.backend in {"mlx", "qwen"}:
         sys_instr = (
             f"あなたは有能なアシスタントです。本日は {current_date} です。日本語で回答してください。\n"
-            "思考過程は <think> タグで囲んでください。\n\n"
+            "思考過程や <think> タグは出力しないでください。\n\n"
             "【ツール呼び出し形式】\n"
             "必ず以下の形式を使用してください。引数は JSON 形式で、文字列はダブルクォートで囲んでください。\n"
             "<|tool_call|>call:tool_name{arg_name:\"value\"}<tool_call|>\n\n"
@@ -344,8 +404,28 @@ async def main():
                 print("Chat history reset.")
                 continue
 
-            # チャット実行
-            await engine.chat_loop(u_inp, max_tokens=args.max_tokens, temperature=args.temp)
+            streamed_response = False
+
+            def emit_chunk(chunk: str) -> None:
+                nonlocal streamed_response
+                if not chunk:
+                    return
+                sys.stdout.write(chunk)
+                sys.stdout.flush()
+                streamed_response = True
+
+            response_text = await engine.run_turn(
+                u_inp,
+                max_tokens=args.max_tokens,
+                temperature=args.temp,
+                on_chunk=emit_chunk,
+            )
+            if streamed_response:
+                print()
+            else:
+                print(response_text)
+            with open(debug_log_path, "a") as f:
+                f.write(f"\n--- TURN ---\nRaw Response: {response_text}\n")
             if session_store and session_id and not args.no_session:
                 session_store.save(
                     session_id=session_id,

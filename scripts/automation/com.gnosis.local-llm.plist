@@ -28,6 +28,10 @@
         <string>true</string>
         <key>LOCAL_LLM_DAEMON_REQUEST_TIMEOUT_MS</key>
         <string>900000</string>
+        <key>LOCAL_LLM_PREFILL_STEP_SIZE</key>
+        <string>8192</string>
+        <key>LOCAL_LLM_CONTEXT_WINDOW</key>
+        <string>131072</string>
         <key>PYTHONUNBUFFERED</key>
         <string>1</string>
     </dict>

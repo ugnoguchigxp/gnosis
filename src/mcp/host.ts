@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { type Socket, createServer } from 'node:net';
 import { join, resolve } from 'node:path';
-import { envBoolean, envNumber } from '../config.js';
+import { config, envBoolean, envNumber } from '../config.js';
 import { GNOSIS_CONSTANTS } from '../constants.js';
 import { closeDbPool } from '../db/index.js';
 import { isProcessAlive } from '../runtime/childProcesses.js';
@@ -300,10 +300,14 @@ export async function startMcpHost(options: HostOptions = {}): Promise<void> {
     console.error('[McpHost] Background workers are OFF for MCP host.');
   }
 
-  if (!config.localLlmEnabled) {
+  const localLlmEnabled = config.localLlmEnabled ?? GNOSIS_CONSTANTS.LOCAL_LLM_ENABLED_DEFAULT;
+  const embeddingDaemonEnabled =
+    config.embedding?.enabled ?? GNOSIS_CONSTANTS.EMBEDDING_DAEMON_ENABLED_DEFAULT;
+
+  if (!localLlmEnabled) {
     console.error('[McpHost] Local LLM daemon is OFF by configuration.');
   }
-  if (!config.embedding.enabled) {
+  if (!embeddingDaemonEnabled) {
     console.error('[McpHost] Embedding daemon is OFF by configuration.');
   }
 

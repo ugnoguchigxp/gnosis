@@ -115,6 +115,7 @@ class LocalLlmDaemon:
         finished = time.perf_counter()
         return {
             "content": content,
+            "usage": self.manager.last_generation_stats(),
             "queueWaitMs": round((start - item.queued_at) * 1000, 3),
             "generateMs": round((finished - start) * 1000, 3),
         }

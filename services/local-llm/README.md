@@ -52,12 +52,44 @@ Apple Silicon Mac を使用している場合、MLX バックエンドを推奨�
 ./scripts/gemma4 "Hello, who are you?"
 ```
 
+MTP speculative decoding を試す場合は、Gemma 4 assistant/drafter も読み込みます。
+初回は `mlx-community/gemma-4-E4B-it-assistant-bf16` が追加でダウンロードされます。
+
+```bash
+GEMMA4_MTP_ENABLED=1 ./scripts/gemma4 --prompt "日本語で短く挨拶して" --no-mcp
+
+# CLI オプションで明示する場合
+./scripts/gemma4 --mtp --draft-block-size 6 --prompt "日本語で短く挨拶して" --no-mcp
+```
+
+`LOCAL_LLM_PREFILL_STEP_SIZE` は MLX 系バックエンド共通のプロンプト prefill 分割サイズです。
+デフォルトは `8192` で、通常の会話では chunked prefill の progress 表示と分割オーバーヘッドを避けます。
+長いプロンプトでメモリを抑えたい場合は小さめに設定し、`0` を指定すると分割 prefill を無効化します。
+後方互換として `GEMMA4_PREFILL_STEP_SIZE` も参照します。
+
+Gemma4 e4b のモデル config は `max_position_embeddings=131072` です。
+daemon API は `LOCAL_LLM_CONTEXT_WINDOW=131072` を既定値にし、入力 prompt token と `max_tokens`
+の合計が実効 window を超える場合は生成前に `context_length_exceeded` を返します。
+`/health` の `modelContextWindow` / `contextWindow` で現在値を確認できます。
+
+OpenAI 互換 API daemon でも同じ環境変数を使います。
+
+```bash
+GEMMA4_MTP_ENABLED=1 ./scripts/run_openai_api.sh
+```
+
 #### 🌳 Bonsai (MLX)
-Bonsai は MLX 最適化された高性能 8B モデルです。
+Bonsai は MLX 最適化された高性能 8B モデルです。このランチャーの既定値は
+stock MLX で動く `prism-ml/Ternary-Bonsai-8B-mlx-2bit` です。1-bit Bonsai
+MLX モデルは PrismML fork の MLX と専用 `mlx-lm` バージョンが必要で、Gemma 4
+runtime と同じ `.venv` には混在させません。
 
 ```bash
 # Bonsai の実行（初回実行時に自動ダウンロードされます）
 ./scripts/bonsai "複雑なアルゴリズムについて解説して"
+
+# 別サイズや別モデルを使う場合
+BONSAI_MODEL=prism-ml/Ternary-Bonsai-4B-mlx-2bit ./scripts/bonsai "短く自己紹介して"
 ```
 
 ### 3. PATH の設定 (推奨)
@@ -112,6 +144,9 @@ LOCAL_LLM_ALLOW_MLX_IN_SEATBELT=1 ./scripts/gemma4 --prompt "hello"
 - `--no-session`: セッションを保存しない
 - `--session-dir`: セッション保存先ディレクトリを指定
 - `--output text`: JSONではなく回答テキストのみ出力
+- `--mtp`: Gemma 4 MTP speculative decoding を有効化
+- `--draft-model`: MTP assistant/drafter model を指定
+- `--draft-block-size`: 1回に draft する token 数を指定
 
 セッション保存先のデフォルトは `~/.localLlm/sessions` です。
 

@@ -5,14 +5,14 @@ import re
 import asyncio
 import os
 import sys
-from typing import Any, Iterable, Generator, List, Dict, Optional
+from typing import Any, Callable, Iterable, Generator, List, Dict, Optional
 
 from core.model import MLXModelManager, get_model_manager
 from tools import fetch_content, search_web
 from core.repair_util import detect_repair_json, format_repair_prompt
 
 TOOL_CALL_RE = re.compile(
-    r"(?:<\|tool_call\|>|<tool_call>)\s*call:(\w+)\s*\{(.*?)\}\s*(?:<tool_call\|>|<\|tool_call\|>|</tool_call>)",
+    r"(?:<\|tool_call\|>|<tool_call>)\s*(?:call:)?(\w+)\s*\{(.*?)\}\s*(?:<tool_call\|>|<\|tool_call\|>|</tool_call>)",
     re.DOTALL,
 )
 JSON_TOOL_CALL_RE = re.compile(
@@ -24,9 +24,24 @@ TOOL_ARGS_QUOTED_RE = re.compile(r"\"?(\w+)\"?\s*:\s*\"((?:\\.|[^\"])*)\"", re.D
 TOOL_ARGS_SINGLE_QUOTED_RE = re.compile(r"\"?(\w+)\"?\s*:\s*'((?:\\.|[^'])*)'", re.DOTALL)
 TOOL_ARGS_BARE_RE = re.compile(r"\"?(\w+)\"?\s*:\s*([^,\n}]+)")
 THINK_BLOCK_RE = re.compile(r"<\|channel>thought.*?(?:<channel\|>|$)", re.DOTALL)
+COMPLETE_THINK_BLOCK_RE = re.compile(r"<\|channel>thought.*?<channel\|>", re.DOTALL)
 LEGACY_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 INCOMPLETE_TOOL_CALL_RE = re.compile(r"(?:<\|tool_call\|>|<tool_call>).*$", re.DOTALL)
 JSON_CODE_BLOCK_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL | re.IGNORECASE)
+KNOWN_TOOL_NAMES = (
+    "search_web",
+    "web_search",
+    "brave_search",
+    "fetch_content",
+    "fetch_url",
+    "fetch",
+    "scrape_content",
+)
+TOOL_MARKER_PREFIXES = (
+    "<|tool_call|>",
+    "<tool_call>",
+    "call:",
+)
 
 
 def _extract_text_content(content: Any) -> str:
@@ -45,13 +60,129 @@ def _extract_text_content(content: Any) -> str:
 
 def _normalize_tool_name(name: str) -> str:
     aliases = {
+        "brave_search": "search_web",
         "web_search": "search_web",
         "search_web": "search_web",
+        "fetch": "fetch_content",
         "scrape_content": "fetch_content",
         "fetch_url": "fetch_content",
         "fetch_content": "fetch_content",
     }
     return aliases.get(name, name)
+
+
+def _parse_tool_arguments(args_str: str) -> dict[str, str]:
+    args: dict[str, str] = {}
+
+    for arg_match in TOOL_ARGS_RE.finditer(args_str):
+        args[arg_match.group(1)] = arg_match.group(2)
+    if not args:
+        for arg_match in TOOL_ARGS_QUOTED_RE.finditer(args_str):
+            val = arg_match.group(2)
+            try:
+                args[arg_match.group(1)] = json.loads(f'"{val}"')
+            except Exception:
+                args[arg_match.group(1)] = (
+                    val.replace('\\"', '"')
+                    .replace('\\n', '\n')
+                    .replace('\\t', '\t')
+                    .replace('\\\\', '\\')
+                )
+    if not args:
+        for arg_match in TOOL_ARGS_SINGLE_QUOTED_RE.finditer(args_str):
+            args[arg_match.group(1)] = arg_match.group(2).replace("\\'", "'").replace('\\n', '\n')
+    if not args:
+        for arg_match in TOOL_ARGS_BARE_RE.finditer(args_str):
+            args[arg_match.group(1)] = arg_match.group(2).strip()
+    if not args and args_str.strip():
+        try:
+            candidate = "{" + args_str + "}"
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict):
+                args = {str(k): str(v) for k, v in parsed.items()}
+        except json.JSONDecodeError:
+            pass
+
+    return args
+
+
+def _strip_complete_stream_suppressed_blocks(text: str) -> str:
+    stripped = COMPLETE_THINK_BLOCK_RE.sub("", text)
+    return LEGACY_THINK_BLOCK_RE.sub("", stripped)
+
+
+def _is_waiting_for_suppressed_block(text: str) -> bool:
+    stripped = text.lstrip()
+    if stripped.startswith("<think") and "</think>" not in stripped:
+        return True
+    if stripped.startswith("<|channel>thought") and "<channel|>" not in stripped:
+        return True
+    return False
+
+
+def _looks_like_tool_call_prefix(text: str) -> bool:
+    stripped = text.lstrip()
+    if not stripped:
+        return True
+    if any(marker.startswith(stripped) for marker in TOOL_MARKER_PREFIXES if len(stripped) < len(marker)):
+        return True
+    if stripped.startswith(TOOL_MARKER_PREFIXES):
+        return True
+    if re.match(rf"^(?:{'|'.join(KNOWN_TOOL_NAMES)})\s*\{{", stripped):
+        return True
+    if any(name.startswith(stripped) for name in KNOWN_TOOL_NAMES if len(stripped) < len(name)):
+        return True
+    return False
+
+
+class _SafeStreamEmitter:
+    def __init__(self, emit: Callable[[str], None]):
+        self.emit = emit
+        self.buffer = ""
+        self.started = False
+        self.suppressed = False
+        self.emitted = False
+
+    def feed(self, chunk: str) -> None:
+        if not chunk or self.suppressed:
+            return
+        if self.started:
+            self.emit(chunk)
+            self.emitted = True
+            return
+
+        self.buffer += chunk
+        if _is_waiting_for_suppressed_block(self.buffer):
+            return
+
+        visible = _strip_complete_stream_suppressed_blocks(self.buffer)
+        stripped = visible.lstrip()
+        if not stripped:
+            return
+        if _looks_like_tool_call_prefix(stripped):
+            if any(marker in stripped for marker in TOOL_MARKER_PREFIXES) or re.match(
+                rf"^(?:{'|'.join(KNOWN_TOOL_NAMES)})\s*\{{",
+                stripped,
+            ):
+                self.suppressed = True
+            return
+
+        self.started = True
+        self.buffer = ""
+        self.emit(visible)
+        self.emitted = True
+
+    def finish(self, raw_response: str, has_tool_call: bool, force_json: bool = False) -> bool:
+        if has_tool_call or self.suppressed:
+            return self.emitted
+        if self.started:
+            return self.emitted
+
+        visible = ChatEngine.sanitize_response(raw_response, force_json=force_json)
+        if visible:
+            self.emit(visible)
+            self.emitted = True
+        return self.emitted
 
 
 class ChatEngine:
@@ -114,41 +245,17 @@ class ChatEngine:
 
     @staticmethod
     def parse_tool_call(text: str) -> dict[str, Any] | None:
-        # call:name{...} の形式を探す。周囲にノイズがあっても拾えるようにする
-        # 閉じタグがある場合はそこまで、無い場合は最後の } までを取得する
-        match = re.search(r"call:(\w+)\s*\{(.*?)\}(?:\s*<[/\|]?tool_call[\|]?>)", text, re.DOTALL)
+        # call:name{...} / name{...} の形式を探す。周囲に思考タグがあっても拾えるようにする。
+        match = TOOL_CALL_RE.search(text)
         if not match:
             match = re.search(r"call:(\w+)\s*\{(.*)\}", text, re.DOTALL)
+        if not match:
+            known_tools = r"(?:search_web|web_search|brave_search|fetch_content|fetch_url|fetch|scrape_content)"
+            match = re.search(rf"\b({known_tools})\s*\{{(.*?)\}}", text, re.DOTALL)
             
         if match:
             func_name, args_str = match.group(1), match.group(2)
-            args: dict[str, str] = {}
-
-            for arg_match in TOOL_ARGS_RE.finditer(args_str):
-                args[arg_match.group(1)] = arg_match.group(2)
-            if not args:
-                for arg_match in TOOL_ARGS_QUOTED_RE.finditer(args_str):
-                    val = arg_match.group(2)
-                    try:
-                        # Try to unescape using JSON loader logic
-                        args[arg_match.group(1)] = json.loads(f'"{val}"')
-                    except Exception:
-                        args[arg_match.group(1)] = val.replace('\\"', '"').replace('\\n', '\n').replace('\\t', '\t').replace('\\\\', '\\')
-            if not args:
-                for arg_match in TOOL_ARGS_SINGLE_QUOTED_RE.finditer(args_str):
-                    args[arg_match.group(1)] = arg_match.group(2).replace("\\'", "'").replace('\\n', '\n')
-            if not args:
-                for arg_match in TOOL_ARGS_BARE_RE.finditer(args_str):
-                    args[arg_match.group(1)] = arg_match.group(2).strip()
-            if not args and args_str.strip():
-                try:
-                    candidate = "{" + args_str + "}"
-                    parsed = json.loads(candidate)
-                    if isinstance(parsed, dict):
-                        args = {str(k): str(v) for k, v in parsed.items()}
-                except json.JSONDecodeError:
-                    pass
-
+            args = _parse_tool_arguments(args_str)
             return {"name": func_name, "arguments": args}
 
         json_tag_match = JSON_TOOL_CALL_RE.search(text)
@@ -390,6 +497,7 @@ class ChatEngine:
         user_input: str,
         max_tokens: int = 10240,
         temperature: float = 0.0,
+        on_chunk: Callable[[str], None] | None = None,
     ) -> str:
         if self.model_manager is None:
             self.model_manager = get_model_manager()
@@ -401,15 +509,25 @@ class ChatEngine:
         self.add_message("user", user_input)
 
         for _ in range(self.max_tool_rounds + 1):
-            raw_response = "".join(
-                self.model_manager.generate_stream(
-                    self.messages,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                )
-            )
+            raw_parts: list[str] = []
+            stream_emitter = _SafeStreamEmitter(on_chunk) if on_chunk else None
+            for chunk in self.model_manager.generate_stream(
+                self.messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            ):
+                raw_parts.append(chunk)
+                if stream_emitter:
+                    stream_emitter.feed(chunk)
+            raw_response = "".join(raw_parts)
 
             tool_call = self.parse_tool_call(raw_response)
+            if stream_emitter:
+                stream_emitter.finish(
+                    raw_response,
+                    has_tool_call=bool(tool_call),
+                    force_json=bool(repair_data),
+                )
             if tool_call:
                 if self.verbose:
                     print(f"\n[Searching: {tool_call['name']}...]", flush=True)

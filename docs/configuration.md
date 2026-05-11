@@ -81,6 +81,8 @@ tool 別の approval 設定は不要です。公開 tool surface はサーバー
 | `GNOSIS_LLM_CONCURRENCY_LIMIT` | `1` | `gemma4` / `bonsai` 等のローカルLLMプロセス同時実行上限。daemon single-thread 前提のため、1より大きい値は1に丸める |
 | `LOCAL_LLM_DAEMON_PRELOAD` | `true` | local-llm daemon 起動時にモデルを読み込んで ready 状態にする |
 | `LOCAL_LLM_DAEMON_REQUEST_TIMEOUT_MS` | `900000` | daemon 内部 single-thread queue の1リクエスト待機上限 |
+| `LOCAL_LLM_PREFILL_STEP_SIZE` | `8192` | MLX 系 local LLM の prefill 分割サイズ。通常会話では分割 prefill の progress 表示と分割オーバーヘッドを避ける |
+| `LOCAL_LLM_CONTEXT_WINDOW` | `131072` | daemon API で許可する入力+出力 token 上限。Gemma4 e4b の `max_position_embeddings` と同じ 128k 相当 |
 | `LOCAL_LLM_ALLOW_MLX_IN_SEATBELT` | `false` | `CODEX_SANDBOX=seatbelt` で MLX (`gemma4`/`bonsai`) を強制有効化するか（既定は安全のため無効） |
 
 local-llm は `com.gnosis.local-llm` LaunchAgent で1プロセスだけ常駐します。HTTP リクエストは TypeScript 側で直列化せず、daemon 内部の single-worker priority queue に登録されます。追加の poll 間隔を置かず、queue に入ったものから直ちに処理対象になります。CLI fallback を明示的に有効化した場合だけ、プロセス起動を `GNOSIS_LLM_CONCURRENCY_LIMIT=1` のセマフォで守ります。

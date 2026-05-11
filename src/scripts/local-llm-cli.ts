@@ -23,7 +23,7 @@ const BUN = process.env.GNOSIS_BUN_COMMAND ?? 'bun';
 
 const DEFAULT_GEMMA4_MODEL = process.env.GEMMA4_MODEL ?? 'mlx-community/gemma-4-e4b-it-4bit';
 const DEFAULT_QWEN_MODEL = process.env.QWEN_MODEL ?? 'mlx-community/Qwen3-14B-4bit';
-const DEFAULT_BONSAI_MODEL = process.env.BONSAI_MODEL ?? 'prism-ml/Bonsai-8B-mlx-1bit';
+const DEFAULT_BONSAI_MODEL = process.env.BONSAI_MODEL ?? 'prism-ml/Ternary-Bonsai-8B-mlx-2bit';
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   if (!value || value.trim().length === 0) return fallback;
